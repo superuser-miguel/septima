@@ -67,6 +67,13 @@ if appstreamcli.found()
   )
 endif
 
+# --- App icon (installed under the app id so AppStream + the shell find it) ---
+install_data(
+  'icons/hicolor/scalable/apps/io.github.superuser_miguel.Septima.svg',
+  install_dir: datadir / 'icons' / 'hicolor' / 'scalable' / 'apps',
+  rename: application_id + '.svg',
+)
+
 # --- GSettings schema (no keys yet; see the file) ---
 gschema_conf = configuration_data()
 gschema_conf.set('app-id', application_id)
