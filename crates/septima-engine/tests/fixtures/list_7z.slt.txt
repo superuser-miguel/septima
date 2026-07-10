@@ -1,0 +1,69 @@
+
+7-Zip (z) 26.01 ZS v1.5.7 R1 (x64) : Copyright (c) 1999- Igor Pavlov, 2016- Tino Reichardt, 2022- Sergey G. Brester : 2026-04-27
+ 64-bit locale=en_US.UTF-8 Threads:12 OPEN_MAX:1048576, ASM
+
+Scanning the drive for archives:
+1 file, 4358 bytes (5 KiB)
+
+Listing archive: sample.7z
+
+--
+Path = sample.7z
+Type = 7z
+Physical Size = 4358
+Headers Size = 222
+Method = LZMA2:6k
+Solid = +
+Blocks = 1
+
+----------
+Path = tree
+Size = 0
+Packed Size = 0
+Modified = 2026-07-10 15:09:36.9592685
+Attributes = D drwxr-xr-x
+CRC = 
+Encrypted = -
+Method = 
+Block = 
+
+Path = tree/sub
+Size = 0
+Packed Size = 0
+Modified = 2026-07-10 15:09:36.9593541
+Attributes = D drwxr-xr-x
+CRC = 
+Encrypted = -
+Method = 
+Block = 
+
+Path = tree/data.bin
+Size = 4096
+Packed Size = 4136
+Modified = 2026-07-10 15:09:36.9593541
+Attributes = A -rw-r--r--
+CRC = 597445BE
+Encrypted = -
+Method = LZMA2:6k
+Block = 0
+
+Path = tree/readme.txt
+Size = 12
+Packed Size = 
+Modified = 2026-07-10 15:09:36.9592685
+Attributes = A -rw-r--r--
+CRC = AF083B2D
+Encrypted = -
+Method = LZMA2:6k
+Block = 0
+
+Path = tree/sub/a file.txt
+Size = 24
+Packed Size = 
+Modified = 2026-07-10 15:09:36.9593541
+Attributes = A -rw-r--r--
+CRC = 510153D9
+Encrypted = -
+Method = LZMA2:6k
+Block = 0
+

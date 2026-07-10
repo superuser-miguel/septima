@@ -9,16 +9,14 @@
 //! All portal interaction lives in `septima-gtk`; the engine accepts plain
 //! paths — including opaque doc-portal paths under `/run/user/*/doc/` — without
 //! normalization (Work Area C1).
-//!
-//! ## Modules to come (Phase 2)
-//!
-//! - listing parser — `7z l -slt`
-//! - progress parser — `-bsp1 -bb1`
-//! - subprocess supervisor — spawn/cancel/wait around `7zz`
 
-/// The `7zz` binary this engine drives, as invoked by default.
-///
-/// Placeholder constant that also proves the crate is linkable from
-/// `septima-gtk` before any real API exists. Discovery/override logic lands
-/// with the supervisor in Phase 2.
+mod command;
+mod error;
+mod listing;
+
+pub use command::{list_archive, sevenzip_path};
+pub use error::EngineError;
+pub use listing::{parse_listing, ArchiveEntry, ArchiveListing};
+
+/// The `7zz` binary this engine drives by default (resolved via `PATH`).
 pub const SEVENZIP_BIN: &str = "7zz";

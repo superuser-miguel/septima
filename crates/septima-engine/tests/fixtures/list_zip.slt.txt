@@ -1,0 +1,105 @@
+
+7-Zip (z) 26.01 ZS v1.5.7 R1 (x64) : Copyright (c) 1999- Igor Pavlov, 2016- Tino Reichardt, 2022- Sergey G. Brester : 2026-04-27
+ 64-bit locale=en_US.UTF-8 Threads:12 OPEN_MAX:1048576, ASM
+
+Scanning the drive for archives:
+1 file, 4836 bytes (5 KiB)
+
+Listing archive: sample.zip
+
+--
+Path = sample.zip
+Type = zip
+Physical Size = 4836
+
+----------
+Path = tree
+Folder = +
+Size = 0
+Packed Size = 0
+Modified = 2026-07-10 15:09:36.9592685
+Created = 
+Accessed = 
+Attributes = D drwxr-xr-x
+Encrypted = -
+Comment = 
+CRC = 
+Method = Store
+Characteristics = NTFS
+Host OS = Unix
+Version = 20
+Volume Index = 0
+Offset = 0
+
+Path = tree/data.bin
+Folder = -
+Size = 4096
+Packed Size = 4096
+Modified = 2026-07-10 15:09:36.9593541
+Created = 
+Accessed = 
+Attributes =  -rw-r--r--
+Encrypted = -
+Comment = 
+CRC = 597445BE
+Method = Store
+Characteristics = NTFS
+Host OS = Unix
+Version = 10
+Volume Index = 0
+Offset = 35
+
+Path = tree/readme.txt
+Folder = -
+Size = 12
+Packed Size = 12
+Modified = 2026-07-10 15:09:36.9592685
+Created = 
+Accessed = 
+Attributes =  -rw-r--r--
+Encrypted = -
+Comment = 
+CRC = AF083B2D
+Method = Store
+Characteristics = NTFS
+Host OS = Unix
+Version = 10
+Volume Index = 0
+Offset = 4174
+
+Path = tree/sub
+Folder = +
+Size = 0
+Packed Size = 0
+Modified = 2026-07-10 15:09:36.9593541
+Created = 
+Accessed = 
+Attributes = D drwxr-xr-x
+Encrypted = -
+Comment = 
+CRC = 
+Method = Store
+Characteristics = NTFS
+Host OS = Unix
+Version = 20
+Volume Index = 0
+Offset = 4231
+
+Path = tree/sub/a file.txt
+Folder = -
+Size = 24
+Packed Size = 24
+Modified = 2026-07-10 15:09:36.9593541
+Created = 
+Accessed = 
+Attributes =  -rw-r--r--
+Encrypted = -
+Comment = 
+CRC = 510153D9
+Method = Store
+Characteristics = NTFS
+Host OS = Unix
+Version = 10
+Volume Index = 0
+Offset = 4270
+
