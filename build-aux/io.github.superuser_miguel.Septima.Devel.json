@@ -1,0 +1,51 @@
+{
+  "id": "io.github.superuser_miguel.Septima.Devel",
+  "runtime": "org.gnome.Platform",
+  "runtime-version": "50",
+  "sdk": "org.gnome.Sdk",
+  "sdk-extensions": ["org.freedesktop.Sdk.Extension.rust-stable"],
+  "command": "septima",
+  "finish-args": [
+    "--share=ipc",
+    "--socket=fallback-x11",
+    "--socket=wayland",
+    "--device=dri"
+  ],
+  "cleanup": ["/include", "/lib/pkgconfig", "/share/man"],
+  "modules": [
+    {
+      "name": "7-zip-zstd",
+      "buildsystem": "simple",
+      "build-commands": [
+        "make -j ${FLATPAK_BUILDER_N_JOBS} -C CPP/7zip/Bundles/Alone2 -f makefile.gcc",
+        "install -Dm755 CPP/7zip/Bundles/Alone2/_o/7zz /app/bin/7zz"
+      ],
+      "sources": [
+        {
+          "type": "archive",
+          "url": "https://github.com/mcmilk/7-Zip-zstd/archive/refs/tags/v26.02-v1.5.7-R2.tar.gz",
+          "sha256": "02a684ff8fd7fae110d30dddd4c55648061d3dceeeaefb1c9c20baed3a51795a"
+        }
+      ]
+    },
+    {
+      "name": "septima",
+      "buildsystem": "meson",
+      "config-opts": ["-Dprofile=development", "-Doffline=true"],
+      "build-options": {
+        "append-path": "/usr/lib/sdk/rust-stable/bin",
+        "env": {
+          "CARGO_HOME": "/run/build/septima/cargo"
+        }
+      },
+      "sources": [
+        {
+          "type": "git",
+          "path": "..",
+          "branch": "main"
+        },
+        "cargo-sources.json"
+      ]
+    }
+  ]
+}

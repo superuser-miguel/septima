@@ -5,3 +5,10 @@ option(
   value: 'development',
   description: 'Build profile: `development` uses the .Devel app id and a debug build; `default` is a release build.',
 )
+
+option(
+  'offline',
+  type: 'boolean',
+  value: false,
+  description: 'Pass --offline to cargo (for the Flatpak sandbox build, which vendors crates via cargo-sources.json).',
+)

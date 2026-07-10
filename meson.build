@@ -48,8 +48,9 @@ subdir('data')
 subdir('po')
 
 # --- Build the Rust binary via cargo (config flows through the environment) ---
+# CARGO_HOME is intentionally NOT set here: on the host cargo uses the default
+# registry; under Flatpak the manifest sets it to the vendored dir (offline).
 cargo_env = environment()
-cargo_env.set('CARGO_HOME', meson.project_build_root() / 'cargo-home')
 cargo_env.set('SEPTIMA_APP_ID', application_id)
 cargo_env.set('SEPTIMA_PROFILE', profile_name)
 cargo_env.set('SEPTIMA_LOCALEDIR', localedir)
@@ -63,8 +64,10 @@ else
   cargo_extra = ['--release']
 endif
 
-# TODO (Work Area D): add `--offline` here and vendor deps via
-# flatpak-cargo-generator so the Flatpak sandbox build needs no network.
+# Flatpak builds vendor crates (build-aux/cargo-sources.json) and build offline.
+if get_option('offline')
+  cargo_extra += ['--offline']
+endif
 custom_target(
   'cargo-build',
   build_always_stale: true,
