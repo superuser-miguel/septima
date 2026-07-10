@@ -1,6 +1,7 @@
 //! Septima — GTK4 / libadwaita frontend for 7-Zip ZS (`7zz`).
 
 mod archive_view;
+mod create_dialog;
 mod entry_object;
 mod progress_row;
 mod window;

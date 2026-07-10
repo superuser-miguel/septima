@@ -18,6 +18,12 @@ template $SeptimaWindow: Adw.ApplicationWindow {
         clicked => $on_open_clicked() swapped;
       }
 
+      Gtk.Button new_button {
+        icon-name: "list-add-symbolic";
+        tooltip-text: _("New Archive");
+        clicked => $on_new_clicked() swapped;
+      }
+
       [end]
       Gtk.Button extract_button {
         label: _("Extract");

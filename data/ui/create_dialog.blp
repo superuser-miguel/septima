@@ -1,0 +1,92 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SeptimaCreateDialog: Adw.Dialog {
+  title: _("New Archive");
+  content-width: 480;
+  content-height: 600;
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      show-start-title-buttons: false;
+      show-end-title-buttons: false;
+
+      [start]
+      Gtk.Button {
+        label: _("Cancel");
+        clicked => $on_cancel() swapped;
+      }
+
+      [end]
+      Gtk.Button {
+        label: _("Create");
+        clicked => $on_create() swapped;
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    content: Adw.PreferencesPage {
+      Adw.PreferencesGroup {
+        Adw.EntryRow name_row {
+          title: _("Archive name");
+        }
+      }
+
+      Adw.PreferencesGroup {
+        title: _("Compression");
+
+        Adw.ComboRow format_row {
+          title: _("Format");
+        }
+
+        Adw.ComboRow codec_row {
+          title: _("Method");
+        }
+
+        Adw.SpinRow level_row {
+          title: _("Level");
+          subtitle: _("Higher = smaller, slower");
+          digits: 0;
+          numeric: true;
+
+          adjustment: Gtk.Adjustment {
+            lower: 0;
+            upper: 22;
+            step-increment: 1;
+            value: 5;
+          };
+        }
+
+        Adw.SpinRow threads_row {
+          title: _("CPU threads");
+          digits: 0;
+          numeric: true;
+
+          adjustment: Gtk.Adjustment {
+            lower: 1;
+            upper: 256;
+            step-increment: 1;
+            value: 1;
+          };
+        }
+      }
+
+      Adw.PreferencesGroup {
+        title: _("Encryption");
+
+        Adw.PasswordEntryRow password_row {
+          title: _("Password");
+        }
+
+        Adw.SwitchRow encrypt_headers_row {
+          title: _("Encrypt file names");
+          subtitle: _("Hides the file list (7z only)");
+        }
+      }
+    };
+  }
+}

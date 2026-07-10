@@ -6,9 +6,12 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{gio, glib, CompositeTemplate, TemplateChild};
 
-use septima_engine::{EngineError, ExtractProgress, ExtractRequest, OverwriteMode};
+use septima_engine::{
+    CompressionRequest, EngineError, ExtractProgress, ExtractRequest, OverwriteMode,
+};
 
 use crate::archive_view::SeptimaArchiveView;
+use crate::create_dialog::{CreateSettings, SeptimaCreateDialog};
 use crate::progress_row::SeptimaProgressRow;
 
 /// Messages from the extraction worker thread to the UI.
@@ -53,6 +56,11 @@ mod imp {
         #[template_callback]
         fn on_extract_clicked(&self) {
             self.obj().choose_destination_and_extract();
+        }
+
+        #[template_callback]
+        fn on_new_clicked(&self) {
+            self.obj().new_archive_dialog();
         }
     }
 
@@ -266,9 +274,133 @@ impl SeptimaWindow {
         dialog.present(Some(self));
     }
 
+    // --- Create ------------------------------------------------------------
+
+    fn new_archive_dialog(&self) {
+        let dialog = gtk::FileDialog::builder()
+            .title(gettext("Add Files to Archive"))
+            .modal(true)
+            .build();
+
+        let window = self.clone();
+        dialog.open_multiple(Some(self), gio::Cancellable::NONE, move |result| match result {
+            Ok(files) => {
+                let inputs: Vec<PathBuf> = (0..files.n_items())
+                    .filter_map(|i| files.item(i).and_downcast::<gio::File>())
+                    .filter_map(|f| f.path())
+                    .collect();
+                if !inputs.is_empty() {
+                    window.show_create_dialog(inputs);
+                }
+            }
+            Err(err) => {
+                if !err.matches(gtk::DialogError::Dismissed) {
+                    window.show_toast(err.message());
+                }
+            }
+        });
+    }
+
+    fn show_create_dialog(&self, inputs: Vec<PathBuf>) {
+        let suggested = inputs
+            .first()
+            .and_then(|p| p.file_stem())
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "archive".to_string());
+
+        let dialog = SeptimaCreateDialog::new(&suggested);
+        let window = self.clone();
+        dialog.connect_create(move |dlg| {
+            let settings = dlg.settings();
+            dlg.close();
+            window.choose_output_and_compress(inputs.clone(), settings);
+        });
+        dialog.present(Some(self));
+    }
+
+    fn choose_output_and_compress(&self, inputs: Vec<PathBuf>, settings: CreateSettings) {
+        let filename = format!("{}.{}", settings.name, settings.format.extension);
+        let dialog = gtk::FileDialog::builder()
+            .title(gettext("Save Archive"))
+            .modal(true)
+            .initial_name(&filename)
+            .build();
+
+        let window = self.clone();
+        dialog.save(Some(self), gio::Cancellable::NONE, move |result| match result {
+            Ok(file) => match file.path() {
+                Some(output) => window.start_compress(compression_request(&inputs, &settings, output)),
+                None => window.show_toast(&gettext("That location can't be written to directly.")),
+            },
+            Err(err) => {
+                if !err.matches(gtk::DialogError::Dismissed) {
+                    window.show_toast(err.message());
+                }
+            }
+        });
+    }
+
+    fn start_compress(&self, req: CompressionRequest) {
+        let output = req.output.clone();
+        let row = SeptimaProgressRow::new(&format!("{}: {}", gettext("Creating"), file_name(&output)));
+        let imp = self.imp();
+        imp.jobs_box.append(&row);
+        imp.jobs_revealer.set_reveal_child(true);
+
+        let cancel = septima_engine::new_cancel_token();
+        let cancel_ui = cancel.clone();
+        row.connect_cancel(move || cancel_ui.store(true, Ordering::Relaxed));
+
+        let (sender, receiver) = async_channel::unbounded::<Job>();
+        let sevenzip = septima_engine::sevenzip_path();
+
+        std::thread::spawn(move || {
+            let result = septima_engine::run_add(&sevenzip, &req, &cancel, |p| {
+                let _ = sender.send_blocking(Job::Progress(p.clone()));
+            });
+            let _ = sender.send_blocking(Job::Done(result));
+        });
+
+        let window = self.clone();
+        glib::spawn_future_local(async move {
+            while let Ok(message) = receiver.recv().await {
+                match message {
+                    Job::Progress(p) => row.set_progress(p.percent, p.current_file.as_deref()),
+                    Job::Done(result) => {
+                        window.finish_job(&row);
+                        match result {
+                            Ok(()) => window.show_toast(&format!(
+                                "{} {}",
+                                gettext("Created"),
+                                output.display()
+                            )),
+                            Err(EngineError::Cancelled) => {}
+                            Err(err) => window.show_toast(&err.to_string()),
+                        }
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
     fn show_toast(&self, message: &str) {
         self.imp().toast_overlay.add_toast(adw::Toast::new(message));
     }
+}
+
+fn compression_request(
+    inputs: &[PathBuf],
+    settings: &CreateSettings,
+    output: PathBuf,
+) -> CompressionRequest {
+    let mut req = CompressionRequest::new(output, inputs.to_vec(), settings.format.id);
+    req.codec = Some(settings.codec.id.to_string());
+    req.level = settings.level;
+    req.threads = Some(settings.threads);
+    req.password = settings.password.clone();
+    req.encrypt_headers = settings.encrypt_headers;
+    req
 }
 
 fn file_name(path: &std::path::Path) -> String {
