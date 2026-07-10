@@ -15,14 +15,14 @@ template $SeptimaWindow: Adw.ApplicationWindow {
       Gtk.Button open_button {
         icon-name: "document-open-symbolic";
         tooltip-text: _("Open Archive");
-        clicked => $on_open_clicked();
+        clicked => $on_open_clicked() swapped;
       }
 
       [end]
       Gtk.Button extract_button {
         label: _("Extract");
         sensitive: false;
-        clicked => $on_extract_clicked();
+        clicked => $on_extract_clicked() swapped;
 
         styles [
           "suggested-action",
@@ -52,7 +52,7 @@ template $SeptimaWindow: Adw.ApplicationWindow {
             child: Gtk.Button {
               halign: center;
               label: _("Open Archive…");
-              clicked => $on_open_clicked();
+              clicked => $on_open_clicked() swapped;
 
               styles [
                 "pill",
