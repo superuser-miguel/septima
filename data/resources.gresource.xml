@@ -3,6 +3,7 @@
   <gresource prefix="/io/github/superuser_miguel/Septima">
     <file compressed="true">window.ui</file>
     <file compressed="true">archive_view.ui</file>
+    <file compressed="true">progress_row.ui</file>
     <file compressed="true">style.css</file>
   </gresource>
 </gresources>

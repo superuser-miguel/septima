@@ -2,6 +2,7 @@
 
 mod archive_view;
 mod entry_object;
+mod progress_row;
 mod window;
 
 mod config {

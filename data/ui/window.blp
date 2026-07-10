@@ -17,6 +17,26 @@ template $SeptimaWindow: Adw.ApplicationWindow {
         tooltip-text: _("Open Archive");
         clicked => $on_open_clicked();
       }
+
+      [end]
+      Gtk.Button extract_button {
+        label: _("Extract");
+        sensitive: false;
+        clicked => $on_extract_clicked();
+
+        styles [
+          "suggested-action",
+        ]
+      }
+    }
+
+    [bottom]
+    Gtk.Revealer jobs_revealer {
+      transition-type: slide_up;
+
+      Gtk.Box jobs_box {
+        orientation: vertical;
+      }
     }
 
     content: Adw.ToastOverlay toast_overlay {

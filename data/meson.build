@@ -1,8 +1,8 @@
 # Blueprint → .ui (Work Area B1)
 blueprints = custom_target(
   'blueprints',
-  input: files('ui/window.blp', 'ui/archive_view.blp'),
-  output: ['window.ui', 'archive_view.ui'],
+  input: files('ui/window.blp', 'ui/archive_view.blp', 'ui/progress_row.blp'),
+  output: ['window.ui', 'archive_view.ui', 'progress_row.ui'],
   command: [
     blueprint_compiler,
     'batch-compile',

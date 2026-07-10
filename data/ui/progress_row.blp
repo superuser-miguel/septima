@@ -1,0 +1,41 @@
+using Gtk 4.0;
+
+template $SeptimaProgressRow: Gtk.Box {
+  orientation: horizontal;
+  spacing: 12;
+
+  styles [
+    "toolbar",
+  ]
+
+  Gtk.Box {
+    orientation: vertical;
+    spacing: 3;
+    hexpand: true;
+    valign: center;
+
+    Gtk.Label title_label {
+      xalign: 0;
+      ellipsize: end;
+
+      styles [
+        "caption-heading",
+      ]
+    }
+
+    Gtk.ProgressBar progress_bar {
+      show-text: true;
+    }
+  }
+
+  Gtk.Button cancel_button {
+    icon-name: "process-stop-symbolic";
+    tooltip-text: _("Cancel");
+    valign: center;
+
+    styles [
+      "flat",
+      "circular",
+    ]
+  }
+}

@@ -1,8 +1,25 @@
+use std::cell::RefCell;
+use std::path::PathBuf;
+use std::sync::atomic::Ordering;
+
+use adw::prelude::*;
 use adw::subclass::prelude::*;
-use gtk::prelude::*;
 use gtk::{gio, glib, CompositeTemplate, TemplateChild};
 
+use septima_engine::{EngineError, ExtractProgress, ExtractRequest, OverwriteMode};
+
 use crate::archive_view::SeptimaArchiveView;
+use crate::progress_row::SeptimaProgressRow;
+
+/// Messages from the extraction worker thread to the UI.
+enum Job {
+    Progress(ExtractProgress),
+    Done(Result<(), EngineError>),
+}
+
+fn gettext(s: &str) -> String {
+    gettextrs::gettext(s)
+}
 
 mod imp {
     use super::*;
@@ -16,6 +33,14 @@ mod imp {
         pub toast_overlay: TemplateChild<adw::ToastOverlay>,
         #[template_child]
         pub archive_view: TemplateChild<SeptimaArchiveView>,
+        #[template_child]
+        pub extract_button: TemplateChild<gtk::Button>,
+        #[template_child]
+        pub jobs_revealer: TemplateChild<gtk::Revealer>,
+        #[template_child]
+        pub jobs_box: TemplateChild<gtk::Box>,
+        /// The currently open archive, used as the extract source.
+        pub archive_path: RefCell<Option<PathBuf>>,
     }
 
     #[gtk::template_callbacks]
@@ -23,6 +48,11 @@ mod imp {
         #[template_callback]
         fn on_open_clicked(&self) {
             self.obj().open_archive_dialog();
+        }
+
+        #[template_callback]
+        fn on_extract_clicked(&self) {
+            self.obj().choose_destination_and_extract();
         }
     }
 
@@ -33,8 +63,6 @@ mod imp {
         type ParentType = adw::ApplicationWindow;
 
         fn class_init(klass: &mut Self::Class) {
-            // The window template references $SeptimaArchiveView; ensure the type
-            // is registered before the template is parsed.
             SeptimaArchiveView::ensure_type();
             klass.bind_template();
             klass.bind_template_callbacks();
@@ -72,11 +100,11 @@ impl SeptimaWindow {
         glib::Object::builder().property("application", app).build()
     }
 
-    /// Show a file chooser (portal-backed under Flatpak) and open the picked
-    /// archive. Cancellation is silent; other failures show a toast.
+    // --- Open ---------------------------------------------------------------
+
     fn open_archive_dialog(&self) {
         let dialog = gtk::FileDialog::builder()
-            .title(gettextrs::gettext("Open Archive"))
+            .title(gettext("Open Archive"))
             .modal(true)
             .build();
 
@@ -84,7 +112,6 @@ impl SeptimaWindow {
         dialog.open(Some(self), gio::Cancellable::NONE, move |result| match result {
             Ok(file) => window.open_file(file),
             Err(err) => {
-                // Dismissal/cancellation is not an error worth a toast.
                 if !err.matches(gtk::DialogError::Dismissed) {
                     window.show_toast(err.message());
                 }
@@ -92,10 +119,10 @@ impl SeptimaWindow {
         });
     }
 
-    /// Open and list `file` (from the file chooser, CLI args, or a file manager).
+    /// Open and list `file` (file chooser, CLI args, or a file manager).
     pub fn open_file(&self, file: gio::File) {
         let Some(path) = file.path() else {
-            self.show_toast(&gettextrs::gettext("That location can't be read directly."));
+            self.show_toast(&gettext("That location can't be read directly."));
             return;
         };
 
@@ -107,18 +134,145 @@ impl SeptimaWindow {
             match result {
                 Ok(Ok(listing)) => {
                     let imp = window.imp();
+                    let archive_path = listing.path.clone();
                     imp.archive_view.load(&listing);
                     imp.stack.set_visible_child_name("archive");
+                    imp.extract_button.set_sensitive(true);
+                    imp.archive_path.replace(Some(archive_path.clone()));
+                    // Dev/test hook: extract without the folder portal.
+                    if crate::config::PROFILE == "Devel" {
+                        if let Some(dir) = std::env::var_os("SEPTIMA_AUTO_EXTRACT") {
+                            window.start_extract(archive_path, PathBuf::from(dir), None);
+                        }
+                    }
                 }
                 Ok(Err(err)) => window.show_toast(&err.to_string()),
-                Err(_) => window.show_toast(&gettextrs::gettext("The listing task failed.")),
+                Err(_) => window.show_toast(&gettext("The listing task failed.")),
             }
         });
     }
 
-    fn show_toast(&self, message: &str) {
-        self.imp()
-            .toast_overlay
-            .add_toast(adw::Toast::new(message));
+    // --- Extract ------------------------------------------------------------
+
+    fn choose_destination_and_extract(&self) {
+        let Some(archive) = self.imp().archive_path.borrow().clone() else {
+            return;
+        };
+
+        let dialog = gtk::FileDialog::builder()
+            .title(gettext("Extract To"))
+            .modal(true)
+            .build();
+
+        let window = self.clone();
+        dialog.select_folder(Some(self), gio::Cancellable::NONE, move |result| match result {
+            Ok(folder) => match folder.path() {
+                Some(dest) => window.start_extract(archive.clone(), dest, None),
+                None => window.show_toast(&gettext("That folder can't be written to directly.")),
+            },
+            Err(err) => {
+                if !err.matches(gtk::DialogError::Dismissed) {
+                    window.show_toast(err.message());
+                }
+            }
+        });
     }
+
+    fn start_extract(&self, archive: PathBuf, dest: PathBuf, password: Option<String>) {
+        let name = file_name(&archive);
+        let row = SeptimaProgressRow::new(&format!("{}: {name}", gettext("Extracting")));
+        let imp = self.imp();
+        imp.jobs_box.append(&row);
+        imp.jobs_revealer.set_reveal_child(true);
+
+        let cancel = septima_engine::new_cancel_token();
+        let cancel_ui = cancel.clone();
+        row.connect_cancel(move || cancel_ui.store(true, Ordering::Relaxed));
+
+        let (sender, receiver) = async_channel::unbounded::<Job>();
+        let sevenzip = septima_engine::sevenzip_path();
+        let req = ExtractRequest {
+            archive: archive.clone(),
+            dest_dir: dest.clone(),
+            password,
+            overwrite: OverwriteMode::default(),
+        };
+
+        std::thread::spawn(move || {
+            let result = septima_engine::run_extract(&sevenzip, &req, &cancel, |p| {
+                let _ = sender.send_blocking(Job::Progress(p.clone()));
+            });
+            let _ = sender.send_blocking(Job::Done(result));
+        });
+
+        let window = self.clone();
+        glib::spawn_future_local(async move {
+            while let Ok(message) = receiver.recv().await {
+                match message {
+                    Job::Progress(p) => row.set_progress(p.percent, p.current_file.as_deref()),
+                    Job::Done(result) => {
+                        window.finish_job(&row);
+                        match result {
+                            Ok(()) => window.show_toast(&format!(
+                                "{} {}",
+                                gettext("Extracted to"),
+                                dest.display()
+                            )),
+                            Err(EngineError::Cancelled) => {} // silent
+                            Err(EngineError::PasswordRequired) => {
+                                window.prompt_password(archive.clone(), dest.clone())
+                            }
+                            Err(err) => window.show_toast(&err.to_string()),
+                        }
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    fn finish_job(&self, row: &SeptimaProgressRow) {
+        let imp = self.imp();
+        imp.jobs_box.remove(row);
+        if imp.jobs_box.first_child().is_none() {
+            imp.jobs_revealer.set_reveal_child(false);
+        }
+    }
+
+    fn prompt_password(&self, archive: PathBuf, dest: PathBuf) {
+        let dialog = adw::AlertDialog::new(
+            Some(&gettext("Password Required")),
+            Some(&gettext("This archive is encrypted. Enter its password to extract.")),
+        );
+        dialog.add_response("cancel", &gettext("Cancel"));
+        dialog.add_response("unlock", &gettext("Unlock"));
+        dialog.set_response_appearance("unlock", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("unlock"));
+        dialog.set_close_response("cancel");
+
+        let entry = gtk::PasswordEntry::builder()
+            .show_peek_icon(true)
+            .activates_default(true)
+            .build();
+        dialog.set_extra_child(Some(&entry));
+
+        let window = self.clone();
+        dialog.connect_response(None, move |_, response| {
+            if response == "unlock" {
+                let password = entry.text().to_string();
+                window.start_extract(archive.clone(), dest.clone(), Some(password));
+            }
+        });
+        dialog.present(Some(self));
+    }
+
+    fn show_toast(&self, message: &str) {
+        self.imp().toast_overlay.add_toast(adw::Toast::new(message));
+    }
+}
+
+fn file_name(path: &std::path::Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
