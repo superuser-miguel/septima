@@ -10,12 +10,43 @@ template $SeptimaWindow: Adw.ApplicationWindow {
 
   content: Adw.ToolbarView {
     [top]
-    Adw.HeaderBar {}
+    Adw.HeaderBar {
+      [start]
+      Gtk.Button open_button {
+        icon-name: "document-open-symbolic";
+        tooltip-text: _("Open Archive");
+        clicked => $on_open_clicked();
+      }
+    }
 
-    content: Adw.StatusPage status_page {
-      icon-name: "package-x-generic-symbolic";
-      title: _("Open an Archive");
-      description: _("Select a .7z, .zip, .tar or other supported archive to view its contents.");
+    content: Adw.ToastOverlay toast_overlay {
+      Gtk.Stack stack {
+        Gtk.StackPage {
+          name: "empty";
+
+          child: Adw.StatusPage status_page {
+            icon-name: "package-x-generic-symbolic";
+            title: _("Open an Archive");
+            description: _("Select a .7z, .zip, .tar or other supported archive to view its contents.");
+
+            child: Gtk.Button {
+              halign: center;
+              label: _("Open Archive…");
+              clicked => $on_open_clicked();
+
+              styles [
+                "pill",
+                "suggested-action",
+              ]
+            };
+          };
+        }
+
+        Gtk.StackPage {
+          name: "archive";
+          child: $SeptimaArchiveView archive_view {};
+        }
+      }
     };
   };
 }

@@ -1,5 +1,7 @@
 //! Septima — GTK4 / libadwaita frontend for 7-Zip ZS (`7zz`).
 
+mod archive_view;
+mod entry_object;
 mod window;
 
 mod config {
@@ -34,19 +36,32 @@ fn main() -> glib::ExitCode {
 
     let app = adw::Application::builder()
         .application_id(config::APP_ID)
+        .flags(gio::ApplicationFlags::HANDLES_OPEN)
         .build();
 
     app.connect_startup(|_| load_css());
-    app.connect_activate(|app| {
-        // Fully qualified: adw::prelude globs several traits that each define
-        // `present()`, so a bare method call is ambiguous.
-        let window = app
-            .active_window()
-            .unwrap_or_else(|| SeptimaWindow::new(app).upcast());
-        gtk::prelude::GtkWindowExt::present(&window);
+    app.connect_activate(|app| present(&window_for(app)));
+    app.connect_open(|app, files, _hint| {
+        let window = window_for(app);
+        if let Some(file) = files.first() {
+            window.open_file(file.clone());
+        }
+        present(&window);
     });
 
     app.run()
+}
+
+fn window_for(app: &adw::Application) -> SeptimaWindow {
+    app.active_window()
+        .and_downcast::<SeptimaWindow>()
+        .unwrap_or_else(|| SeptimaWindow::new(app))
+}
+
+fn present(window: &SeptimaWindow) {
+    // Fully qualified: adw::prelude globs several traits that each define
+    // `present()`, so a bare method call is ambiguous.
+    gtk::prelude::GtkWindowExt::present(window);
 }
 
 fn load_css() {

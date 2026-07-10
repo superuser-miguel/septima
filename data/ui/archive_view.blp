@@ -1,0 +1,31 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SeptimaArchiveView: Adw.Bin {
+  Gtk.Box {
+    orientation: vertical;
+
+    Gtk.Box {
+      styles ["toolbar"]
+
+      Gtk.Label summary_label {
+        xalign: 0;
+        hexpand: true;
+        ellipsize: end;
+        selectable: true;
+      }
+    }
+
+    Gtk.ScrolledWindow {
+      vexpand: true;
+      hexpand: true;
+
+      Gtk.ColumnView column_view {
+        styles ["data-table"]
+
+        show-column-separators: true;
+        show-row-separators: true;
+      }
+    }
+  }
+}

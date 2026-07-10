@@ -1,9 +1,15 @@
 # Blueprint → .ui (Work Area B1)
 blueprints = custom_target(
   'blueprints',
-  input: files('ui/window.blp'),
-  output: 'window.ui',
-  command: [blueprint_compiler, 'compile', '--output', '@OUTPUT@', '@INPUT@'],
+  input: files('ui/window.blp', 'ui/archive_view.blp'),
+  output: ['window.ui', 'archive_view.ui'],
+  command: [
+    blueprint_compiler,
+    'batch-compile',
+    '@OUTDIR@',
+    meson.current_source_dir() / 'ui',
+    '@INPUT@',
+  ],
 )
 
 # Bundle the gresource (window.ui from the build dir, style.css from the source

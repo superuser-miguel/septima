@@ -65,8 +65,10 @@ fn main() {
         "cargo:rerun-if-changed={}",
         manifest_dir.join("src/config.rs.in").display()
     );
-    for p in ["ui/window.blp", "style.css", "resources.gresource.xml"] {
-        println!("cargo:rerun-if-changed={}", data_dir.join(p).display());
+    println!("cargo:rerun-if-changed={}", data_dir.join("style.css").display());
+    println!("cargo:rerun-if-changed={}", data_dir.join("resources.gresource.xml").display());
+    for blp in blueprints(&data_dir) {
+        println!("cargo:rerun-if-changed={}", blp.display());
     }
     for v in [
         "SEPTIMA_APP_ID",
@@ -78,16 +80,19 @@ fn main() {
     }
 }
 
-/// cargo-dev only: compile the Blueprint and bundle the gresource into OUT_DIR.
+/// cargo-dev only: compile every Blueprint and bundle the gresource into OUT_DIR.
 fn compile_resources(data_dir: &Path, out_dir: &Path) {
-    run(
-        Command::new("blueprint-compiler")
-            .arg("compile")
-            .arg(data_dir.join("ui/window.blp"))
-            .arg("--output")
-            .arg(out_dir.join("window.ui")),
-        "blueprint-compiler",
-    );
+    for blp in blueprints(data_dir) {
+        let ui = out_dir.join(blp.file_stem().unwrap()).with_extension("ui");
+        run(
+            Command::new("blueprint-compiler")
+                .arg("compile")
+                .arg(&blp)
+                .arg("--output")
+                .arg(&ui),
+            "blueprint-compiler",
+        );
+    }
     fs::copy(data_dir.join("style.css"), out_dir.join("style.css")).expect("copy style.css");
     let gresource_xml = out_dir.join("resources.gresource.xml");
     fs::copy(data_dir.join("resources.gresource.xml"), &gresource_xml)
@@ -101,6 +106,17 @@ fn compile_resources(data_dir: &Path, out_dir: &Path) {
             .arg(&gresource_xml),
         "glib-compile-resources",
     );
+}
+
+/// Every `*.blp` under `data/ui`, sorted for deterministic builds.
+fn blueprints(data_dir: &Path) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = fs::read_dir(data_dir.join("ui"))
+        .expect("read data/ui")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().is_some_and(|x| x == "blp"))
+        .collect();
+    v.sort();
+    v
 }
 
 fn run(cmd: &mut Command, tool: &str) {
