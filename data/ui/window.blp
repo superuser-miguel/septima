@@ -1,0 +1,21 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SeptimaWindow: Adw.ApplicationWindow {
+  default-width: 900;
+  default-height: 600;
+  width-request: 360;
+  height-request: 200;
+  title: _("Septima");
+
+  content: Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {}
+
+    content: Adw.StatusPage status_page {
+      icon-name: "package-x-generic-symbolic";
+      title: _("Open an Archive");
+      description: _("Select a .7z, .zip, .tar or other supported archive to view its contents.");
+    };
+  };
+}

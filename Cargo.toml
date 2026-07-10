@@ -21,15 +21,9 @@ authors = ["Miguel Almanzar <xmm.user@gmail.com>"]
 # Internal crates
 septima-engine = { path = "crates/septima-engine" }
 
-# --- GTK stack (wired into septima-gtk in Task A2) ---
-# Declared centrally but intentionally NOT yet referenced by any crate, so the
-# workspace builds on a host without gtk4-devel. A2 uncomments these (resolving
-# exact versions via `cargo add`) and adds them to septima-gtk/Cargo.toml.
-# Host `cargo run` then needs: gtk4-devel + libadwaita-devel (Fedora); otherwise
-# build inside the GNOME Flatpak SDK.
-#   gtk   = { package = "gtk4", version = "..." }        # gtk4-rs
-#   adw   = { package = "libadwaita", version = "..." }
-#   ashpd = { version = "..." }                          # XDG portals (Work Area C)
+# GTK stack lives in septima-gtk/Cargo.toml (wired in Task A2). Host `cargo run`
+# needs gtk4-devel + libadwaita-devel (Fedora); otherwise build inside the GNOME
+# Flatpak SDK. ashpd (portals) is added in Work Area C, where it is first used.
 
 [profile.release]
 lto = "thin"

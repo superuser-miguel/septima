@@ -1,0 +1,7 @@
+/* Septima custom CSS (Kickoff B4).
+ *
+ * libadwaita defaults first; add rules here only where the GNOME HIG has no
+ * widget for the need. Both dark and light schemes must work — test with
+ * ADW_DEBUG_COLOR_SCHEME=prefer-dark. Empty for now (A2 scaffolding); this file
+ * exists to prove the .blp -> gresource -> CssProvider pipeline end to end.
+ */

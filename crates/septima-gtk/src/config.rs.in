@@ -1,0 +1,12 @@
+// Template for the generated `config.rs`.
+//
+// Filled by build.rs for plain `cargo` builds, and by Meson's configure_file in
+// Task A3 (both use @VAR@ substitution, so this single template serves both).
+// Never edit the generated config.rs — edit this template.
+
+pub const APP_ID: &str = "@APP_ID@";
+pub const VERSION: &str = "@VERSION@";
+pub const PROFILE: &str = "@PROFILE@";
+pub const GRESOURCE_PREFIX: &str = "@GRESOURCE_PREFIX@";
+pub const GETTEXT_PACKAGE: &str = "@GETTEXT_PACKAGE@";
+pub const LOCALEDIR: &str = "@LOCALEDIR@";
