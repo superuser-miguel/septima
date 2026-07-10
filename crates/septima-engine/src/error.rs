@@ -8,6 +8,8 @@ pub enum EngineError {
     Spawn(io::Error),
     /// The archive (or its header) is encrypted; a password is required to list it.
     PasswordRequired,
+    /// The operation was cancelled by the caller.
+    Cancelled,
     /// `7zz` exited non-zero for another reason.
     SevenZip { code: Option<i32>, stderr: String },
 }
@@ -17,6 +19,7 @@ impl fmt::Display for EngineError {
         match self {
             EngineError::Spawn(e) => write!(f, "failed to run 7zz: {e}"),
             EngineError::PasswordRequired => write!(f, "a password is required to read this archive"),
+            EngineError::Cancelled => write!(f, "the operation was cancelled"),
             EngineError::SevenZip { code, stderr } => match code {
                 Some(c) => write!(f, "7zz exited with code {c}: {}", stderr.trim()),
                 None => write!(f, "7zz was terminated: {}", stderr.trim()),
