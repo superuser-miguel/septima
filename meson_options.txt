@@ -1,0 +1,7 @@
+option(
+  'profile',
+  type: 'combo',
+  choices: ['default', 'development'],
+  value: 'development',
+  description: 'Build profile: `development` uses the .Devel app id and a debug build; `default` is a release build.',
+)

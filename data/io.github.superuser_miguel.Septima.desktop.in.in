@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=Septima
+GenericName=Archive Manager
+Comment=Browse and create modern-codec 7-Zip archives
+Type=Application
+Exec=septima %U
+Terminal=false
+Categories=Utility;Archiving;Compression;
+Icon=@app-id@
+StartupNotify=true
+StartupWMClass=@app-id@
+Keywords=7z;7-Zip;zip;tar;zstd;brotli;archive;compression;extract;
+MimeType=application/x-7z-compressed;application/zip;application/x-tar;application/gzip;application/x-xz;application/zstd;

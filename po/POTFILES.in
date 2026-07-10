@@ -1,0 +1,5 @@
+data/io.github.superuser_miguel.Septima.desktop.in.in
+data/io.github.superuser_miguel.Septima.metainfo.xml.in.in
+data/ui/window.blp
+crates/septima-gtk/src/main.rs
+crates/septima-gtk/src/window.rs

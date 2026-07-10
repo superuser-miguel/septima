@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright 2026 Miguel Almanzar -->
+<component type="desktop-application">
+  <id>@app-id@</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Septima</name>
+  <summary>Browse and create modern-codec 7-Zip archives</summary>
+  <description>
+    <p>
+      Septima is a GTK frontend for 7-Zip ZS (7zz) that speaks modern
+      compression codecs — Zstandard, Brotli and Fast-LZMA2 — with a real
+      compression-tuning interface. It is an archive tool, not a file manager.
+    </p>
+  </description>
+  <launchable type="desktop-id">@app-id@.desktop</launchable>
+  <url type="homepage">https://github.com/superuser-miguel/septima</url>
+  <url type="bugtracker">https://github.com/superuser-miguel/septima/issues</url>
+  <developer id="io.github.superuser_miguel">
+    <name>Miguel Almanzar</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="0.1.0" date="2026-07-10">
+      <description>
+        <p>Initial development scaffolding.</p>
+      </description>
+    </release>
+  </releases>
+</component>

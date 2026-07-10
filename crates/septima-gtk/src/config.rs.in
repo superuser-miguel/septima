@@ -1,8 +1,9 @@
 // Template for the generated `config.rs`.
 //
-// Filled by build.rs for plain `cargo` builds, and by Meson's configure_file in
-// Task A3 (both use @VAR@ substitution, so this single template serves both).
-// Never edit the generated config.rs — edit this template.
+// Filled by build.rs, sourcing values from Meson (via env) or dev defaults for
+// plain `cargo` builds. Meson passes @VAR@-style values through the environment
+// rather than substituting this file directly. Never edit the generated
+// config.rs — edit this template.
 
 pub const APP_ID: &str = "@APP_ID@";
 pub const VERSION: &str = "@VERSION@";
@@ -10,3 +11,6 @@ pub const PROFILE: &str = "@PROFILE@";
 pub const GRESOURCE_PREFIX: &str = "@GRESOURCE_PREFIX@";
 pub const GETTEXT_PACKAGE: &str = "@GETTEXT_PACKAGE@";
 pub const LOCALEDIR: &str = "@LOCALEDIR@";
+/// Directory holding installed resources (septima.gresource). The install
+/// pkgdatadir under Meson; OUT_DIR under a plain `cargo` build.
+pub const PKGDATADIR: &str = "@PKGDATADIR@";

@@ -25,9 +25,12 @@ fn main() -> glib::ExitCode {
         .expect("bind_textdomain_codeset");
     gettextrs::textdomain(config::GETTEXT_PACKAGE).expect("textdomain");
 
-    // Register the compiled gresource bundle (window.ui, style.css).
-    gio::resources_register_include!("septima.gresource")
-        .expect("register gresources");
+    // Load the compiled gresource bundle (window.ui, style.css) from the install
+    // dir under Meson, or OUT_DIR under a plain `cargo` build (see build.rs).
+    let gresource_path = format!("{}/septima.gresource", config::PKGDATADIR);
+    let resource = gio::Resource::load(&gresource_path)
+        .unwrap_or_else(|e| panic!("failed to load gresource at {gresource_path}: {e}"));
+    gio::resources_register(&resource);
 
     let app = adw::Application::builder()
         .application_id(config::APP_ID)

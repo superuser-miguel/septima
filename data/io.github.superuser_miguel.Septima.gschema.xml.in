@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="@app-id@" path="@gschema-path@">
+    <!-- No keys yet. Window/session-state persistence beyond defaults is out of
+         scope (kickoff §8). Keys for recent archives (Work Area C) and named
+         compression presets (Phase 3) are added when those land. -->
+  </schema>
+</schemalist>
