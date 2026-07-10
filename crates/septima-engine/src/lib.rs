@@ -10,13 +10,18 @@
 //! paths — including opaque doc-portal paths under `/run/user/*/doc/` — without
 //! normalization (Work Area C1).
 
+pub mod capabilities;
 mod command;
+mod compress;
 mod error;
 mod extract;
 mod listing;
 mod progress;
+mod supervise;
 
+pub use capabilities::{formats, Codec, Format};
 pub use command::{list_archive, sevenzip_path};
+pub use compress::{run_add, CompressionRequest};
 pub use error::EngineError;
 pub use extract::{new_cancel_token, run_extract, CancelToken, ExtractRequest, OverwriteMode};
 pub use listing::{parse_listing, ArchiveEntry, ArchiveListing};
