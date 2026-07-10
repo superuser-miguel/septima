@@ -1,0 +1,20 @@
+[package]
+name = "septima-gtk"
+description = "GTK4 / libadwaita frontend for 7-Zip ZS (Septima)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+default-run = "septima"
+
+[[bin]]
+name = "septima"
+path = "src/main.rs"
+
+[dependencies]
+septima-engine = { workspace = true }
+# GTK stack (gtk4 / libadwaita / ashpd) is added here in Task A2 — see the
+# commented block in the workspace Cargo.toml. Not present yet so this crate
+# builds without gtk4-devel on the host.

@@ -1,0 +1,13 @@
+[package]
+name = "septima-engine"
+description = "UI-free supervision and output parsing for the 7zz (7-Zip ZS) CLI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# HARD BOUNDARY (Kickoff A1): no gtk4 / glib / adw / ashpd here, ever.
+# This crate deals only in plain paths, byte streams, and data types.
+[dependencies]

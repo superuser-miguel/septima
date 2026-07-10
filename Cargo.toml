@@ -1,0 +1,35 @@
+# Septima — Cargo workspace root.
+# Meson drives this build in the real pipeline (Kickoff A3); plain `cargo` works
+# for the engine crate and, once gtk4-devel is present, for the app crate (A2).
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/septima-engine",
+    "crates/septima-gtk",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.94"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/superuser-miguel/septima"
+authors = ["Miguel Almanzar <xmm.user@gmail.com>"]
+
+[workspace.dependencies]
+# Internal crates
+septima-engine = { path = "crates/septima-engine" }
+
+# --- GTK stack (wired into septima-gtk in Task A2) ---
+# Declared centrally but intentionally NOT yet referenced by any crate, so the
+# workspace builds on a host without gtk4-devel. A2 uncomments these (resolving
+# exact versions via `cargo add`) and adds them to septima-gtk/Cargo.toml.
+# Host `cargo run` then needs: gtk4-devel + libadwaita-devel (Fedora); otherwise
+# build inside the GNOME Flatpak SDK.
+#   gtk   = { package = "gtk4", version = "..." }        # gtk4-rs
+#   adw   = { package = "libadwaita", version = "..." }
+#   ashpd = { version = "..." }                          # XDG portals (Work Area C)
+
+[profile.release]
+lto = "thin"

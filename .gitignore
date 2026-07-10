@@ -1,0 +1,30 @@
+# --- Rust / Cargo ---
+/target/
+**/*.rs.bk
+# Cargo.lock IS committed: Septima ships binaries, so the lockfile is tracked.
+
+# --- Meson / build outputs ---
+/build/
+/builddir/
+/_build/
+
+# --- Flatpak ---
+/.flatpak-builder/
+/build-dir/
+/repo/
+
+# --- Blueprint ---
+# Compiled *.ui XML is a build artifact generated into the build dir, never in-tree.
+
+# --- Local planning docs (context for Claude, not repo content) ---
+/SEPTIMA_KICKOFF_PLAN.md
+/FEATURE_PARITY_RESEARCH.md
+/septima_plan.odp
+/septima_plan.pptx
+
+# --- Editors / OS ---
+*.swp
+*~
+.idea/
+.vscode/
+.DS_Store
