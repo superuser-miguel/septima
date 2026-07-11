@@ -14,6 +14,24 @@
     </p>
   </description>
   <launchable type="desktop-id">@app-id@.desktop</launchable>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Choosing a modern codec in the Add-to-Archive dialog</caption>
+      <image>https://raw.githubusercontent.com/superuser-miguel/septima/main/docs/screenshots/codec-menu.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Reactive tuning with a live memory estimate</caption>
+      <image>https://raw.githubusercontent.com/superuser-miguel/septima/main/docs/screenshots/create-dialog.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Executable optimization, split volumes and encryption</caption>
+      <image>https://raw.githubusercontent.com/superuser-miguel/septima/main/docs/screenshots/create-options.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Opening an archive</caption>
+      <image>https://raw.githubusercontent.com/superuser-miguel/septima/main/docs/screenshots/welcome.png</image>
+    </screenshot>
+  </screenshots>
   <url type="homepage">https://github.com/superuser-miguel/septima</url>
   <url type="bugtracker">https://github.com/superuser-miguel/septima/issues</url>
   <developer id="io.github.superuser_miguel">

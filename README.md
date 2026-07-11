@@ -13,6 +13,10 @@ code: a UI-free engine crate supervises the `7zz` binary as a subprocess.
 > Status: early but working. Browse, extract, and create-with-tuning all
 > function today in a sandboxed Flatpak. See the [roadmap](#roadmap).
 
+<p align="center">
+  <img src="docs/screenshots/codec-menu.png" alt="Septima's Add-to-Archive dialog with the modern-codec method menu open — LZMA2, Zstandard, Brotli, Fast-LZMA2, LZ4, LZ5, Lizard and more" width="640">
+</p>
+
 ---
 
 ## Why Septima?
@@ -51,6 +55,13 @@ Where Septima aims to *win*, not just match:
   - Split into volumes (`.001`, `.002`, …).
 - Ships as a **Flatpak** with `7zz` bundled — **portals only, no host filesystem
   access** by design.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/create-dialog.png" alt="Create dialog with reactive level range and a live memory estimate"><br><em>Reactive tuning — level ranges follow the codec, with a live memory estimate.</em></td>
+<td width="50%"><img src="docs/screenshots/create-options.png" alt="Executable optimization, split volumes, advanced switches, and encryption"><br><em>Executable optimization, split volumes, advanced switches, and encryption.</em></td>
+</tr>
+</table>
 
 ## Install / Build
 
