@@ -1,10 +1,12 @@
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use crate::command::is_compressed_tar;
 use crate::error::EngineError;
-use crate::progress::ExtractProgress;
+use crate::progress::{apply_fragment, ExtractProgress};
 use crate::supervise::supervise;
 
 /// How `7zz` should treat files that already exist at the destination (`-ao*`).
@@ -66,6 +68,11 @@ pub fn run_extract(
     cancel: &CancelToken,
     on_progress: impl FnMut(&ExtractProgress),
 ) -> Result<(), EngineError> {
+    // Transparently peel a compressed tar so the files land, not the .tar.
+    if is_compressed_tar(&req.archive) {
+        return extract_compressed_tar(sevenzip, req, cancel, on_progress);
+    }
+
     let mut cmd = Command::new(sevenzip);
     cmd.arg("x")
         .arg("-bsp1") // progress to stdout
@@ -84,4 +91,93 @@ pub fn run_extract(
 
     let child = cmd.spawn().map_err(EngineError::Spawn)?;
     supervise(child, cancel, on_progress)
+}
+
+/// Extract a compressed tar to `dest_dir` by piping the decompressed outer
+/// stream into `7zz x -si -ttar` — so the files land, not the intermediate tar.
+/// Decompression progress arrives on the first process's stderr (`-bsp2`).
+fn extract_compressed_tar(
+    sevenzip: &Path,
+    req: &ExtractRequest,
+    cancel: &CancelToken,
+    mut on_progress: impl FnMut(&ExtractProgress),
+) -> Result<(), EngineError> {
+    let mut decompress = Command::new(sevenzip)
+        .arg("x")
+        .arg("-so")
+        .arg("-bsp2") // progress to stderr, so stdout stays the tar stream
+        .arg("-bb1")
+        .arg("--")
+        .arg(&req.archive)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(EngineError::Spawn)?;
+    let tar_stream = decompress.stdout.take().expect("piped stdout");
+
+    let mut untar = Command::new(sevenzip)
+        .arg("x")
+        .arg("-si")
+        .arg("-ttar")
+        .arg("-y")
+        .arg(req.overwrite.flag())
+        .arg(format!("-o{}", req.dest_dir.display()))
+        .stdin(Stdio::from(tar_stream))
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(EngineError::Spawn)?;
+
+    // Stream the decompressor's progress (its stderr), honouring cancellation.
+    let mut stderr = decompress.stderr.take().expect("piped stderr");
+    let mut buf = [0u8; 4096];
+    let mut fragment: Vec<u8> = Vec::new();
+    let mut state = ExtractProgress::default();
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = decompress.kill();
+            let _ = untar.kill();
+            let _ = decompress.wait();
+            let _ = untar.wait();
+            return Err(EngineError::Cancelled);
+        }
+        let n = stderr.read(&mut buf).map_err(EngineError::Spawn)?;
+        if n == 0 {
+            break;
+        }
+        for &byte in &buf[..n] {
+            if byte == b'\r' || byte == b'\n' {
+                if !fragment.is_empty() {
+                    let text = String::from_utf8_lossy(&fragment);
+                    if apply_fragment(&mut state, &text) {
+                        on_progress(&state);
+                    }
+                    fragment.clear();
+                }
+            } else {
+                fragment.push(byte);
+            }
+        }
+    }
+
+    let decompress_status = decompress.wait().map_err(EngineError::Spawn)?;
+    let untar_status = untar.wait().map_err(EngineError::Spawn)?;
+    let mut untar_err = String::new();
+    if let Some(mut e) = untar.stderr.take() {
+        let _ = e.read_to_string(&mut untar_err);
+    }
+
+    if decompress_status.success() && untar_status.success() {
+        return Ok(());
+    }
+    let code = if untar_status.success() {
+        decompress_status.code()
+    } else {
+        untar_status.code()
+    };
+    Err(EngineError::SevenZip {
+        code,
+        stderr: untar_err,
+    })
 }
