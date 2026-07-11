@@ -143,6 +143,8 @@ meson compile -C builddir
       add / update / freshen / sync).
 - [x] **Hash calculator** — CRC-32, SHA-256/512, SHA3-256, BLAKE3, xxHash, with
       copy and verify-against-a-checksum.
+- [ ] **Generate a checksum file** — optionally write a `.sha256` / `SHA256SUMS`
+      alongside a newly created archive.
 - [ ] In-archive delete / rename; the "Test archive" action.
 - [ ] Lizard family × level picker.
 - [ ] Custom visual styling and app icon.
