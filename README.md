@@ -89,9 +89,14 @@ meson compile -C builddir
 
 ## Roadmap
 
-- [ ] **Transparent nested browsing** — open a `.tar.zst` and see the files
-      inside (not just the outer tar). Completes the "one-gesture both ways" goal.
-- [ ] **Named compression presets** — save and reuse tuning profiles.
+- [x] **Transparent nested browsing** — open a `.tar.zst` / `.tgz` / `.tar.xz`
+      and see the files inside, not the intermediate tar.
+- [x] **Named compression presets** — save and reuse tuning profiles.
+- [ ] **Transparent nested extract** — extracting a `.tar.zst` yields the files
+      directly, completing the "one-gesture both ways" goal.
+- [ ] **More encryption methods** — XChaCha20-Poly1305, AES+XChaCha20 and
+      friends via `-mem`, once the bundled 7-Zip ZS build ships them
+      ([mcmilk/7-Zip-zstd#505](https://github.com/mcmilk/7-Zip-zstd/pull/505)).
 - [ ] In-archive delete / rename; hash calculator (BLAKE3, SHA-3, xxHash).
 - [ ] Lizard family × level picker.
 - [ ] Custom visual styling and app icon.

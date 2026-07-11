@@ -172,6 +172,18 @@ mod tests {
     }
 
     #[test]
+    fn detects_compressed_tars() {
+        use crate::command::is_compressed_tar;
+        use std::path::Path;
+        for yes in ["a.tar.zst", "b.TAR.GZ", "c.tgz", "d.tar.xz", "e.tbz2"] {
+            assert!(is_compressed_tar(Path::new(yes)), "{yes}");
+        }
+        for no in ["a.7z", "b.zip", "c.tar", "d.zst"] {
+            assert!(!is_compressed_tar(Path::new(no)), "{no}");
+        }
+    }
+
+    #[test]
     fn parses_zip_folder_flag_and_store_method() {
         let l = parse_listing(LIST_ZIP);
         assert_eq!(l.format.as_deref(), Some("zip"));
