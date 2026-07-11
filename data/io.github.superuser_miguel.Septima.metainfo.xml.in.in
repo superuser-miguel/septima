@@ -39,9 +39,16 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
-    <release version="0.1.0" date="2026-07-10">
+    <release version="0.1.0" date="2026-07-11">
       <description>
-        <p>Initial development scaffolding.</p>
+        <p>First release.</p>
+        <ul>
+          <li>Browse, extract (with progress, cancel and password support), and create archives.</li>
+          <li>Modern codecs — Zstandard, Brotli, Fast-LZMA2, LZ4/LZ5 and Lizard, alongside LZMA2, PPMd and BZip2.</li>
+          <li>A compression-tuning dialog with reactive level ranges, a live memory estimate, split volumes and named presets.</li>
+          <li>Transparent modern tarballs — create, browse and extract .tar.zst / .tar.xz in one gesture.</li>
+          <li>A checksum calculator (CRC, SHA-256/512, SHA3, BLAKE3, xxHash) with verify-against-a-checksum-file.</li>
+        </ul>
       </description>
     </release>
   </releases>
