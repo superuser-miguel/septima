@@ -5,6 +5,22 @@ use adw::subclass::prelude::*;
 use gtk::{glib, CompositeTemplate, TemplateChild};
 
 use septima_engine::capabilities::{formats, Codec, Format};
+use septima_engine::estimate_add_memory;
+
+/// Dictionary-size presets: (label, `-md` arg, size in bytes). `None` = Auto.
+const DICT_PRESETS: &[(&str, Option<&str>, Option<u64>)] = &[
+    ("Auto", None, None),
+    ("1 MiB", Some("1m"), Some(1 << 20)),
+    ("4 MiB", Some("4m"), Some(4 << 20)),
+    ("16 MiB", Some("16m"), Some(16 << 20)),
+    ("64 MiB", Some("64m"), Some(64 << 20)),
+    ("256 MiB", Some("256m"), Some(256 << 20)),
+    ("1 GiB", Some("1g"), Some(1 << 30)),
+];
+
+fn codec_uses_dictionary(codec: &Codec) -> bool {
+    matches!(codec.id, "lzma2" | "lzma" | "flzma2")
+}
 
 /// The compression settings collected by the dialog (output path is chosen after).
 pub struct CreateSettings {
@@ -13,8 +29,12 @@ pub struct CreateSettings {
     pub codec: &'static Codec,
     pub level: Option<u8>,
     pub threads: u32,
+    pub dictionary: Option<String>,
+    pub solid: Option<bool>,
+    pub bcj: bool,
     pub password: Option<String>,
     pub encrypt_headers: bool,
+    pub extra_params: Vec<String>,
 }
 
 type CreateCallback = Box<dyn Fn(&SeptimaCreateDialog)>;
@@ -35,6 +55,16 @@ mod imp {
         pub level_row: TemplateChild<adw::SpinRow>,
         #[template_child]
         pub threads_row: TemplateChild<adw::SpinRow>,
+        #[template_child]
+        pub dictionary_row: TemplateChild<adw::ComboRow>,
+        #[template_child]
+        pub solid_row: TemplateChild<adw::SwitchRow>,
+        #[template_child]
+        pub memory_row: TemplateChild<adw::ActionRow>,
+        #[template_child]
+        pub bcj_row: TemplateChild<adw::SwitchRow>,
+        #[template_child]
+        pub params_row: TemplateChild<adw::EntryRow>,
         #[template_child]
         pub password_row: TemplateChild<adw::PasswordEntryRow>,
         #[template_child]
@@ -79,15 +109,22 @@ mod imp {
             self.parent_constructed();
             let obj = self.obj();
 
-            // Format list.
             let format_labels: Vec<&str> = formats().iter().map(|f| f.label).collect();
             self.format_row.set_model(Some(&gtk::StringList::new(&format_labels)));
 
-            // Default thread count = available CPUs.
+            let dict_labels: Vec<&str> = DICT_PRESETS.iter().map(|(l, _, _)| *l).collect();
+            self.dictionary_row.set_model(Some(&gtk::StringList::new(&dict_labels)));
+
             let cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
             self.threads_row.adjustment().set_upper(cpus.max(1) as f64);
             self.threads_row.adjustment().set_value(cpus as f64);
 
+            // Anything that affects the memory estimate refreshes it live.
+            let refresh = glib::clone!(
+                #[weak]
+                obj,
+                move |_: &_| obj.imp().update_memory()
+            );
             self.format_row.connect_selected_notify(glib::clone!(
                 #[weak]
                 obj,
@@ -98,8 +135,18 @@ mod imp {
                 obj,
                 move |_| obj.imp().on_codec_changed()
             ));
+            self.dictionary_row.connect_selected_notify(refresh.clone());
+            self.level_row.adjustment().connect_value_changed(glib::clone!(
+                #[weak]
+                obj,
+                move |_| obj.imp().update_memory()
+            ));
+            self.threads_row.adjustment().connect_value_changed(glib::clone!(
+                #[weak]
+                obj,
+                move |_| obj.imp().update_memory()
+            ));
 
-            // Prime format 0 (rebuilds codecs and level range).
             self.on_format_changed();
         }
     }
@@ -118,11 +165,18 @@ mod imp {
             &fmt.codecs[idx]
         }
 
+        pub(super) fn selected_dict(&self) -> (Option<String>, Option<u64>) {
+            let (_, arg, bytes) = DICT_PRESETS[self.dictionary_row.selected() as usize];
+            (arg.map(str::to_string), bytes)
+        }
+
         fn on_format_changed(&self) {
             let fmt = self.current_format();
             let labels: Vec<&str> = fmt.codecs.iter().map(|c| c.label).collect();
             self.codec_row.set_model(Some(&gtk::StringList::new(&labels)));
             self.codec_row.set_selected(0); // fires on_codec_changed
+            self.solid_row.set_sensitive(fmt.supports_solid);
+            self.bcj_row.set_sensitive(fmt.id == "7z");
             self.encrypt_headers_row.set_sensitive(fmt.supports_header_encryption);
             self.on_codec_changed();
         }
@@ -138,6 +192,21 @@ mod imp {
                 adj.set_upper(codec.level_max as f64);
                 adj.set_value(codec.default_level as f64);
             }
+            self.dictionary_row.set_sensitive(codec_uses_dictionary(codec));
+            self.update_memory();
+        }
+
+        pub(super) fn update_memory(&self) {
+            let codec = self.current_codec();
+            let level = Some(self.level_row.value() as u8);
+            let (_, dict_bytes) = self.selected_dict();
+            let threads = self.threads_row.value() as u32;
+
+            let text = match estimate_add_memory(codec.id, level, dict_bytes, threads) {
+                Some(bytes) => format!("≈ {}", glib::format_size(bytes)),
+                None => "—".to_string(),
+            };
+            self.memory_row.set_subtitle(&text);
         }
     }
 }
@@ -173,10 +242,17 @@ impl SeptimaCreateDialog {
         let codec = imp.current_codec();
 
         let level = (!codec.is_store()).then(|| imp.level_row.value() as u8);
+        let (dictionary, _) = imp.selected_dict();
         let password = {
             let text = imp.password_row.text().to_string();
             (!text.is_empty()).then_some(text)
         };
+        let extra_params = imp
+            .params_row
+            .text()
+            .split_whitespace()
+            .map(str::to_string)
+            .collect();
 
         CreateSettings {
             name: imp.name_row.text().to_string(),
@@ -184,8 +260,12 @@ impl SeptimaCreateDialog {
             codec,
             level,
             threads: imp.threads_row.value() as u32,
+            dictionary: dictionary.filter(|_| codec_uses_dictionary(codec)),
+            solid: format.supports_solid.then(|| imp.solid_row.is_active()),
+            bcj: format.id == "7z" && imp.bcj_row.is_active(),
             password,
             encrypt_headers: format.supports_header_encryption && imp.encrypt_headers_row.is_active(),
+            extra_params,
         }
     }
 }

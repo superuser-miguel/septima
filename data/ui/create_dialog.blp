@@ -73,6 +73,40 @@ template $SeptimaCreateDialog: Adw.Dialog {
             value: 1;
           };
         }
+
+        Adw.ComboRow dictionary_row {
+          title: _("Dictionary size");
+        }
+
+        Adw.SwitchRow solid_row {
+          title: _("Solid archive");
+          subtitle: _("Better ratio; slower to update or open a single file");
+        }
+
+        Adw.ActionRow memory_row {
+          title: _("Estimated memory");
+          subtitle: _("—");
+        }
+      }
+
+      Adw.PreferencesGroup {
+        title: _("Options");
+
+        Adw.SwitchRow bcj_row {
+          title: _("Optimize for executables");
+          subtitle: _("Adds a BCJ filter that helps compress programs (7z)");
+        }
+      }
+
+      Adw.PreferencesGroup {
+        Adw.ExpanderRow {
+          title: _("Advanced");
+          subtitle: _("Extra 7-Zip switches");
+
+          Adw.EntryRow params_row {
+            title: _("Parameters, e.g. -myx=on");
+          }
+        }
       }
 
       Adw.PreferencesGroup {

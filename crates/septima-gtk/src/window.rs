@@ -422,8 +422,12 @@ fn compression_request(
     req.codec = Some(settings.codec.id.to_string());
     req.level = settings.level;
     req.threads = Some(settings.threads);
+    req.dictionary = settings.dictionary.clone();
+    req.solid = settings.solid;
+    req.bcj = settings.bcj;
     req.password = settings.password.clone();
     req.encrypt_headers = settings.encrypt_headers;
+    req.extra_params = settings.extra_params.clone();
     req
 }
 
