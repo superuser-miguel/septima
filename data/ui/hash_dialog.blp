@@ -1,0 +1,77 @@
+using Gtk 4.0;
+using Adw 1;
+
+template $SeptimaHashDialog: Adw.Dialog {
+  title: _("Checksums");
+  content-width: 580;
+  content-height: 660;
+
+  Adw.ToolbarView {
+    [top]
+    Adw.HeaderBar {
+      [start]
+      Gtk.Button add_button {
+        label: _("Add Files…");
+        clicked => $on_add_clicked() swapped;
+      }
+    }
+
+    content: Gtk.Stack stack {
+      Gtk.StackPage {
+        name: "empty";
+
+        child: Adw.StatusPage {
+          icon-name: "text-x-generic-symbolic";
+          title: _("Compute Checksums");
+          description: _("Add files to see their CRC, SHA-256, SHA-3, BLAKE3 and xxHash digests.");
+
+          child: Gtk.Button {
+            halign: center;
+            label: _("Add Files…");
+            clicked => $on_add_clicked() swapped;
+
+            styles [
+              "pill",
+              "suggested-action",
+            ]
+          };
+        };
+      }
+
+      Gtk.StackPage {
+        name: "results";
+
+        child: Gtk.Box {
+          orientation: vertical;
+
+          Gtk.SearchEntry verify_entry {
+            placeholder-text: _("Paste a checksum to compare…");
+            margin-start: 12;
+            margin-end: 12;
+            margin-top: 12;
+            margin-bottom: 6;
+            search-changed => $on_verify_changed() swapped;
+          }
+
+          Gtk.ScrolledWindow {
+            vexpand: true;
+            hscrollbar-policy: never;
+
+            Adw.Clamp {
+              maximum-size: 640;
+
+              Gtk.Box files_box {
+                orientation: vertical;
+                spacing: 18;
+                margin-start: 12;
+                margin-end: 12;
+                margin-top: 6;
+                margin-bottom: 18;
+              }
+            }
+          }
+        };
+      }
+    };
+  }
+}

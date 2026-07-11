@@ -1,6 +1,15 @@
 using Gtk 4.0;
 using Adw 1;
 
+menu primary_menu {
+  section {
+    item {
+      label: _("Calculate Checksums…");
+      action: "win.checksums";
+    }
+  }
+}
+
 template $SeptimaWindow: Adw.ApplicationWindow {
   default-width: 900;
   default-height: 600;
@@ -33,6 +42,14 @@ template $SeptimaWindow: Adw.ApplicationWindow {
         styles [
           "suggested-action",
         ]
+      }
+
+      [end]
+      Gtk.MenuButton {
+        icon-name: "open-menu-symbolic";
+        menu-model: primary_menu;
+        primary: true;
+        tooltip-text: _("Main Menu");
       }
     }
 

@@ -138,7 +138,9 @@ meson compile -C builddir
 - [ ] **Promote key Advanced switches to real controls** — symlink handling
       (`-snl`), word size / fast bytes (`-mfb`), and update modes (`-u`:
       add / update / freshen / sync).
-- [ ] In-archive delete / rename; hash calculator (BLAKE3, SHA-3, xxHash).
+- [x] **Hash calculator** — CRC-32, SHA-256/512, SHA3-256, BLAKE3, xxHash, with
+      copy and verify-against-a-checksum.
+- [ ] In-archive delete / rename; the "Test archive" action.
 - [ ] Lizard family × level picker.
 - [ ] Custom visual styling and app icon.
 - [ ] Flathub submission.

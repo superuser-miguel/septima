@@ -5,6 +5,7 @@
     <file compressed="true">archive_view.ui</file>
     <file compressed="true">progress_row.ui</file>
     <file compressed="true">create_dialog.ui</file>
+    <file compressed="true">hash_dialog.ui</file>
     <file compressed="true">style.css</file>
   </gresource>
 </gresources>

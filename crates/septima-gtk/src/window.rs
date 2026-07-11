@@ -89,6 +89,11 @@ mod imp {
             if crate::config::PROFILE == "Devel" {
                 self.obj().add_css_class("devel");
             }
+
+            let checksums = gio::ActionEntry::builder("checksums")
+                .activate(|window: &super::SeptimaWindow, _, _| window.open_checksums())
+                .build();
+            self.obj().add_action_entries([checksums]);
         }
     }
 
@@ -412,6 +417,10 @@ impl SeptimaWindow {
                 }
             }
         });
+    }
+
+    fn open_checksums(&self) {
+        crate::hash_dialog::SeptimaHashDialog::new().present(Some(self));
     }
 
     fn show_toast(&self, message: &str) {

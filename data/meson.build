@@ -6,8 +6,15 @@ blueprints = custom_target(
     'ui/archive_view.blp',
     'ui/progress_row.blp',
     'ui/create_dialog.blp',
+    'ui/hash_dialog.blp',
   ),
-  output: ['window.ui', 'archive_view.ui', 'progress_row.ui', 'create_dialog.ui'],
+  output: [
+    'window.ui',
+    'archive_view.ui',
+    'progress_row.ui',
+    'create_dialog.ui',
+    'hash_dialog.ui',
+  ],
   command: [
     blueprint_compiler,
     'batch-compile',
