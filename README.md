@@ -67,6 +67,40 @@ Where Septima aims to *win*, not just match:
 </tr>
 </table>
 
+## Power-user switches
+
+The create dialog's **Advanced → parameters** field is a free-text escape hatch:
+whatever you type is passed straight to `7zz a`. It's for the long tail of
+7-Zip's `-m` (method) and `-s` (store) switches that don't each earn a control.
+A few of the useful ones:
+
+**Codec fine-tuning**
+
+| Switch | What it does |
+|---|---|
+| `-mfb=273` | Fast bytes / word size (LZMA/LZMA2, 5–273) — the biggest ratio knob after level |
+| `-mmf=bt4` | Match finder (`hc4` / `bt2` / `bt3` / `bt4`) — speed vs ratio |
+| `-mo=32 -mmem=256m` | PPMd model order / memory |
+| `-mlc= -mlp= -mpb=` | LZMA literal-context / position bits (rarely needed) |
+
+**Filters / architecture** (beyond the "Optimize for executables" switch)
+
+- `-m0=ARM64 -m1=lzma2` — arch-specific executable filter (also `ARM` / `ARMT` / `PPC` / `SPARC` / `IA64`).
+- `-m0=Delta:4 -m1=lzma2` — fixed-stride data (audio, tables, bitmaps).
+
+**Metadata / storage**
+
+- `-snl` — store symlinks *as links* (otherwise 7-Zip follows them). Handy on Linux.
+- `-mtc=on -mta=on` / `-mtm=off` — store creation/access times, or drop mtime.
+- `-ms=e` / `-ms=100m` — solid *by extension* / solid *block size*.
+- `-mem=xchacha20poly1305` — new encryption methods, where the bundled `7zz` supports them.
+
+**Behavior:** `-w<dir>` (working dir) · `-slp` (large pages) · `-u…` (update rules).
+
+> Switches here are appended after the dialog's own options, so they override
+> them. Params are split on spaces, so avoid switches containing spaces for now.
+> Full list: [7-Zip command-line switches](https://documentation.help/7-Zip/).
+
 ## Install / Build
 
 Septima builds and runs entirely inside the GNOME Flatpak sandbox.
@@ -101,6 +135,9 @@ meson compile -C builddir
 - [ ] **More encryption methods** — XChaCha20-Poly1305, AES+XChaCha20 and
       friends via `-mem`, once the bundled 7-Zip ZS build ships them
       ([mcmilk/7-Zip-zstd#505](https://github.com/mcmilk/7-Zip-zstd/pull/505)).
+- [ ] **Promote key Advanced switches to real controls** — symlink handling
+      (`-snl`), word size / fast bytes (`-mfb`), and update modes (`-u`:
+      add / update / freshen / sync).
 - [ ] In-archive delete / rename; hash calculator (BLAKE3, SHA-3, xxHash).
 - [ ] Lizard family × level picker.
 - [ ] Custom visual styling and app icon.
