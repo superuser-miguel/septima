@@ -3,6 +3,7 @@
 mod archive_view;
 mod create_dialog;
 mod entry_object;
+mod preset;
 mod progress_row;
 mod window;
 

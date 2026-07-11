@@ -7,6 +7,12 @@ use gtk::{glib, CompositeTemplate, TemplateChild};
 use septima_engine::capabilities::{formats, Codec, Format};
 use septima_engine::estimate_add_memory;
 
+use crate::preset::{Preset, PresetStore};
+
+fn gettext(s: &str) -> String {
+    gettextrs::gettext(s)
+}
+
 /// Dictionary-size presets: (label, `-md` arg, size in bytes). `None` = Auto.
 const DICT_PRESETS: &[(&str, Option<&str>, Option<u64>)] = &[
     ("Auto", None, None),
@@ -82,6 +88,8 @@ mod imp {
         pub password_row: TemplateChild<adw::PasswordEntryRow>,
         #[template_child]
         pub encrypt_headers_row: TemplateChild<adw::SwitchRow>,
+        #[template_child]
+        pub presets_button: TemplateChild<gtk::MenuButton>,
         pub on_create: RefCell<Option<CreateCallback>>,
     }
 
@@ -164,6 +172,7 @@ mod imp {
             ));
 
             self.on_format_changed();
+            obj.rebuild_presets_popover();
         }
     }
 
@@ -287,4 +296,175 @@ impl SeptimaCreateDialog {
             extra_params,
         }
     }
+
+    // --- Presets ------------------------------------------------------------
+
+    /// Current settings captured as a named preset (no password).
+    fn current_preset(&self, name: String) -> Preset {
+        let s = self.settings();
+        Preset {
+            name,
+            format: s.format.id.to_string(),
+            codec: s.codec.id.to_string(),
+            level: s.level,
+            threads: s.threads,
+            dictionary: s.dictionary,
+            solid: s.solid,
+            volume_size: s.volume_size,
+            bcj: s.bcj,
+            encrypt_headers: s.encrypt_headers,
+            extra_params: s.extra_params,
+        }
+    }
+
+    /// Apply a preset to the dialog. Order matters: format first (rebuilds the
+    /// codec list), then codec (sets the level range), then the explicit values.
+    fn apply_preset(&self, p: &Preset) {
+        let imp = self.imp();
+        imp.format_row.set_selected(format_index(&p.format));
+        imp.codec_row
+            .set_selected(codec_index(imp.current_format(), &p.codec));
+        if let Some(level) = p.level {
+            imp.level_row.set_value(level as f64);
+        }
+        imp.threads_row.set_value(p.threads as f64);
+        imp.dictionary_row.set_selected(dict_index(p.dictionary.as_deref()));
+        if let Some(solid) = p.solid {
+            imp.solid_row.set_active(solid);
+        }
+        imp.volume_row.set_selected(vol_index(p.volume_size.as_deref()));
+        imp.bcj_row.set_active(p.bcj);
+        imp.encrypt_headers_row.set_active(p.encrypt_headers);
+        imp.params_row.set_text(&p.extra_params.join(" "));
+        imp.update_memory();
+    }
+
+    fn rebuild_presets_popover(&self) {
+        let store = PresetStore::new();
+        let popover = gtk::Popover::new();
+        let vbox = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(6)
+            .width_request(220)
+            .build();
+
+        if !store.is_available() {
+            vbox.append(&dim_label(&gettext("Presets are saved in the installed app.")));
+            popover.set_child(Some(&vbox));
+            self.imp().presets_button.set_popover(Some(&popover));
+            return;
+        }
+
+        let presets = store.list();
+        if presets.is_empty() {
+            vbox.append(&dim_label(&gettext("No presets yet.")));
+        }
+        for preset in presets {
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            let apply = gtk::Button::builder().label(&preset.name).hexpand(true).build();
+            apply.add_css_class("flat");
+            let delete = gtk::Button::from_icon_name("user-trash-symbolic");
+            delete.add_css_class("flat");
+            delete.set_tooltip_text(Some(&gettext("Delete")));
+
+            apply.connect_clicked(glib::clone!(
+                #[weak(rename_to = obj)]
+                self,
+                #[weak]
+                popover,
+                #[strong]
+                preset,
+                move |_| {
+                    obj.apply_preset(&preset);
+                    popover.popdown();
+                }
+            ));
+            delete.connect_clicked(glib::clone!(
+                #[weak(rename_to = obj)]
+                self,
+                #[strong(rename_to = name)]
+                preset.name,
+                move |_| {
+                    PresetStore::new().delete(&name);
+                    obj.rebuild_presets_popover();
+                }
+            ));
+            row.append(&apply);
+            row.append(&delete);
+            vbox.append(&row);
+        }
+
+        vbox.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        let save = gtk::Button::with_label(&gettext("Save current settings…"));
+        save.add_css_class("flat");
+        save.connect_clicked(glib::clone!(
+            #[weak(rename_to = obj)]
+            self,
+            #[weak]
+            popover,
+            move |_| {
+                popover.popdown();
+                obj.prompt_save_preset();
+            }
+        ));
+        vbox.append(&save);
+
+        popover.set_child(Some(&vbox));
+        self.imp().presets_button.set_popover(Some(&popover));
+    }
+
+    fn prompt_save_preset(&self) {
+        let dialog = adw::AlertDialog::new(
+            Some(&gettext("Save Preset")),
+            Some(&gettext("Name this set of compression settings.")),
+        );
+        dialog.add_response("cancel", &gettext("Cancel"));
+        dialog.add_response("save", &gettext("Save"));
+        dialog.set_response_appearance("save", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("save"));
+        dialog.set_close_response("cancel");
+
+        let entry = gtk::Entry::builder().activates_default(true).build();
+        dialog.set_extra_child(Some(&entry));
+
+        dialog.connect_response(
+            None,
+            glib::clone!(
+                #[weak(rename_to = obj)]
+                self,
+                move |_, response| {
+                    if response == "save" {
+                        let name = entry.text().trim().to_string();
+                        if !name.is_empty() {
+                            PresetStore::new().save(obj.current_preset(name));
+                            obj.rebuild_presets_popover();
+                        }
+                    }
+                }
+            ),
+        );
+        dialog.present(Some(self));
+    }
+}
+
+fn dim_label(text: &str) -> gtk::Label {
+    let label = gtk::Label::builder().label(text).wrap(true).xalign(0.0).build();
+    label.add_css_class("dim-label");
+    label
+}
+
+fn format_index(id: &str) -> u32 {
+    formats().iter().position(|f| f.id == id).unwrap_or(0) as u32
+}
+
+fn codec_index(fmt: &Format, id: &str) -> u32 {
+    fmt.codecs.iter().position(|c| c.id == id).unwrap_or(0) as u32
+}
+
+fn dict_index(arg: Option<&str>) -> u32 {
+    DICT_PRESETS.iter().position(|(_, a, _)| *a == arg).unwrap_or(0) as u32
+}
+
+fn vol_index(arg: Option<&str>) -> u32 {
+    VOLUME_PRESETS.iter().position(|(_, a)| *a == arg).unwrap_or(0) as u32
 }

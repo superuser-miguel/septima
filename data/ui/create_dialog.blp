@@ -27,6 +27,12 @@ template $SeptimaCreateDialog: Adw.Dialog {
           "suggested-action",
         ]
       }
+
+      [end]
+      Gtk.MenuButton presets_button {
+        icon-name: "view-list-symbolic";
+        tooltip-text: _("Presets");
+      }
     }
 
     content: Adw.PreferencesPage {
