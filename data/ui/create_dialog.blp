@@ -19,8 +19,9 @@ template $SeptimaCreateDialog: Adw.Dialog {
       }
 
       [end]
-      Gtk.Button {
+      Gtk.Button create_button {
         label: _("Create");
+        sensitive: false;
         clicked => $on_create() swapped;
 
         styles [
@@ -36,6 +37,26 @@ template $SeptimaCreateDialog: Adw.Dialog {
     }
 
     content: Adw.PreferencesPage {
+      Adw.PreferencesGroup files_group {
+        title: _("Files");
+        description: _("Drop files or folders here, or add them.");
+
+        [header-suffix]
+        Gtk.Box {
+          spacing: 6;
+
+          Gtk.Button {
+            label: _("Add Files…");
+            clicked => $on_add_files() swapped;
+          }
+
+          Gtk.Button {
+            label: _("Add Folder…");
+            clicked => $on_add_folder() swapped;
+          }
+        }
+      }
+
       Adw.PreferencesGroup {
         Adw.EntryRow name_row {
           title: _("Archive name");

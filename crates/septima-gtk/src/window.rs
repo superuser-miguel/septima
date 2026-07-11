@@ -320,48 +320,20 @@ impl SeptimaWindow {
     // --- Create ------------------------------------------------------------
 
     fn new_archive_dialog(&self) {
-        let dialog = gtk::FileDialog::builder()
-            .title(gettext("Add Files to Archive"))
-            .modal(true)
-            .build();
-
-        let window = self.clone();
-        dialog.open_multiple(Some(self), gio::Cancellable::NONE, move |result| match result {
-            Ok(files) => {
-                let inputs: Vec<PathBuf> = (0..files.n_items())
-                    .filter_map(|i| files.item(i).and_downcast::<gio::File>())
-                    .filter_map(|f| f.path())
-                    .collect();
-                if !inputs.is_empty() {
-                    window.show_create_dialog(inputs);
-                }
-            }
-            Err(err) => {
-                if !err.matches(gtk::DialogError::Dismissed) {
-                    window.show_toast(err.message());
-                }
-            }
-        });
-    }
-
-    fn show_create_dialog(&self, inputs: Vec<PathBuf>) {
-        let suggested = inputs
-            .first()
-            .and_then(|p| p.file_stem())
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "archive".to_string());
-
-        let dialog = SeptimaCreateDialog::new(&suggested);
+        let dialog = SeptimaCreateDialog::new();
         let window = self.clone();
         dialog.connect_create(move |dlg| {
             let settings = dlg.settings();
+            if settings.inputs.is_empty() {
+                return;
+            }
             dlg.close();
-            window.choose_output_and_compress(inputs.clone(), settings);
+            window.choose_output_and_compress(settings);
         });
         dialog.present(Some(self));
     }
 
-    fn choose_output_and_compress(&self, inputs: Vec<PathBuf>, settings: CreateSettings) {
+    fn choose_output_and_compress(&self, settings: CreateSettings) {
         let filename = format!("{}.{}", settings.name, archive_extension(&settings));
         let dialog = gtk::FileDialog::builder()
             .title(gettext("Save Archive"))
@@ -372,7 +344,7 @@ impl SeptimaWindow {
         let window = self.clone();
         dialog.save(Some(self), gio::Cancellable::NONE, move |result| match result {
             Ok(file) => match file.path() {
-                Some(output) => window.start_compress(compression_request(&inputs, &settings, output)),
+                Some(output) => window.start_compress(compression_request(&settings, output)),
                 None => window.show_toast(&gettext("That location can't be written to directly.")),
             },
             Err(err) => {
@@ -488,12 +460,8 @@ fn archive_extension(settings: &CreateSettings) -> String {
     }
 }
 
-fn compression_request(
-    inputs: &[PathBuf],
-    settings: &CreateSettings,
-    output: PathBuf,
-) -> CompressionRequest {
-    let mut req = CompressionRequest::new(output, inputs.to_vec(), settings.format.id);
+fn compression_request(settings: &CreateSettings, output: PathBuf) -> CompressionRequest {
+    let mut req = CompressionRequest::new(output, settings.inputs.clone(), settings.format.id);
     req.codec = Some(settings.codec.id.to_string());
     req.level = settings.level;
     req.threads = Some(settings.threads);

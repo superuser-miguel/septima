@@ -3,7 +3,9 @@
   "runtime": "org.gnome.Platform",
   "runtime-version": "50",
   "sdk": "org.gnome.Sdk",
-  "sdk-extensions": ["org.freedesktop.Sdk.Extension.rust-stable"],
+  "sdk-extensions": [
+    "org.freedesktop.Sdk.Extension.rust-stable"
+  ],
   "command": "septima",
   "finish-args": [
     "--share=ipc",
@@ -11,7 +13,11 @@
     "--socket=wayland",
     "--device=dri"
   ],
-  "cleanup": ["/include", "/lib/pkgconfig", "/share/man"],
+  "cleanup": [
+    "/include",
+    "/lib/pkgconfig",
+    "/share/man"
+  ],
   "modules": [
     {
       "name": "7-zip-zstd",
@@ -32,7 +38,10 @@
     {
       "name": "septima",
       "buildsystem": "meson",
-      "config-opts": ["-Dprofile=default", "-Doffline=true"],
+      "config-opts": [
+        "-Dprofile=default",
+        "-Doffline=true"
+      ],
       "build-options": {
         "append-path": "/usr/lib/sdk/rust-stable/bin",
         "env": {
@@ -44,7 +53,8 @@
           "//": "Flathub build source: the tagged release. Local testing can use {type: dir, path: ..}. The Flathub PR should pin `commit` alongside `tag`.",
           "type": "git",
           "url": "https://github.com/superuser-miguel/septima.git",
-          "tag": "v0.1.0"
+          "tag": "v0.1.0",
+          "commit": "0c5fc287e81ae6b513ef67bba6a2cb6d2f705089"
         },
         "cargo-sources.json"
       ]

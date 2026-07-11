@@ -1,8 +1,9 @@
 use std::cell::RefCell;
+use std::path::{Path, PathBuf};
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use gtk::{glib, CompositeTemplate, TemplateChild};
+use gtk::{gdk, gio, glib, CompositeTemplate, TemplateChild};
 
 use septima_engine::capabilities::{formats, Codec, Format};
 use septima_engine::estimate_add_memory;
@@ -40,6 +41,7 @@ fn codec_uses_dictionary(codec: &Codec) -> bool {
 
 /// The compression settings collected by the dialog (output path is chosen after).
 pub struct CreateSettings {
+    pub inputs: Vec<PathBuf>,
     pub name: String,
     pub format: &'static Format,
     pub codec: &'static Codec,
@@ -62,6 +64,10 @@ mod imp {
     #[derive(Default, CompositeTemplate)]
     #[template(resource = "/io/github/superuser_miguel/Septima/create_dialog.ui")]
     pub struct SeptimaCreateDialog {
+        #[template_child]
+        pub create_button: TemplateChild<gtk::Button>,
+        #[template_child]
+        pub files_group: TemplateChild<adw::PreferencesGroup>,
         #[template_child]
         pub name_row: TemplateChild<adw::EntryRow>,
         #[template_child]
@@ -91,6 +97,8 @@ mod imp {
         #[template_child]
         pub presets_button: TemplateChild<gtk::MenuButton>,
         pub on_create: RefCell<Option<CreateCallback>>,
+        pub inputs: RefCell<Vec<PathBuf>>,
+        pub input_rows: RefCell<Vec<adw::ActionRow>>,
     }
 
     #[gtk::template_callbacks]
@@ -106,6 +114,16 @@ mod imp {
             if let Some(cb) = self.on_create.borrow().as_ref() {
                 cb(&obj);
             }
+        }
+
+        #[template_callback]
+        fn on_add_files(&self) {
+            self.obj().pick_files();
+        }
+
+        #[template_callback]
+        fn on_add_folder(&self) {
+            self.obj().pick_folders();
         }
     }
 
@@ -173,6 +191,26 @@ mod imp {
 
             self.on_format_changed();
             obj.rebuild_presets_popover();
+
+            // Drag-and-drop files/folders onto the dialog.
+            let drop = gtk::DropTarget::new(gdk::FileList::static_type(), gdk::DragAction::COPY);
+            drop.connect_drop(glib::clone!(
+                #[weak]
+                obj,
+                #[upgrade_or]
+                false,
+                move |_, value, _, _| {
+                    if let Ok(list) = value.get::<gdk::FileList>() {
+                        let paths = list.files().iter().filter_map(|f| f.path()).collect();
+                        obj.add_inputs(paths);
+                        true
+                    } else {
+                        false
+                    }
+                }
+            ));
+            obj.add_controller(drop);
+            obj.rebuild_files();
         }
     }
 
@@ -249,10 +287,104 @@ impl Default for SeptimaCreateDialog {
 }
 
 impl SeptimaCreateDialog {
-    pub fn new(suggested_name: &str) -> Self {
-        let dialog = Self::default();
-        dialog.imp().name_row.set_text(suggested_name);
-        dialog
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn parent_window(&self) -> Option<gtk::Window> {
+        self.root().and_downcast::<gtk::Window>()
+    }
+
+    fn pick_files(&self) {
+        let dialog = gtk::FileDialog::builder()
+            .title(gettext("Add Files"))
+            .modal(true)
+            .build();
+        let obj = self.clone();
+        dialog.open_multiple(self.parent_window().as_ref(), gio::Cancellable::NONE, move |res| {
+            if let Ok(files) = res {
+                obj.add_inputs(model_paths(&files));
+            }
+        });
+    }
+
+    fn pick_folders(&self) {
+        let dialog = gtk::FileDialog::builder()
+            .title(gettext("Add Folders"))
+            .modal(true)
+            .build();
+        let obj = self.clone();
+        dialog.select_multiple_folders(self.parent_window().as_ref(), gio::Cancellable::NONE, move |res| {
+            if let Ok(files) = res {
+                obj.add_inputs(model_paths(&files));
+            }
+        });
+    }
+
+    /// Append inputs (files or folders), de-duplicated, and refresh the list.
+    pub fn add_inputs(&self, paths: Vec<PathBuf>) {
+        let imp = self.imp();
+        {
+            let mut inputs = imp.inputs.borrow_mut();
+            for path in paths {
+                if !inputs.contains(&path) {
+                    inputs.push(path);
+                }
+            }
+        }
+        if imp.name_row.text().is_empty() {
+            if let Some(name) = imp
+                .inputs
+                .borrow()
+                .first()
+                .and_then(|p| p.file_stem())
+                .map(|s| s.to_string_lossy().into_owned())
+            {
+                imp.name_row.set_text(&name);
+            }
+        }
+        self.rebuild_files();
+    }
+
+    fn remove_input(&self, path: &Path) {
+        self.imp().inputs.borrow_mut().retain(|p| p != path);
+        self.rebuild_files();
+    }
+
+    fn rebuild_files(&self) {
+        let imp = self.imp();
+        for row in imp.input_rows.borrow_mut().drain(..) {
+            imp.files_group.remove(&row);
+        }
+        let inputs = imp.inputs.borrow();
+        for path in inputs.iter() {
+            let row = adw::ActionRow::builder()
+                .title(file_name(path))
+                .subtitle(path.to_string_lossy())
+                .build();
+            let icon = if path.is_dir() {
+                "folder-symbolic"
+            } else {
+                "text-x-generic-symbolic"
+            };
+            row.add_prefix(&gtk::Image::from_icon_name(icon));
+
+            let remove = gtk::Button::from_icon_name("window-close-symbolic");
+            remove.add_css_class("flat");
+            remove.set_valign(gtk::Align::Center);
+            remove.set_tooltip_text(Some(&gettext("Remove")));
+            let owned = path.clone();
+            remove.connect_clicked(glib::clone!(
+                #[weak(rename_to = obj)]
+                self,
+                move |_| obj.remove_input(&owned)
+            ));
+            row.add_suffix(&remove);
+
+            imp.files_group.add(&row);
+            imp.input_rows.borrow_mut().push(row);
+        }
+        imp.create_button.set_sensitive(!inputs.is_empty());
     }
 
     /// Register the handler run when the user confirms (Create).
@@ -280,6 +412,7 @@ impl SeptimaCreateDialog {
             .collect();
 
         CreateSettings {
+            inputs: imp.inputs.borrow().clone(),
             name: imp.name_row.text().to_string(),
             format,
             codec,
@@ -445,6 +578,19 @@ impl SeptimaCreateDialog {
         );
         dialog.present(Some(self));
     }
+}
+
+fn model_paths(model: &gio::ListModel) -> Vec<PathBuf> {
+    (0..model.n_items())
+        .filter_map(|i| model.item(i).and_downcast::<gio::File>())
+        .filter_map(|f| f.path())
+        .collect()
+}
+
+fn file_name(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 fn dim_label(text: &str) -> gtk::Label {
