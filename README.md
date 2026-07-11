@@ -1,6 +1,10 @@
-# Septima
+<p align="center">
+  <img src="data/icons/hicolor/scalable/apps/io.github.superuser_miguel.Septima.svg" alt="Septima icon" width="96" height="96">
+</p>
 
-**The archive tool that actually speaks modern-codec 7z — with a real compression-tuning UI.**
+<h1 align="center">Septima</h1>
+
+<p align="center"><strong>The archive tool that actually speaks modern-codec 7z — with a real compression-tuning UI.</strong></p>
 
 Septima is a GTK4 / libadwaita front-end for [7-Zip ZS](https://github.com/mcmilk/7-Zip-zstd)
 (`7zz`) on Linux. It is a GNOME-native app built specifically around modern
