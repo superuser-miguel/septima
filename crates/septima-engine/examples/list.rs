@@ -9,7 +9,8 @@ fn main() {
         std::process::exit(2);
     };
     let sevenzip = septima_engine::sevenzip_path();
-    match septima_engine::list_archive(&sevenzip, &PathBuf::from(arg)) {
+    let password = std::env::args().nth(2);
+    match septima_engine::list_archive(&sevenzip, &PathBuf::from(arg), password.as_deref()) {
         Ok(listing) => {
             println!(
                 "format={:?}  files={}  total={} bytes",

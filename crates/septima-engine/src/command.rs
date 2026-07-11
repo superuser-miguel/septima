@@ -17,12 +17,20 @@ pub fn sevenzip_path() -> PathBuf {
 /// List an archive's contents via `7z l -slt`.
 ///
 /// stdin is closed so an encrypted archive returns promptly (7zz would otherwise
-/// block on an interactive password prompt); that case maps to
-/// [`EngineError::PasswordRequired`].
-pub fn list_archive(sevenzip: &Path, archive: &Path) -> Result<ArchiveListing, EngineError> {
-    let output = Command::new(sevenzip)
-        .arg("l")
-        .arg("-slt")
+/// block on an interactive password prompt); a missing/wrong password maps to
+/// [`EngineError::PasswordRequired`]. Pass `password` for archives with
+/// encrypted headers.
+pub fn list_archive(
+    sevenzip: &Path,
+    archive: &Path,
+    password: Option<&str>,
+) -> Result<ArchiveListing, EngineError> {
+    let mut cmd = Command::new(sevenzip);
+    cmd.arg("l").arg("-slt");
+    if let Some(password) = password {
+        cmd.arg(format!("-p{password}"));
+    }
+    let output = cmd
         .arg("--")
         .arg(archive)
         .stdin(Stdio::null())

@@ -44,6 +44,8 @@ mod imp {
         pub jobs_box: TemplateChild<gtk::Box>,
         /// The currently open archive, used as the extract source.
         pub archive_path: RefCell<Option<PathBuf>>,
+        /// Password the current archive was opened with (reused for extraction).
+        pub archive_password: RefCell<Option<String>>,
     }
 
     #[gtk::template_callbacks]
@@ -133,12 +135,24 @@ impl SeptimaWindow {
             self.show_toast(&gettext("That location can't be read directly."));
             return;
         };
+        self.load_archive(path, None);
+    }
 
+    /// List `path` (optionally with `password`); on an encrypted archive, prompt
+    /// for a password and retry. The working password is remembered so extraction
+    /// doesn't ask again.
+    fn load_archive(&self, path: PathBuf, password: Option<String>) {
         let window = self.clone();
         let sevenzip = septima_engine::sevenzip_path();
+        let task_path = path.clone();
+        let task_password = password.clone();
+
         glib::spawn_future_local(async move {
-            let result =
-                gio::spawn_blocking(move || septima_engine::list_archive(&sevenzip, &path)).await;
+            let result = gio::spawn_blocking(move || {
+                septima_engine::list_archive(&sevenzip, &task_path, task_password.as_deref())
+            })
+            .await;
+
             match result {
                 Ok(Ok(listing)) => {
                     let imp = window.imp();
@@ -147,12 +161,20 @@ impl SeptimaWindow {
                     imp.stack.set_visible_child_name("archive");
                     imp.extract_button.set_sensitive(true);
                     imp.archive_path.replace(Some(archive_path.clone()));
+                    imp.archive_password.replace(password.clone());
                     // Dev/test hook: extract without the folder portal.
                     if crate::config::PROFILE == "Devel" {
                         if let Some(dir) = std::env::var_os("SEPTIMA_AUTO_EXTRACT") {
-                            window.start_extract(archive_path, PathBuf::from(dir), None);
+                            window.start_extract(archive_path, PathBuf::from(dir), password);
                         }
                     }
+                }
+                Ok(Err(EngineError::PasswordRequired)) => {
+                    let retry = window.clone();
+                    window.prompt_password(
+                        &gettext("This archive is encrypted. Enter its password to open it."),
+                        move |pw| retry.load_archive(path.clone(), Some(pw)),
+                    );
                 }
                 Ok(Err(err)) => window.show_toast(&err.to_string()),
                 Err(_) => window.show_toast(&gettext("The listing task failed.")),
@@ -166,6 +188,7 @@ impl SeptimaWindow {
         let Some(archive) = self.imp().archive_path.borrow().clone() else {
             return;
         };
+        let password = self.imp().archive_password.borrow().clone();
 
         let dialog = gtk::FileDialog::builder()
             .title(gettext("Extract To"))
@@ -175,7 +198,7 @@ impl SeptimaWindow {
         let window = self.clone();
         dialog.select_folder(Some(self), gio::Cancellable::NONE, move |result| match result {
             Ok(folder) => match folder.path() {
-                Some(dest) => window.start_extract(archive.clone(), dest, None),
+                Some(dest) => window.start_extract(archive.clone(), dest, password.clone()),
                 None => window.show_toast(&gettext("That folder can't be written to directly.")),
             },
             Err(err) => {
@@ -228,7 +251,12 @@ impl SeptimaWindow {
                             )),
                             Err(EngineError::Cancelled) => {} // silent
                             Err(EngineError::PasswordRequired) => {
-                                window.prompt_password(archive.clone(), dest.clone())
+                                let retry = window.clone();
+                                let (archive, dest) = (archive.clone(), dest.clone());
+                                window.prompt_password(
+                                    &gettext("This archive is encrypted. Enter its password to extract."),
+                                    move |pw| retry.start_extract(archive.clone(), dest.clone(), Some(pw)),
+                                );
                             }
                             Err(err) => window.show_toast(&err.to_string()),
                         }
@@ -247,11 +275,9 @@ impl SeptimaWindow {
         }
     }
 
-    fn prompt_password(&self, archive: PathBuf, dest: PathBuf) {
-        let dialog = adw::AlertDialog::new(
-            Some(&gettext("Password Required")),
-            Some(&gettext("This archive is encrypted. Enter its password to extract.")),
-        );
+    /// Ask for a password; `on_password` runs with the entered text on Unlock.
+    fn prompt_password<F: Fn(String) + 'static>(&self, body: &str, on_password: F) {
+        let dialog = adw::AlertDialog::new(Some(&gettext("Password Required")), Some(body));
         dialog.add_response("cancel", &gettext("Cancel"));
         dialog.add_response("unlock", &gettext("Unlock"));
         dialog.set_response_appearance("unlock", adw::ResponseAppearance::Suggested);
@@ -264,11 +290,9 @@ impl SeptimaWindow {
             .build();
         dialog.set_extra_child(Some(&entry));
 
-        let window = self.clone();
         dialog.connect_response(None, move |_, response| {
             if response == "unlock" {
-                let password = entry.text().to_string();
-                window.start_extract(archive.clone(), dest.clone(), Some(password));
+                on_password(entry.text().to_string());
             }
         });
         dialog.present(Some(self));

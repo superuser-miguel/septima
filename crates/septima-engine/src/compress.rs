@@ -46,6 +46,12 @@ impl CompressionRequest {
 
     /// The `-m*` method arguments (without password, which `run_add` appends).
     fn method_args(&self) -> Vec<String> {
+        // tar is an uncompressed container: it takes no -m* method options
+        // (`-m0=Copy` makes 7zz fail with a "cannot open the file as archive").
+        if self.format == "tar" {
+            return Vec::new();
+        }
+
         let mut args = Vec::new();
         let method_key = if self.format == "zip" { "-mm=" } else { "-m0=" };
 
@@ -130,5 +136,13 @@ mod tests {
         let mut req = CompressionRequest::new("out.7z", vec![], "7z");
         req.codec = Some("copy".into());
         assert_eq!(req.method_args(), ["-m0=Copy"]);
+    }
+
+    #[test]
+    fn tar_emits_no_method_args() {
+        let mut req = CompressionRequest::new("out.tar", vec![], "tar");
+        req.codec = Some("copy".into());
+        req.threads = Some(4);
+        assert!(req.method_args().is_empty());
     }
 }
