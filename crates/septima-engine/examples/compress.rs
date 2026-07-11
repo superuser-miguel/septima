@@ -18,6 +18,9 @@ fn main() {
     if args[2] != "-" {
         req.level = args[2].parse().ok();
     }
+    if let Ok(vol) = std::env::var("SEPTIMA_VOLUME") {
+        req.volume_size = Some(vol);
+    }
 
     let cancel = septima_engine::new_cancel_token();
     let progress = |p: &septima_engine::ExtractProgress| {

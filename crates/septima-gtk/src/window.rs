@@ -176,7 +176,7 @@ impl SeptimaWindow {
                         move |pw| retry.load_archive(path.clone(), Some(pw)),
                     );
                 }
-                Ok(Err(err)) => window.show_toast(&err.to_string()),
+                Ok(Err(err)) => window.show_error(&err.to_string()),
                 Err(_) => window.show_toast(&gettext("The listing task failed.")),
             }
         });
@@ -258,7 +258,7 @@ impl SeptimaWindow {
                                     move |pw| retry.start_extract(archive.clone(), dest.clone(), Some(pw)),
                                 );
                             }
-                            Err(err) => window.show_toast(&err.to_string()),
+                            Err(err) => window.show_error(&err.to_string()),
                         }
                         break;
                     }
@@ -405,7 +405,7 @@ impl SeptimaWindow {
                                 output.display()
                             )),
                             Err(EngineError::Cancelled) => {}
-                            Err(err) => window.show_toast(&err.to_string()),
+                            Err(err) => window.show_error(&err.to_string()),
                         }
                         break;
                     }
@@ -416,6 +416,15 @@ impl SeptimaWindow {
 
     fn show_toast(&self, message: &str) {
         self.imp().toast_overlay.add_toast(adw::Toast::new(message));
+    }
+
+    /// Show a full (possibly long) error in a dialog — toasts truncate.
+    fn show_error(&self, message: &str) {
+        let dialog =
+            adw::AlertDialog::new(Some(&gettext("Something Went Wrong")), Some(message.trim()));
+        dialog.add_response("close", &gettext("Close"));
+        dialog.set_default_response(Some("close"));
+        dialog.present(Some(self));
     }
 }
 
@@ -446,6 +455,7 @@ fn compression_request(
     req.threads = Some(settings.threads);
     req.dictionary = settings.dictionary.clone();
     req.solid = settings.solid;
+    req.volume_size = settings.volume_size.clone();
     req.bcj = settings.bcj;
     req.password = settings.password.clone();
     req.encrypt_headers = settings.encrypt_headers;

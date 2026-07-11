@@ -18,6 +18,16 @@ const DICT_PRESETS: &[(&str, Option<&str>, Option<u64>)] = &[
     ("1 GiB", Some("1g"), Some(1 << 30)),
 ];
 
+/// Volume-split presets: (label, `-v` size). `None` = single file.
+const VOLUME_PRESETS: &[(&str, Option<&str>)] = &[
+    ("Off", None),
+    ("25 MiB", Some("25m")),
+    ("100 MiB", Some("100m")),
+    ("700 MiB (CD)", Some("700m")),
+    ("1 GiB", Some("1g")),
+    ("4 GiB", Some("4g")),
+];
+
 fn codec_uses_dictionary(codec: &Codec) -> bool {
     matches!(codec.id, "lzma2" | "lzma" | "flzma2")
 }
@@ -31,6 +41,7 @@ pub struct CreateSettings {
     pub threads: u32,
     pub dictionary: Option<String>,
     pub solid: Option<bool>,
+    pub volume_size: Option<String>,
     pub bcj: bool,
     pub password: Option<String>,
     pub encrypt_headers: bool,
@@ -63,6 +74,8 @@ mod imp {
         pub memory_row: TemplateChild<adw::ActionRow>,
         #[template_child]
         pub bcj_row: TemplateChild<adw::SwitchRow>,
+        #[template_child]
+        pub volume_row: TemplateChild<adw::ComboRow>,
         #[template_child]
         pub params_row: TemplateChild<adw::EntryRow>,
         #[template_child]
@@ -114,6 +127,9 @@ mod imp {
 
             let dict_labels: Vec<&str> = DICT_PRESETS.iter().map(|(l, _, _)| *l).collect();
             self.dictionary_row.set_model(Some(&gtk::StringList::new(&dict_labels)));
+
+            let vol_labels: Vec<&str> = VOLUME_PRESETS.iter().map(|(l, _)| *l).collect();
+            self.volume_row.set_model(Some(&gtk::StringList::new(&vol_labels)));
 
             let cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
             self.threads_row.adjustment().set_upper(cpus.max(1) as f64);
@@ -262,6 +278,9 @@ impl SeptimaCreateDialog {
             threads: imp.threads_row.value() as u32,
             dictionary: dictionary.filter(|_| codec_uses_dictionary(codec)),
             solid: format.supports_solid.then(|| imp.solid_row.is_active()),
+            volume_size: VOLUME_PRESETS[imp.volume_row.selected() as usize]
+                .1
+                .map(str::to_string),
             bcj: format.id == "7z" && imp.bcj_row.is_active(),
             password,
             encrypt_headers: format.supports_header_encryption && imp.encrypt_headers_row.is_active(),

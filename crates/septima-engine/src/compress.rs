@@ -25,6 +25,8 @@ pub struct CompressionRequest {
     pub dictionary: Option<String>,
     /// `-ms` solid mode (7z).
     pub solid: Option<bool>,
+    /// Split into volumes of this size, e.g. `"100m"` (`-v`). `None` = single file.
+    pub volume_size: Option<String>,
     /// Prepend a BCJ executable filter (`-m0=BCJ -m1=<codec>`) — 7z only.
     pub bcj: bool,
     pub password: Option<String>,
@@ -45,6 +47,7 @@ impl CompressionRequest {
             threads: None,
             dictionary: None,
             solid: None,
+            volume_size: None,
             bcj: false,
             password: None,
             encrypt_headers: false,
@@ -142,6 +145,7 @@ pub fn run_tar_and_compress(
     let mut comp_req = CompressionRequest::new(output.to_path_buf(), vec![temp_tar], compressor);
     comp_req.level = req.level;
     comp_req.threads = req.threads;
+    comp_req.volume_size = req.volume_size.clone();
     let result = run_add(sevenzip, &comp_req, cancel, on_progress);
 
     cleanup();
@@ -221,6 +225,9 @@ pub fn run_add(
         if req.encrypt_headers && req.format == "7z" {
             cmd.arg("-mhe=on");
         }
+    }
+    if let Some(volume) = &req.volume_size {
+        cmd.arg(format!("-v{volume}"));
     }
 
     cmd.arg("--").arg(&req.output);
