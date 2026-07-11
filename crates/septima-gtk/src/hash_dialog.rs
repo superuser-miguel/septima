@@ -278,7 +278,9 @@ impl SeptimaHashDialog {
 
             if targets.contains(&digest.hex) {
                 row.add_css_class("success");
-                row.add_prefix(&gtk::Image::from_icon_name("emblem-ok-symbolic"));
+                let check = gtk::Image::from_icon_name("object-select-symbolic");
+                check.add_css_class("success");
+                row.add_prefix(&check);
             }
 
             let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
