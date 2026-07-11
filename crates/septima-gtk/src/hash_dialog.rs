@@ -1,18 +1,30 @@
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{gio, glib, CompositeTemplate, TemplateChild};
 
-use septima_engine::{hash_algorithms, Digest};
+use septima_engine::{hash_algorithms, Digest, EngineError};
 
 fn gettext(s: &str) -> String {
     gettextrs::gettext(s)
 }
 
-/// Display label for an algorithm switch name (falls back to the name itself).
+/// Per-file state: still hashing (with percent) or finished (with digests).
+#[derive(Clone)]
+enum FileState {
+    Hashing(u8),
+    Done(Vec<Digest>),
+}
+
+/// Worker-thread → UI messages for one file.
+enum HashMsg {
+    Progress(u8),
+    Done(Result<Vec<Digest>, EngineError>),
+}
+
 fn algo_label(switch: &str) -> &str {
     hash_algorithms()
         .iter()
@@ -56,10 +68,10 @@ mod imp {
         pub verify_status: TemplateChild<gtk::Label>,
         #[template_child]
         pub files_box: TemplateChild<gtk::Box>,
-        /// (path, digests), cached so re-highlighting doesn't re-hash.
-        pub results: RefCell<Vec<(PathBuf, Vec<Digest>)>>,
-        /// Hex digests loaded from a checksum file.
+        pub(super) results: RefCell<Vec<(PathBuf, FileState)>>,
         pub verify_hexes: RefCell<HashSet<String>>,
+        /// Live progress bars for files still hashing (valid between rebuilds).
+        pub progress_bars: RefCell<HashMap<PathBuf, gtk::ProgressBar>>,
     }
 
     #[gtk::template_callbacks]
@@ -68,17 +80,14 @@ mod imp {
         fn on_add_clicked(&self) {
             self.obj().add_files();
         }
-
         #[template_callback]
         fn on_clear_clicked(&self) {
             self.obj().clear();
         }
-
         #[template_callback]
         fn on_verify_changed(&self) {
             self.obj().rebuild();
         }
-
         #[template_callback]
         fn on_load_file_clicked(&self) {
             self.obj().load_checksum_file();
@@ -95,7 +104,6 @@ mod imp {
             klass.bind_template();
             klass.bind_template_callbacks();
         }
-
         fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
             obj.init_template();
         }
@@ -144,28 +152,66 @@ impl SeptimaHashDialog {
         });
     }
 
-    /// Hash the given files and show their digests (portal, drag-drop, or CLI).
+    /// Hash the given files (each with a live progress bar) and show digests.
     pub fn add_paths(&self, paths: Vec<PathBuf>) {
         let algos: Vec<&'static str> = hash_algorithms().iter().map(|a| a.switch).collect();
-        let window = self.clone();
-        glib::spawn_future_local(async move {
-            for path in paths {
-                let sevenzip = septima_engine::sevenzip_path();
-                let p = path.clone();
-                let algos = algos.clone();
-                let result =
-                    gio::spawn_blocking(move || septima_engine::hash_file(&sevenzip, &p, &algos))
-                        .await;
-                match result {
-                    Ok(Ok(digests)) => {
-                        window.imp().results.borrow_mut().push((path, digests));
-                        window.rebuild();
+        for path in paths {
+            self.imp().results.borrow_mut().push((path.clone(), FileState::Hashing(0)));
+            self.rebuild();
+
+            let (sender, receiver) = async_channel::unbounded::<HashMsg>();
+            let sevenzip = septima_engine::sevenzip_path();
+            let algos = algos.clone();
+            let worker_path = path.clone();
+            std::thread::spawn(move || {
+                let cancel = septima_engine::new_cancel_token();
+                let result = septima_engine::hash_file_progress(
+                    &sevenzip,
+                    &worker_path,
+                    &algos,
+                    &cancel,
+                    |pct| {
+                        let _ = sender.send_blocking(HashMsg::Progress(pct));
+                    },
+                );
+                let _ = sender.send_blocking(HashMsg::Done(result));
+            });
+
+            let window = self.clone();
+            glib::spawn_future_local(async move {
+                while let Ok(msg) = receiver.recv().await {
+                    match msg {
+                        HashMsg::Progress(pct) => window.set_progress(&path, pct),
+                        HashMsg::Done(Ok(digests)) => {
+                            window.set_done(&path, digests);
+                            break;
+                        }
+                        HashMsg::Done(Err(err)) => {
+                            eprintln!("septima: hash failed: {err}");
+                            window.remove_file(&path);
+                            break;
+                        }
                     }
-                    Ok(Err(err)) => eprintln!("septima: hash failed: {err}"),
-                    Err(_) => {}
                 }
-            }
-        });
+            });
+        }
+    }
+
+    fn set_progress(&self, path: &Path, pct: u8) {
+        if let Some(entry) = self.imp().results.borrow_mut().iter_mut().find(|(p, _)| p == path) {
+            entry.1 = FileState::Hashing(pct);
+        }
+        if let Some(bar) = self.imp().progress_bars.borrow().get(path) {
+            bar.set_fraction(pct as f64 / 100.0);
+            bar.set_text(Some(&format!("{pct}%")));
+        }
+    }
+
+    fn set_done(&self, path: &Path, digests: Vec<Digest>) {
+        if let Some(entry) = self.imp().results.borrow_mut().iter_mut().find(|(p, _)| p == path) {
+            entry.1 = FileState::Done(digests);
+        }
+        self.rebuild();
     }
 
     fn clear(&self) {
@@ -197,11 +243,7 @@ impl SeptimaHashDialog {
                     let count = hexes.len();
                     window.imp().verify_hexes.replace(hexes);
                     let status = &window.imp().verify_status;
-                    status.set_text(&format!(
-                        "{} — {}",
-                        file_name(&path),
-                        n_checksums(count)
-                    ));
+                    status.set_text(&format!("{} — {}", file_name(&path), n_checksums(count)));
                     status.set_visible(count > 0);
                     window.rebuild();
                 }
@@ -210,13 +252,12 @@ impl SeptimaHashDialog {
         });
     }
 
-    /// Rebuild the per-file sections from cached results, applying the verify
-    /// highlight (pasted hash + any loaded checksum-file hashes).
     fn rebuild(&self) {
         let imp = self.imp();
         while let Some(child) = imp.files_box.first_child() {
             imp.files_box.remove(&child);
         }
+        imp.progress_bars.borrow_mut().clear();
 
         let results = imp.results.borrow();
         if results.is_empty() {
@@ -233,12 +274,36 @@ impl SeptimaHashDialog {
             targets.insert(pasted);
         }
 
-        for (path, digests) in results.iter() {
-            imp.files_box.append(&self.file_section(path, digests, &targets));
+        for (path, state) in results.iter() {
+            let section = match state {
+                FileState::Hashing(pct) => self.hashing_section(path, *pct),
+                FileState::Done(digests) => self.done_section(path, digests, &targets),
+            };
+            imp.files_box.append(&section);
         }
     }
 
-    fn file_section(&self, path: &Path, digests: &[Digest], targets: &HashSet<String>) -> gtk::Box {
+    fn hashing_section(&self, path: &Path, pct: u8) -> gtk::Box {
+        let section = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        let title = gtk::Label::builder()
+            .label(file_name(path))
+            .xalign(0.0)
+            .ellipsize(gtk::pango::EllipsizeMode::Middle)
+            .build();
+        title.add_css_class("heading");
+        section.append(&title);
+
+        let bar = gtk::ProgressBar::builder()
+            .show_text(true)
+            .fraction(pct as f64 / 100.0)
+            .text(format!("{pct}%"))
+            .build();
+        section.append(&bar);
+        self.imp().progress_bars.borrow_mut().insert(path.to_path_buf(), bar);
+        section
+    }
+
+    fn done_section(&self, path: &Path, digests: &[Digest], targets: &HashSet<String>) -> gtk::Box {
         let section = gtk::Box::new(gtk::Orientation::Vertical, 6);
 
         let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
@@ -323,7 +388,7 @@ SHA256 (thing.tar) = 62590f1b3d1a534d8df8ea2f3b5542a2b3fc46b3ac0b3d5e03bae13a12d
 ";
         let hexes = parse_checksum_hexes(text);
         assert!(hexes.contains("49f5819f475bf2c8e2ed80998789dba47a4a25ed19f97b6c8c6a4902eea0c1a1"));
-        assert!(hexes.contains("6dd738acab109c85")); // strips leading '*'
+        assert!(hexes.contains("6dd738acab109c85"));
         assert!(hexes.contains("62590f1b3d1a534d8df8ea2f3b5542a2b3fc46b3ac0b3d5e03bae13a12dc97e5"));
     }
 }

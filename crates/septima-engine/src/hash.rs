@@ -1,7 +1,11 @@
+use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::atomic::Ordering;
 
 use crate::error::EngineError;
+use crate::extract::CancelToken;
+use crate::progress::{apply_fragment, ExtractProgress};
 
 /// A hash algorithm: its `7zz -scrc` switch name and a display label.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +58,78 @@ pub fn hash_file(sevenzip: &Path, file: &Path, algos: &[&str]) -> Result<Vec<Dig
     }
 
     Ok(parse_digests(&String::from_utf8_lossy(&output.stdout)))
+}
+
+/// Like [`hash_file`], but streams progress (`0..=100`) as `7zz h` reads the
+/// file — important for large inputs. Blocking; run on a worker thread.
+pub fn hash_file_progress(
+    sevenzip: &Path,
+    file: &Path,
+    algos: &[&str],
+    cancel: &CancelToken,
+    mut on_progress: impl FnMut(u8),
+) -> Result<Vec<Digest>, EngineError> {
+    let mut cmd = Command::new(sevenzip);
+    cmd.arg("h").arg("-bsp1").arg("-bb1");
+    for algo in algos {
+        cmd.arg(format!("-scrc{algo}"));
+    }
+    let mut child = cmd
+        .arg("--")
+        .arg(file)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(EngineError::Spawn)?;
+
+    let mut stdout = child.stdout.take().expect("piped stdout");
+    let mut buf = [0u8; 8192];
+    let mut full: Vec<u8> = Vec::new(); // accumulate for the final digest parse
+    let mut fragment: Vec<u8> = Vec::new();
+    let mut state = ExtractProgress::default();
+
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(EngineError::Cancelled);
+        }
+        let n = stdout.read(&mut buf).map_err(EngineError::Spawn)?;
+        if n == 0 {
+            break;
+        }
+        full.extend_from_slice(&buf[..n]);
+        for &byte in &buf[..n] {
+            if byte == b'\r' || byte == b'\n' {
+                if !fragment.is_empty() {
+                    let text = String::from_utf8_lossy(&fragment);
+                    if apply_fragment(&mut state, &text) {
+                        if let Some(percent) = state.percent {
+                            on_progress(percent);
+                        }
+                    }
+                    fragment.clear();
+                }
+            } else {
+                fragment.push(byte);
+            }
+        }
+    }
+
+    let status = child.wait().map_err(EngineError::Spawn)?;
+    if !status.success() {
+        let mut stderr = String::new();
+        if let Some(mut e) = child.stderr.take() {
+            let _ = e.read_to_string(&mut stderr);
+        }
+        return Err(EngineError::SevenZip {
+            code: status.code(),
+            stderr,
+        });
+    }
+
+    Ok(parse_digests(&String::from_utf8_lossy(&full)))
 }
 
 /// Parse `7zz h`'s `<ALGO> for data:  <hex>` summary lines (one input file, so
