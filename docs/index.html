@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Septima — modern-codec 7z archiver for Linux</title>
+<meta name="description" content="A GNOME-native GTK4 front-end for 7-Zip ZS: browse, extract, and create archives with modern codecs (Zstandard, Brotli, Fast-LZMA2) and a real compression-tuning UI.">
+<style>
+  :root {
+    --bg: #f6f6fb; --surface: #ffffff; --text: #1c1b22; --muted: #5c5b66;
+    --border: #e4e3ee; --accent: #4b53d6; --accent-2: #3b3a9e;
+    --ok: #2e9e5b; --no: #c7c6d2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16151c; --surface: #1f1e28; --text: #ececf2; --muted: #a7a6b4;
+      --border: #2d2c39; --accent: #8b90f0; --accent-2: #5b6ee1;
+      --ok: #55d98a; --no: #45445a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  a { color: var(--accent); }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 20px; }
+  section { padding: 56px 0; }
+
+  /* Hero */
+  .hero { text-align: center; padding: 72px 0 48px; }
+  .icon {
+    width: 88px; height: 88px; border-radius: 22px; display: block; margin: 0 auto 22px;
+    box-shadow: 0 10px 30px rgba(59,58,158,.35);
+  }
+  h1 { font-size: 2.6rem; margin: 0 0 6px; letter-spacing: -.02em; }
+  .tagline { font-size: 1.25rem; color: var(--text); font-weight: 600; margin: 0 auto 14px; max-width: 32ch; }
+  .lede { color: var(--muted); max-width: 56ch; margin: 0 auto 26px; }
+  .btns { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .btn {
+    display: inline-block; padding: 11px 20px; border-radius: 11px; text-decoration: none;
+    font-weight: 600; border: 1px solid var(--border);
+  }
+  .btn.primary { background: var(--accent); color: #fff; border-color: transparent; }
+  .badge {
+    display: inline-block; margin-bottom: 18px; padding: 4px 12px; border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--accent); font-size: .82rem; font-weight: 600;
+  }
+
+  h2 { font-size: 1.6rem; letter-spacing: -.01em; margin: 0 0 8px; }
+  .sub { color: var(--muted); margin: 0 0 26px; }
+
+  /* Comparison table */
+  .tablewrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 14px; }
+  table { width: 100%; border-collapse: collapse; min-width: 560px; background: var(--surface); }
+  th, td { padding: 13px 14px; text-align: center; border-bottom: 1px solid var(--border); }
+  th:first-child, td:first-child { text-align: left; font-weight: 600; }
+  thead th { font-size: .8rem; color: var(--muted); font-weight: 600; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tr.me { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+  tr.me td:first-child { color: var(--accent); }
+  .y { color: var(--ok); font-weight: 700; }
+  .n { color: var(--no); }
+
+  /* Features */
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px; }
+  .card h3 { margin: 0 0 6px; font-size: 1.05rem; }
+  .card p { margin: 0; color: var(--muted); font-size: .95rem; }
+
+  /* Roadmap */
+  .road { list-style: none; padding: 0; margin: 0; color: var(--muted); }
+  .road li { padding: 8px 0; border-bottom: 1px solid var(--border); }
+  .road li:last-child { border: 0; }
+  .road b { color: var(--text); }
+
+  footer { border-top: 1px solid var(--border); color: var(--muted); font-size: .9rem; }
+  footer p { margin: 6px 0; }
+  code { background: color-mix(in srgb, var(--accent) 12%, transparent); padding: 1px 6px; border-radius: 6px; }
+</style>
+</head>
+<body>
+
+<header class="hero wrap">
+  <svg class="icon" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg" aria-label="Septima icon">
+    <defs>
+      <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#5b6ee1"/><stop offset="1" stop-color="#3b3a9e"/>
+      </linearGradient>
+    </defs>
+    <rect x="8" y="8" width="112" height="112" rx="26" fill="url(#bg)"/>
+    <g transform="translate(28 30)">
+      <rect x="0" y="18" width="72" height="52" rx="7" fill="#fff"/>
+      <rect x="-4" y="6" width="80" height="20" rx="7" fill="#fff"/>
+      <rect x="32" y="6" width="8" height="64" fill="#c7cbe8"/>
+      <rect x="30" y="40" width="12" height="14" rx="3" fill="#3b3a9e"/>
+    </g>
+  </svg>
+  <span class="badge">Early, but working</span>
+  <h1>Septima</h1>
+  <p class="tagline">The archiver that actually speaks modern-codec 7z.</p>
+  <p class="lede">
+    A GNOME-native front-end for <strong>7-Zip ZS</strong> — browse, extract, and
+    create archives with <strong>Zstandard, Brotli and Fast-LZMA2</strong>, and a
+    real compression-tuning interface no other Linux archiver offers.
+  </p>
+  <div class="btns">
+    <a class="btn primary" href="https://github.com/superuser-miguel/septima">View on GitHub</a>
+    <a class="btn" href="https://github.com/superuser-miguel/septima#install--build">Build it</a>
+  </div>
+</header>
+
+<section class="wrap">
+  <h2>Why Septima?</h2>
+  <p class="sub">Modern codecs, real tuning, and a native GNOME UI — a combination nothing else fills.</p>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr>
+          <th></th><th>Modern codecs</th><th>Real tuning</th><th>GNOME-native</th><th>One-gesture <code>.tar.zst</code></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>File Roller / Ark</td><td class="n">✗</td><td class="n">✗</td><td class="y">✓</td><td class="n">✗</td></tr>
+        <tr><td>PeaZip</td><td class="n">~</td><td class="y">✓</td><td class="n">✗</td><td class="n">~</td></tr>
+        <tr><td>7-Zip CLI (<code>7zz</code>)</td><td class="y">✓</td><td class="y">✓</td><td class="n">✗</td><td class="n">✗</td></tr>
+        <tr class="me"><td>Septima</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="wrap">
+  <h2>Features</h2>
+  <p class="sub">Everything driven by the bundled <code>7zz</code> — no host filesystem access, portals only.</p>
+  <div class="grid">
+    <div class="card">
+      <h3>The Add-to-Archive dialog</h3>
+      <p>Format × codec × level, with the level range reacting to the codec. Dictionary, solid mode, and threads — with a <strong>live memory estimate</strong>.</p>
+    </div>
+    <div class="card">
+      <h3>Modern codecs, first-class</h3>
+      <p>Zstandard (1–22), Brotli, Fast-LZMA2, LZ4/LZ5, Lizard, plus LZMA2, PPMd, BZip2 — inside real <code>.7z</code>.</p>
+    </div>
+    <div class="card">
+      <h3>Optimize for executables</h3>
+      <p>One switch for the BCJ filter, instead of the <code>-m0=bcj</code> folklore the Windows tool makes you learn.</p>
+    </div>
+    <div class="card">
+      <h3>Transparent modern tarballs</h3>
+      <p>Create a real <code>.tar.zst</code> / <code>.tar.xz</code> in one gesture, with full compression control.</p>
+    </div>
+    <div class="card">
+      <h3>Extract, safely</h3>
+      <p>Live progress and cancel, encrypted-archive password prompts, and split-volume output.</p>
+    </div>
+    <div class="card">
+      <h3>Sandboxed by design</h3>
+      <p>A Flatpak that ships <code>7zz</code> and touches your files only through XDG portals — never the whole home directory.</p>
+    </div>
+  </div>
+</section>
+
+<section class="wrap">
+  <h2>Roadmap</h2>
+  <p class="sub">Honest about what's next.</p>
+  <ul class="road">
+    <li><b>Transparent nested browsing</b> — open a <code>.tar.zst</code> and see the files inside, not just the outer tar.</li>
+    <li><b>Named compression presets</b> — save and reuse tuning profiles.</li>
+    <li><b>In-archive edit</b> — delete / rename, plus a modern hash calculator (BLAKE3, SHA-3, xxHash).</li>
+    <li><b>Visual polish</b> — custom styling, app icon, and a Flathub release.</li>
+  </ul>
+</section>
+
+<footer class="wrap">
+  <section>
+    <p><strong>Septima</strong> is free software, <strong>GPL-3.0-or-later</strong>.</p>
+    <p>Bundles <a href="https://github.com/mcmilk/7-Zip-zstd">7-Zip ZS</a> by Tino Reichardt (extending Igor Pavlov's 7-Zip) — bundled, not forked. Built with gtk4-rs, libadwaita, Blueprint and Meson.</p>
+    <p><a href="https://github.com/superuser-miguel/septima">github.com/superuser-miguel/septima</a></p>
+  </section>
+</footer>
+
+</body>
+</html>
