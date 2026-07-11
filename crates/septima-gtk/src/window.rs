@@ -343,7 +343,7 @@ impl SeptimaWindow {
     }
 
     fn choose_output_and_compress(&self, inputs: Vec<PathBuf>, settings: CreateSettings) {
-        let filename = format!("{}.{}", settings.name, settings.format.extension);
+        let filename = format!("{}.{}", settings.name, archive_extension(&settings));
         let dialog = gtk::FileDialog::builder()
             .title(gettext("Save Archive"))
             .modal(true)
@@ -379,9 +379,15 @@ impl SeptimaWindow {
         let sevenzip = septima_engine::sevenzip_path();
 
         std::thread::spawn(move || {
-            let result = septima_engine::run_add(&sevenzip, &req, &cancel, |p| {
+            let progress = |p: &ExtractProgress| {
                 let _ = sender.send_blocking(Job::Progress(p.clone()));
-            });
+            };
+            // tar + a real compressor produces a .tar.<ext> in two steps.
+            let result = if req.format == "tar" && req.codec.as_deref().is_some_and(|c| c != "copy") {
+                septima_engine::run_tar_and_compress(&sevenzip, &req, &cancel, progress)
+            } else {
+                septima_engine::run_add(&sevenzip, &req, &cancel, progress)
+            };
             let _ = sender.send_blocking(Job::Done(result));
         });
 
@@ -410,6 +416,22 @@ impl SeptimaWindow {
 
     fn show_toast(&self, message: &str) {
         self.imp().toast_overlay.add_toast(adw::Toast::new(message));
+    }
+}
+
+/// Full file extension for the chosen settings, e.g. `7z`, `zip`, `tar.zst`.
+fn archive_extension(settings: &CreateSettings) -> String {
+    if settings.format.id == "tar" {
+        match settings.codec.id {
+            "zstd" => "tar.zst",
+            "xz" => "tar.xz",
+            "gzip" => "tar.gz",
+            "bzip2" => "tar.bz2",
+            _ => "tar",
+        }
+        .to_string()
+    } else {
+        settings.format.extension.to_string()
     }
 }
 

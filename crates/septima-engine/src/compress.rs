@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::Ordering;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::EngineError;
 use crate::extract::CancelToken;
@@ -90,6 +92,76 @@ impl CompressionRequest {
         }
         args.extend(self.extra_params.iter().cloned());
         args
+    }
+}
+
+/// Create a `tar`, then compress it into `output` with `compressor`
+/// (`zstd`/`xz`/`gzip`/`bzip2`) — producing a real `.tar.<ext>`.
+///
+/// Two steps via a temp tar (7zz can't tar+compress multiple files in one shot).
+/// The temp lives in the system temp dir (writable under Flatpak); the compress
+/// phase reads a real file, so it reports accurate progress.
+///
+/// Uses `req.inputs`/`req.output`, `req.codec` as the compressor, and
+/// `req.level`/`req.threads`.
+pub fn run_tar_and_compress(
+    sevenzip: &Path,
+    req: &CompressionRequest,
+    cancel: &CancelToken,
+    mut on_progress: impl FnMut(&ExtractProgress),
+) -> Result<(), EngineError> {
+    let compressor = req.codec.as_deref().unwrap_or("zstd");
+    let output = req.output.as_path();
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    // Unique temp dir gives isolation; the tar keeps a clean name (it becomes the
+    // inner entry name — visible for gzip and when browsing the tar later).
+    let temp_dir = std::env::temp_dir().join(format!("septima-{}-{nanos}", std::process::id()));
+    if let Err(err) = std::fs::create_dir_all(&temp_dir) {
+        return Err(EngineError::Spawn(err));
+    }
+    let temp_tar = temp_dir.join(inner_tar_name(output));
+    let cleanup = || {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    };
+
+    // Phase 1: build the (uncompressed) tar.
+    let tar_req = CompressionRequest::new(temp_tar.clone(), req.inputs.clone(), "tar");
+    if let Err(err) = run_add(sevenzip, &tar_req, cancel, &mut on_progress) {
+        cleanup();
+        return Err(err);
+    }
+    if cancel.load(Ordering::Relaxed) {
+        cleanup();
+        return Err(EngineError::Cancelled);
+    }
+
+    // Phase 2: compress the tar into the final output.
+    let mut comp_req = CompressionRequest::new(output.to_path_buf(), vec![temp_tar], compressor);
+    comp_req.level = req.level;
+    comp_req.threads = req.threads;
+    let result = run_add(sevenzip, &comp_req, cancel, on_progress);
+
+    cleanup();
+    result
+}
+
+/// The inner tar's file name: the output name minus its compressor extension,
+/// ensured to end in `.tar` (e.g. `photos.tar.zst` -> `photos.tar`).
+fn inner_tar_name(output: &Path) -> String {
+    let name = output.file_name().and_then(|n| n.to_str()).unwrap_or("archive");
+    let base = name
+        .trim_end_matches(".zst")
+        .trim_end_matches(".xz")
+        .trim_end_matches(".gz")
+        .trim_end_matches(".bz2")
+        .trim_end_matches(".bzip2");
+    if base.ends_with(".tar") {
+        base.to_string()
+    } else {
+        format!("{base}.tar")
     }
 }
 

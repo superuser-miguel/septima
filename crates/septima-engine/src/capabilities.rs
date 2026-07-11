@@ -59,11 +59,15 @@ const LZ5: Codec = Codec { id: "lz5", label: "LZ5", level_min: 1, level_max: 15,
 const LIZARD: Codec = Codec { id: "lizard", label: "Lizard", level_min: 10, level_max: 49, default_level: 10 };
 const FLZMA2: Codec = Codec { id: "flzma2", label: "Fast-LZMA2", level_min: 1, level_max: 9, default_level: 6 };
 const COPY: Codec = Codec { id: "copy", label: "Store (no compression)", level_min: 0, level_max: 0, default_level: 0 };
+// tar post-compressors: applied to the tar stream (tar → .tar.zst/.tar.xz/…).
+const XZ: Codec = Codec { id: "xz", label: "xz", level_min: 0, level_max: 9, default_level: 6 };
+const GZIP: Codec = Codec { id: "gzip", label: "gzip", level_min: 1, level_max: 9, default_level: 6 };
 
 const SEVENZ_CODECS: &[Codec] =
     &[LZMA2, LZMA, PPMD, ZSTD, BROTLI, FLZMA2, BZIP2, LZ4, LZ5, LIZARD, DEFLATE, COPY];
 const ZIP_CODECS: &[Codec] = &[DEFLATE, ZSTD, BZIP2, LZMA, PPMD, COPY];
-const TAR_CODECS: &[Codec] = &[COPY];
+// For tar, the "codec" chooses an optional post-compressor (tar → .tar.<ext>).
+const TAR_CODECS: &[Codec] = &[COPY, ZSTD, XZ, GZIP, BZIP2];
 
 const FORMATS: &[Format] = &[
     Format {

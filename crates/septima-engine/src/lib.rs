@@ -21,7 +21,7 @@ mod supervise;
 
 pub use capabilities::{formats, Codec, Format};
 pub use command::{list_archive, sevenzip_path};
-pub use compress::{estimate_add_memory, run_add, CompressionRequest};
+pub use compress::{estimate_add_memory, run_add, run_tar_and_compress, CompressionRequest};
 pub use error::EngineError;
 pub use extract::{new_cancel_token, run_extract, CancelToken, ExtractRequest, OverwriteMode};
 pub use listing::{parse_listing, ArchiveEntry, ArchiveListing};

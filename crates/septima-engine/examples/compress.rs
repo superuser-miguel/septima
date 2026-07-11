@@ -20,11 +20,17 @@ fn main() {
     }
 
     let cancel = septima_engine::new_cancel_token();
-    let result = septima_engine::run_add(&sevenzip, &req, &cancel, |p| {
+    let progress = |p: &septima_engine::ExtractProgress| {
         print!("\r{:>3}%  {}    ", p.percent.unwrap_or(0), p.current_file.as_deref().unwrap_or(""));
         use std::io::Write;
         let _ = std::io::stdout().flush();
-    });
+    };
+    // tar + a real compressor -> two-step .tar.<ext>
+    let result = if args[0] == "tar" && req.codec.as_deref().is_some_and(|c| c != "copy") {
+        septima_engine::run_tar_and_compress(&sevenzip, &req, &cancel, progress)
+    } else {
+        septima_engine::run_add(&sevenzip, &req, &cancel, progress)
+    };
 
     println!();
     match result {
