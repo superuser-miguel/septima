@@ -4,6 +4,13 @@ using Adw 1;
 menu primary_menu {
   section {
     item {
+      label: _("Close Archive");
+      action: "win.close-archive";
+    }
+  }
+
+  section {
+    item {
       label: _("Calculate Checksums…");
       action: "win.checksums";
     }
@@ -20,6 +27,10 @@ template $SeptimaWindow: Adw.ApplicationWindow {
   content: Adw.ToolbarView {
     [top]
     Adw.HeaderBar {
+      title-widget: Adw.WindowTitle window_title {
+        title: _("Septima");
+      };
+
       [start]
       Gtk.Button open_button {
         icon-name: "document-open-symbolic";

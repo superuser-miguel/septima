@@ -43,6 +43,8 @@ fn main() -> glib::ExitCode {
         .flags(gio::ApplicationFlags::HANDLES_OPEN)
         .build();
 
+    app.set_accels_for_action("win.close-archive", &["<Ctrl>w"]);
+
     app.connect_startup(|_| load_css());
     app.connect_activate(|app| present(&window_for(app)));
     app.connect_open(|app, files, _hint| {

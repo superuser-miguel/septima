@@ -31,6 +31,8 @@ mod imp {
     #[template(resource = "/io/github/superuser_miguel/Septima/window.ui")]
     pub struct SeptimaWindow {
         #[template_child]
+        pub window_title: TemplateChild<adw::WindowTitle>,
+        #[template_child]
         pub stack: TemplateChild<gtk::Stack>,
         #[template_child]
         pub toast_overlay: TemplateChild<adw::ToastOverlay>,
@@ -93,7 +95,12 @@ mod imp {
             let checksums = gio::ActionEntry::builder("checksums")
                 .activate(|window: &super::SeptimaWindow, _, _| window.open_checksums())
                 .build();
-            self.obj().add_action_entries([checksums]);
+            let close = gio::ActionEntry::builder("close-archive")
+                .activate(|window: &super::SeptimaWindow, _, _| window.close_archive())
+                .build();
+            let obj = self.obj();
+            obj.add_action_entries([checksums, close]);
+            obj.set_close_enabled(false);
         }
     }
 
@@ -167,6 +174,13 @@ impl SeptimaWindow {
                     imp.extract_button.set_sensitive(true);
                     imp.archive_path.replace(Some(archive_path.clone()));
                     imp.archive_password.replace(password.clone());
+                    imp.window_title.set_title(&file_name(&archive_path));
+                    imp.window_title.set_subtitle(&format!(
+                        "{} · {}",
+                        n_files(listing.file_count()),
+                        glib::format_size(listing.total_size())
+                    ));
+                    window.set_close_enabled(true);
                     // Dev/test hook: extract without the folder portal.
                     if crate::config::PROFILE == "Devel" {
                         if let Some(dir) = std::env::var_os("SEPTIMA_AUTO_EXTRACT") {
@@ -423,6 +437,27 @@ impl SeptimaWindow {
         crate::hash_dialog::SeptimaHashDialog::new().present(Some(self));
     }
 
+    /// Clear the open archive and return to the welcome screen.
+    fn close_archive(&self) {
+        let imp = self.imp();
+        imp.stack.set_visible_child_name("empty");
+        imp.extract_button.set_sensitive(false);
+        imp.archive_path.replace(None);
+        imp.archive_password.replace(None);
+        imp.window_title.set_title("Septima");
+        imp.window_title.set_subtitle("");
+        self.set_close_enabled(false);
+    }
+
+    fn set_close_enabled(&self, enabled: bool) {
+        if let Some(action) = self
+            .lookup_action("close-archive")
+            .and_downcast::<gio::SimpleAction>()
+        {
+            action.set_enabled(enabled);
+        }
+    }
+
     fn show_toast(&self, message: &str) {
         self.imp().toast_overlay.add_toast(adw::Toast::new(message));
     }
@@ -476,4 +511,8 @@ fn file_name(path: &std::path::Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default()
+}
+
+fn n_files(n: usize) -> String {
+    gettextrs::ngettext("{} file", "{} files", n as u32).replacen("{}", &n.to_string(), 1)
 }

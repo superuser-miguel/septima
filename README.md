@@ -128,6 +128,9 @@ meson compile -C builddir
 - [x] **Named compression presets** — save and reuse tuning profiles.
 - [x] **Transparent nested extract** — extracting a `.tar.zst` yields the files
       directly (not the intermediate tar), completing "one-gesture both ways".
+- [ ] **Staged input list + drag-and-drop** — build the file set for a new
+      archive across multiple folders, and drop files onto the window to add
+      them.
 - [ ] **Post-extract actions** — a "Show in Files" action and an optional
       "delete the archive afterwards" toggle.
 - [ ] **Free-space check** — show available space at the extract destination

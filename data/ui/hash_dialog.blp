@@ -11,8 +11,17 @@ template $SeptimaHashDialog: Adw.Dialog {
     Adw.HeaderBar {
       [start]
       Gtk.Button add_button {
-        label: _("Add Files…");
+        icon-name: "list-add-symbolic";
+        tooltip-text: _("Add Files");
         clicked => $on_add_clicked() swapped;
+      }
+
+      [end]
+      Gtk.Button clear_button {
+        icon-name: "user-trash-symbolic";
+        tooltip-text: _("Clear");
+        sensitive: false;
+        clicked => $on_clear_clicked() swapped;
       }
     }
 
@@ -23,7 +32,7 @@ template $SeptimaHashDialog: Adw.Dialog {
         child: Adw.StatusPage {
           icon-name: "text-x-generic-symbolic";
           title: _("Compute Checksums");
-          description: _("Add files to see their CRC, SHA-256, SHA-3, BLAKE3 and xxHash digests.");
+          description: _("Add files to see their CRC, SHA-256, SHA-3, BLAKE3 and xxHash digests, and verify them against a known checksum.");
 
           child: Gtk.Button {
             halign: center;
@@ -44,13 +53,38 @@ template $SeptimaHashDialog: Adw.Dialog {
         child: Gtk.Box {
           orientation: vertical;
 
-          Gtk.SearchEntry verify_entry {
-            placeholder-text: _("Paste a checksum to compare…");
+          Gtk.Box {
+            spacing: 6;
             margin-start: 12;
             margin-end: 12;
             margin-top: 12;
             margin-bottom: 6;
-            search-changed => $on_verify_changed() swapped;
+
+            Gtk.SearchEntry verify_entry {
+              hexpand: true;
+              placeholder-text: _("Paste a checksum to compare…");
+              search-changed => $on_verify_changed() swapped;
+            }
+
+            Gtk.Button {
+              label: _("Load File…");
+              tooltip-text: _("Verify against a checksum file (SHA256SUMS, .sha256, …)");
+              clicked => $on_load_file_clicked() swapped;
+            }
+          }
+
+          Gtk.Label verify_status {
+            visible: false;
+            xalign: 0;
+            wrap: true;
+            margin-start: 12;
+            margin-end: 12;
+            margin-bottom: 6;
+
+            styles [
+              "dim-label",
+              "caption",
+            ]
           }
 
           Gtk.ScrolledWindow {
