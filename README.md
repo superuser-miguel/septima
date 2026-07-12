@@ -115,7 +115,8 @@ flatpak run io.github.superuser_miguel.Septima
 ```
 
 > The bundle is a direct install — to update, download the newer release and
-> reinstall. (A Flathub listing is planned as the project matures.)
+> reinstall. A self-hosted Flatpak repo with automatic updates (via a
+> `.flatpakref`) is planned.
 
 ## Build from source
 
@@ -164,7 +165,8 @@ meson compile -C builddir
 - [ ] In-archive delete / rename; the "Test archive" action.
 - [ ] Lizard family × level picker.
 - [ ] Custom visual styling and app icon.
-- [ ] Flathub submission.
+- [ ] **Self-hosted Flatpak repo** with automatic updates (a signed OSTree repo
+      + `.flatpakref`), so `flatpak update` pulls new releases directly.
 
 ## Acknowledgements
 

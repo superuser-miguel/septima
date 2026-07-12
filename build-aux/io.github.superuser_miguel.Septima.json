@@ -50,7 +50,7 @@
       },
       "sources": [
         {
-          "//": "Flathub build source: the tagged release. Local testing can use {type: dir, path: ..}. The Flathub PR should pin `commit` alongside `tag`.",
+          "//": "Release build source: the tagged release, pinned by tag + commit. Used to build the .flatpak bundle published on GitHub Releases. Local testing can use {type: dir, path: ..}.",
           "type": "git",
           "url": "https://github.com/superuser-miguel/septima.git",
           "tag": "v0.1.0",
