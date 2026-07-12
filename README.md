@@ -101,7 +101,23 @@ A few of the useful ones:
 > them. Params are split on spaces, so avoid switches containing spaces for now.
 > Full list: [7-Zip command-line switches](https://documentation.help/7-Zip/).
 
-## Install / Build
+## Install
+
+### Flatpak bundle
+
+Download **`Septima.flatpak`** from the
+[latest release](https://github.com/superuser-miguel/septima/releases/latest),
+then:
+
+```sh
+flatpak install --user ./Septima.flatpak
+flatpak run io.github.superuser_miguel.Septima
+```
+
+> The bundle is a direct install — to update, download the newer release and
+> reinstall. (A Flathub listing is planned as the project matures.)
+
+## Build from source
 
 Septima builds and runs entirely inside the GNOME Flatpak sandbox.
 

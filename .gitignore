@@ -30,3 +30,6 @@
 .idea/
 .vscode/
 .DS_Store
+
+# Flatpak bundles (release artifacts)
+*.flatpak
