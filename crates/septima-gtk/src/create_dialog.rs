@@ -201,8 +201,19 @@ mod imp {
                 false,
                 move |_, value, _, _| {
                     if let Ok(list) = value.get::<gdk::FileList>() {
-                        let paths = list.files().iter().filter_map(|f| f.path()).collect();
-                        obj.add_inputs(paths);
+                        // A dropped file may carry a real path the sandbox has no
+                        // permission for (unlike Add Files/Folder, which grant
+                        // access via the file-chooser portal). Stage only the
+                        // readable ones and flag any that were skipped.
+                        let (ok, skipped): (Vec<PathBuf>, Vec<PathBuf>) = list
+                            .files()
+                            .iter()
+                            .filter_map(|f| f.path())
+                            .partition(|p| path_is_accessible(p));
+                        obj.add_inputs(ok);
+                        if !skipped.is_empty() {
+                            obj.warn_dropped_inaccessible();
+                        }
                         true
                     } else {
                         false
@@ -349,6 +360,20 @@ impl SeptimaCreateDialog {
     fn remove_input(&self, path: &Path) {
         self.imp().inputs.borrow_mut().retain(|p| p != path);
         self.rebuild_files();
+    }
+
+    /// Tell the user a dropped item couldn't be read and point them at the
+    /// buttons, which go through the file-chooser portal and always work.
+    fn warn_dropped_inaccessible(&self) {
+        let dialog = adw::AlertDialog::new(
+            Some(&gettext("Some items couldn't be added")),
+            Some(&gettext(
+                "They were dropped in a way the sandbox can't read. Add them with the Add Files or Add Folder button instead.",
+            )),
+        );
+        dialog.add_response("close", &gettext("Close"));
+        dialog.set_default_response(Some("close"));
+        dialog.present(Some(self));
     }
 
     fn rebuild_files(&self) {
@@ -591,6 +616,13 @@ fn file_name(path: &Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default()
+}
+
+/// Whether the sandbox can actually reach `path`. A dropped file may carry a
+/// real path the sandbox has no permission for; opening it (works for files and
+/// directories on Unix) probes that without reading contents.
+fn path_is_accessible(path: &Path) -> bool {
+    std::fs::File::open(path).is_ok()
 }
 
 fn dim_label(text: &str) -> gtk::Label {

@@ -170,6 +170,19 @@ impl SeptimaWindow {
             self.show_toast(&gettext("That location can't be read directly."));
             return;
         };
+        // A dropped or command-line file may carry a real path the sandbox has
+        // no permission to read — unlike the file chooser, which grants access
+        // via the document portal. Catch that here so it surfaces as guidance
+        // rather than a cryptic "cannot open the file as archive" from 7zz.
+        // (Opening works for files and directories on Unix; contents unread.)
+        if std::fs::File::open(&path).is_err() {
+            self.show_error(&gettext(
+                "Septima couldn't read that file. If you dragged it in, open it \
+                 with the Open Archive button instead — some apps hand over \
+                 files in a way the sandbox can't access.",
+            ));
+            return;
+        }
         self.load_archive(path, None);
     }
 
