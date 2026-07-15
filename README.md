@@ -48,6 +48,8 @@ Where Septima aims to *win*, not just match:
 
 - Browse any archive `7zz` can read (7z, zip, tar, xz, gzip, bzip2, zstd, rar…)
   in a details view: Name / Size / Packed / Method / Modified / CRC.
+- Open an archive from the file chooser, your file manager ("Open With"), or by
+  **dropping it onto the window**.
 - Extract with **live progress, cancel, and password** support.
 - **Create / Add to Archive** with full tuning:
   - Formats: **7z, zip, tar** (+ tar → zstd/xz/gzip/bzip2).
@@ -148,8 +150,7 @@ meson compile -C builddir
 - [x] **Staged input list** — New Archive builds its file set with Add Files /
       Add Folder (folders included) across locations, with per-item remove and
       drag-and-drop from the file manager.
-- [ ] **Drop-to-open** — drag an archive onto the window to open it (the
-      create dialog already accepts file drops; this extends it to the main view).
+- [x] **Drop-to-open** — drag an archive onto the window to open it.
 - [ ] **Drag-out to extract** — drag selected entries out of an open archive to
       a folder / file manager to extract them (needs on-demand extraction; the
       open question is drag-*out* support under Wayland / portals).

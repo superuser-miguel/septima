@@ -101,6 +101,29 @@ mod imp {
             let obj = self.obj();
             obj.add_action_entries([checksums, close]);
             obj.set_close_enabled(false);
+
+            // Drop an archive onto the window to open it. A multi-file drop
+            // opens the first; the others are ignored (one archive at a time).
+            let drop = gtk::DropTarget::new(
+                gtk::gdk::FileList::static_type(),
+                gtk::gdk::DragAction::COPY,
+            );
+            drop.connect_drop(glib::clone!(
+                #[weak]
+                obj,
+                #[upgrade_or]
+                false,
+                move |_, value, _, _| {
+                    if let Ok(list) = value.get::<gtk::gdk::FileList>() {
+                        if let Some(file) = list.files().into_iter().next() {
+                            obj.open_file(file);
+                            return true;
+                        }
+                    }
+                    false
+                }
+            ));
+            obj.add_controller(drop);
         }
     }
 
