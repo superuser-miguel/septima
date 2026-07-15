@@ -189,13 +189,13 @@
 
 <section class="wrap">
   <h2>Roadmap</h2>
-  <p class="sub">Honest about what's next.</p>
+  <p class="sub">Honest about what's next. (Nested tarballs, presets, drop-to-open and the hash calculator already shipped.)</p>
   <ul class="road">
-    <li><b>Transparent nested browsing</b> — open a <code>.tar.zst</code> and see the files inside, not just the outer tar.</li>
-    <li><b>Named compression presets</b> — save and reuse tuning profiles.</li>
-    <li><b>In-archive edit</b> — delete / rename, plus a modern hash calculator (BLAKE3, SHA-3, xxHash).</li>
-    <li><b>Drag-out to extract</b> — drag entries out of an open archive to a folder to extract them (dropping an archive <em>in</em> to open it already works).</li>
+    <li><b>Post-extract actions</b> — a "Show in Files" action and an optional "delete the archive afterwards" toggle.</li>
+    <li><b>Generate a checksum file</b> — write a <code>.sha256</code> / <code>SHA256SUMS</code> alongside a new archive.</li>
+    <li><b>In-archive edit</b> — delete / rename entries, plus a "Test archive" action.</li>
     <li><b>Self-hosted auto-updates</b> — a signed Flatpak repo + <code>.flatpakref</code> so <code>flatpak update</code> pulls new releases.</li>
+    <li><b>Drag-out to extract</b> — drag entries out of an open archive to a folder to extract them (dropping an archive <em>in</em> to open it already works).</li>
     <li><b>Visual polish</b> — custom styling and a bespoke app icon.</li>
   </ul>
 </section>

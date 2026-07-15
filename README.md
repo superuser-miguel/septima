@@ -142,37 +142,47 @@ meson compile -C builddir
 
 ## Roadmap
 
-- [x] **Transparent nested browsing** — open a `.tar.zst` / `.tgz` / `.tar.xz`
-      and see the files inside, not the intermediate tar.
+### Shipped
+
+- [x] **Browse & extract** — any archive `7zz` reads, with live progress, cancel
+      and password support.
+- [x] **Create with full tuning** — format × codec × level, dictionary, solid,
+      threads, live memory estimate, BCJ, volumes, encryption, advanced switches.
+- [x] **Transparent nested browse + extract** — open, browse and extract a
+      `.tar.zst` / `.tgz` / `.tar.xz` in one gesture, both ways.
 - [x] **Named compression presets** — save and reuse tuning profiles.
-- [x] **Transparent nested extract** — extracting a `.tar.zst` yields the files
-      directly (not the intermediate tar), completing "one-gesture both ways".
-- [x] **Staged input list** — New Archive builds its file set with Add Files /
-      Add Folder (folders included) across locations, with per-item remove and
-      drag-and-drop from the file manager.
+- [x] **Staged input list** — Add Files / Add Folder across locations, per-item
+      remove, and drag-and-drop from the file manager.
 - [x] **Drop-to-open** — drag an archive onto the window to open it.
-- [ ] **Drag-out to extract** — drag selected entries out of an open archive to
-      a folder / file manager to extract them (needs on-demand extraction; the
-      open question is drag-*out* support under Wayland / portals).
-- [ ] **Post-extract actions** — a "Show in Files" action and an optional
-      "delete the archive afterwards" toggle.
-- [ ] **Free-space check** — show available space at the extract destination
-      before starting.
-- [ ] **More encryption methods** — XChaCha20-Poly1305, AES+XChaCha20 and
-      friends via `-mem`, once the bundled 7-Zip ZS build ships them
-      ([mcmilk/7-Zip-zstd#505](https://github.com/mcmilk/7-Zip-zstd/pull/505)).
-- [ ] **Promote key Advanced switches to real controls** — symlink handling
-      (`-snl`), word size / fast bytes (`-mfb`), and update modes (`-u`:
-      add / update / freshen / sync).
 - [x] **Hash calculator** — CRC-32, SHA-256/512, SHA3-256, BLAKE3, xxHash, with
       copy and verify-against-a-checksum.
+
+### Next up
+
+- [ ] **Post-extract actions** — a "Show in Files" action and an optional
+      "delete the archive afterwards" toggle.
 - [ ] **Generate a checksum file** — optionally write a `.sha256` / `SHA256SUMS`
-      alongside a newly created archive.
-- [ ] In-archive delete / rename; the "Test archive" action.
-- [ ] Lizard family × level picker.
-- [ ] Custom visual styling and app icon.
-- [ ] **Self-hosted Flatpak repo** with automatic updates (a signed OSTree repo
-      + `.flatpakref`), so `flatpak update` pulls new releases directly.
+      alongside a newly created archive (builds on the hash calculator).
+- [ ] **In-archive edit** — delete / rename entries, plus the "Test archive"
+      (`t`) action.
+- [ ] **Self-hosted Flatpak repo** — a signed OSTree repo + `.flatpakref` so
+      `flatpak update` pulls new releases directly (currently a manual `.flatpak`
+      download; infra work planned for late July).
+
+### Later
+
+- [ ] **Drag-out to extract** — drag entries out of an open archive to a folder
+      to extract them (needs a drag source with on-demand extraction; drag-*out*
+      support under Wayland / portals is the open question).
+- [ ] **Promote key Advanced switches to real controls** — symlink handling
+      (`-snl`), word size / fast bytes (`-mfb`), update modes (`-u`).
+- [ ] **Free-space check** — show available space at the extract destination
+      before starting.
+- [ ] **Lizard family × level picker.**
+- [ ] **Custom visual styling and app icon.**
+- [ ] **More encryption methods** — XChaCha20-Poly1305, AES+XChaCha20 and
+      friends via `-mem`, *blocked until* the bundled 7-Zip ZS ships them
+      ([mcmilk/7-Zip-zstd#505](https://github.com/mcmilk/7-Zip-zstd/pull/505)).
 
 ## Acknowledgements
 
