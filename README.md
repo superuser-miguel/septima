@@ -148,6 +148,11 @@ meson compile -C builddir
 - [x] **Staged input list** — New Archive builds its file set with Add Files /
       Add Folder (folders included) across locations, with per-item remove and
       drag-and-drop from the file manager.
+- [ ] **Drop-to-open** — drag an archive onto the window to open it (the
+      create dialog already accepts file drops; this extends it to the main view).
+- [ ] **Drag-out to extract** — drag selected entries out of an open archive to
+      a folder / file manager to extract them (needs on-demand extraction; the
+      open question is drag-*out* support under Wayland / portals).
 - [ ] **Post-extract actions** — a "Show in Files" action and an optional
       "delete the archive afterwards" toggle.
 - [ ] **Free-space check** — show available space at the extract destination
