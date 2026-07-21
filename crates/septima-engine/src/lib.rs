@@ -17,6 +17,7 @@ mod error;
 mod extract;
 mod hash;
 mod listing;
+mod measure;
 mod progress;
 mod supervise;
 
@@ -27,6 +28,7 @@ pub use hash::{hash_algorithms, hash_file, hash_file_progress, Digest, HashAlgo}
 pub use error::EngineError;
 pub use extract::{new_cancel_token, run_extract, CancelToken, ExtractRequest, OverwriteMode};
 pub use listing::{parse_listing, ArchiveEntry, ArchiveListing};
+pub use measure::{measure_selection, Selection};
 pub use progress::ExtractProgress;
 
 /// The `7zz` binary this engine drives by default (resolved via `PATH`).

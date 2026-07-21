@@ -1,12 +1,13 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{gdk, gio, glib, CompositeTemplate, TemplateChild};
 
 use septima_engine::capabilities::{formats, Codec, Format};
-use septima_engine::estimate_add_memory;
+use septima_engine::{estimate_add_memory, measure_selection, new_cancel_token, CancelToken, Selection};
 
 use crate::preset::{Preset, PresetStore};
 
@@ -34,6 +35,12 @@ const VOLUME_PRESETS: &[(&str, Option<&str>)] = &[
     ("1 GiB", Some("1g")),
     ("4 GiB", Some("4g")),
 ];
+
+/// Past either of these, warn that the selection is big. Tuned from the real
+/// failure it exists to prevent: a whole project dir dragged in, where `target/`
+/// and `builddir/` dwarfed the source the user actually meant to archive.
+const LARGE_SELECTION_BYTES: u64 = 1024 * 1024 * 1024;
+const LARGE_SELECTION_FILES: u64 = 10_000;
 
 fn codec_uses_dictionary(codec: &Codec) -> bool {
     matches!(codec.id, "lzma2" | "lzma" | "flzma2")
@@ -99,6 +106,10 @@ mod imp {
         pub on_create: RefCell<Option<CreateCallback>>,
         pub inputs: RefCell<Vec<PathBuf>>,
         pub input_rows: RefCell<Vec<adw::ActionRow>>,
+        /// Cancels the background walk when the selection changes under it.
+        pub measure_cancel: RefCell<Option<CancelToken>>,
+        /// Bumped per measurement so a superseded walk's answer is discarded.
+        pub measure_gen: Cell<u64>,
     }
 
     #[gtk::template_callbacks]
@@ -410,6 +421,81 @@ impl SeptimaCreateDialog {
             imp.input_rows.borrow_mut().push(row);
         }
         imp.create_button.set_sensitive(!inputs.is_empty());
+        drop(inputs);
+        self.start_measure();
+    }
+
+    /// Total up the staged selection on a background thread and report it under
+    /// the Files heading. Walking a deep tree over portal FUSE mounts costs a
+    /// `stat` per entry, so this must never run on the UI thread — measuring the
+    /// selection is not worth freezing the dialog that stages it.
+    fn start_measure(&self) {
+        let imp = self.imp();
+
+        // A walk for the previous selection is now answering the wrong question.
+        if let Some(old) = imp.measure_cancel.take() {
+            old.store(true, Ordering::Relaxed);
+        }
+
+        let inputs = imp.inputs.borrow().clone();
+        if inputs.is_empty() {
+            imp.files_group
+                .set_description(Some(&gettext("Drop files or folders here, or add them.")));
+            return;
+        }
+
+        let generation = imp.measure_gen.get().wrapping_add(1);
+        imp.measure_gen.set(generation);
+        imp.files_group.set_description(Some(&gettext("Measuring…")));
+
+        let cancel = new_cancel_token();
+        imp.measure_cancel.replace(Some(cancel.clone()));
+
+        let (sender, receiver) = async_channel::bounded::<Selection>(1);
+        std::thread::spawn(move || {
+            let _ = sender.send_blocking(measure_selection(&inputs, &cancel));
+        });
+
+        let dialog = self.clone();
+        glib::spawn_future_local(async move {
+            if let Ok(total) = receiver.recv().await {
+                // Only the newest walk gets to speak; an older one is stale.
+                if dialog.imp().measure_gen.get() == generation {
+                    dialog.show_selection_total(total);
+                }
+            }
+        });
+    }
+
+    fn show_selection_total(&self, total: Selection) {
+        let files = if total.files == 1 {
+            gettext("1 file")
+        } else {
+            format!("{} {}", total.files, gettext("files"))
+        };
+        // A truncated walk undercounts, so say "over" rather than claim a total.
+        let mut text = if total.truncated {
+            format!(
+                "{} {} · {} {}",
+                gettext("Over"),
+                files,
+                gettext("over"),
+                glib::format_size(total.bytes)
+            )
+        } else {
+            format!("{} · {}", files, glib::format_size(total.bytes))
+        };
+
+        if total.truncated
+            || total.bytes >= LARGE_SELECTION_BYTES
+            || total.files >= LARGE_SELECTION_FILES
+        {
+            text.push_str("  —  ");
+            text.push_str(&gettext(
+                "that's a big selection and will take a while. Check you meant to include everything (build and cache folders add up fast).",
+            ));
+        }
+        self.imp().files_group.set_description(Some(&text));
     }
 
     /// Register the handler run when the user confirms (Create).

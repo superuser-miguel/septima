@@ -159,6 +159,9 @@ meson compile -C builddir
 - [x] **Honest progress on big jobs** — an indeterminate "Scanning…" state while
       `7zz` enumerates the input, so a large selection no longer sits at 0%
       looking frozen.
+- [x] **Selection totals** — the staged file count and total size are measured in
+      the background and shown under Files, with a nudge when a selection is big
+      enough to take a while.
 - [x] **Responsive cancel** — Cancel takes effect in well under a second even
       while `7zz` is silent, and the half-written archive is deleted rather than
       left behind looking complete.
