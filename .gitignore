@@ -23,6 +23,7 @@
 /septima_plan.pptx
 /current_day_septima.odt
 /FLATHUB_PREP.md
+/septima-next-up.md
 
 # --- Editors / OS ---
 *.swp
@@ -33,3 +34,6 @@
 
 # Flatpak bundles (release artifacts)
 *.flatpak
+
+# Debug-run trace logs (keep screenshots/notes, not logs)
+/Troubleshooting/*.log

@@ -238,8 +238,28 @@ pub fn run_add(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    if crate::supervise::debug_enabled() {
+        eprintln!("[septima] run_add: {}", debug_argv(&cmd));
+    }
     let child = cmd.spawn().map_err(EngineError::Spawn)?;
     supervise(child, cancel, on_progress)
+}
+
+/// Render a spawn command for the `SEPTIMA_DEBUG` trace, redacting any
+/// `-p<password>` so passwords never reach the log in `Troubleshooting/`.
+fn debug_argv(cmd: &Command) -> String {
+    std::iter::once(cmd.get_program())
+        .chain(cmd.get_args())
+        .map(|s| {
+            let s = s.to_string_lossy();
+            if s.starts_with("-p") && s.len() > 2 {
+                "-p<redacted>".to_string()
+            } else {
+                s.into_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[cfg(test)]

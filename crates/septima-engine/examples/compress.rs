@@ -23,6 +23,16 @@ fn main() {
     }
 
     let cancel = septima_engine::new_cancel_token();
+    // Dev knob: SEPTIMA_CANCEL_MS=<n> fires cancel after n ms, to exercise the
+    // cancel path on real inputs (e.g. a big store-zip) from the command line.
+    if let Some(ms) = std::env::var("SEPTIMA_CANCEL_MS").ok().and_then(|v| v.parse::<u64>().ok()) {
+        let c = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+            eprintln!("\n[septima] (demo) firing cancel after {ms}ms");
+            c.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+    }
     let progress = |p: &septima_engine::ExtractProgress| {
         print!("\r{:>3}%  {}    ", p.percent.unwrap_or(0), p.current_file.as_deref().unwrap_or(""));
         use std::io::Write;
