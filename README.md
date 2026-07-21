@@ -156,6 +156,12 @@ meson compile -C builddir
 - [x] **Drop-to-open** — drag an archive onto the window to open it.
 - [x] **Hash calculator** — CRC-32, SHA-256/512, SHA3-256, BLAKE3, xxHash, with
       copy and verify-against-a-checksum.
+- [x] **Honest progress on big jobs** — an indeterminate "Scanning…" state while
+      `7zz` enumerates the input, so a large selection no longer sits at 0%
+      looking frozen.
+- [x] **Responsive cancel** — Cancel takes effect in well under a second even
+      while `7zz` is silent, and the half-written archive is deleted rather than
+      left behind looking complete.
 
 ### Next up
 
