@@ -241,8 +241,70 @@ pub fn run_add(
     if crate::supervise::debug_enabled() {
         eprintln!("[septima] run_add: {}", debug_argv(&cmd));
     }
+    // Snapshot before spawning so cancellation only ever deletes what this run
+    // created — adding to an existing archive must never destroy it.
+    let before = existing_output_paths(&req.output);
     let child = cmd.spawn().map_err(EngineError::Spawn)?;
-    supervise(child, cancel, on_progress)
+    let result = supervise(child, cancel, on_progress);
+    if matches!(result, Err(EngineError::Cancelled)) {
+        remove_new_outputs(&req.output, &before);
+    }
+    result
+}
+
+/// Every path that currently exists and that `7zz a` would own for this output:
+/// the archive itself, plus `output.001`, `output.002`, … when `-v` splits it
+/// into volumes (with `-v`, `output` itself is never created).
+fn existing_output_paths(output: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    if output.symlink_metadata().is_ok() {
+        found.push(output.to_path_buf());
+    }
+    let dir = match output.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    let Some(base) = output.file_name().and_then(|n| n.to_str()) else {
+        return found;
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return found;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(digits) = name
+            .to_str()
+            .and_then(|n| n.strip_prefix(base))
+            .and_then(|suffix| suffix.strip_prefix('.'))
+        else {
+            continue;
+        };
+        if digits.len() >= 2 && digits.bytes().all(|b| b.is_ascii_digit()) {
+            found.push(entry.path());
+        }
+    }
+    found
+}
+
+/// Delete the half-written archive a cancelled `7zz a` left behind. Without
+/// this a cancelled create leaves a truncated file that looks like a finished
+/// archive. Only paths absent from `before` are removed.
+fn remove_new_outputs(output: &Path, before: &[PathBuf]) {
+    for path in existing_output_paths(output) {
+        if before.contains(&path) {
+            continue;
+        }
+        let err = std::fs::remove_file(&path).err();
+        if crate::supervise::debug_enabled() {
+            match err {
+                None => eprintln!("[septima] cancel: removed partial output {}", path.display()),
+                Some(e) => eprintln!(
+                    "[septima] cancel: could not remove partial output {}: {e}",
+                    path.display()
+                ),
+            }
+        }
+    }
 }
 
 /// Render a spawn command for the `SEPTIMA_DEBUG` trace, redacting any
@@ -321,6 +383,71 @@ mod tests {
         req.codec = Some("lzma2".into());
         req.extra_params = vec!["-myx=on".into()];
         assert_eq!(req.method_args(), ["-m0=lzma2", "-myx=on"]);
+    }
+
+    /// A unique scratch dir; caller removes it.
+    fn scratch(tag: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("septima-test-{tag}-{nanos}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn cancel_removes_the_partial_archive() {
+        let dir = scratch("partial");
+        let output = dir.join("out.zip");
+
+        let before = existing_output_paths(&output);
+        assert!(before.is_empty());
+        std::fs::write(&output, b"half an archive").unwrap();
+
+        remove_new_outputs(&output, &before);
+        assert!(!output.exists(), "partial output should be deleted");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn cancel_keeps_a_pre_existing_archive() {
+        let dir = scratch("preexisting");
+        let output = dir.join("out.zip");
+        std::fs::write(&output, b"the user's real archive").unwrap();
+
+        // Snapshot taken *before* the run sees the existing archive, so a
+        // cancelled add-to-existing must leave it untouched.
+        let before = existing_output_paths(&output);
+        remove_new_outputs(&output, &before);
+
+        assert_eq!(std::fs::read(&output).unwrap(), b"the user's real archive");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn cancel_removes_volume_parts() {
+        let dir = scratch("volumes");
+        let output = dir.join("out.7z");
+
+        let before = existing_output_paths(&output);
+        // With -v, 7zz writes out.7z.001/.002 and never out.7z itself.
+        std::fs::write(dir.join("out.7z.001"), b"vol1").unwrap();
+        std::fs::write(dir.join("out.7z.002"), b"vol2").unwrap();
+        // Unrelated neighbours must survive: a different archive, and a
+        // suffix that isn't a volume number.
+        std::fs::write(dir.join("other.7z"), b"keep").unwrap();
+        std::fs::write(dir.join("out.7z.bak"), b"keep").unwrap();
+
+        remove_new_outputs(&output, &before);
+
+        assert!(!dir.join("out.7z.001").exists());
+        assert!(!dir.join("out.7z.002").exists());
+        assert!(dir.join("other.7z").exists());
+        assert!(dir.join("out.7z.bak").exists());
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

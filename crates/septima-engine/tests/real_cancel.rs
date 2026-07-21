@@ -35,7 +35,7 @@ fn real_7zz_creation_cancels_promptly() {
     }
 
     let output = dir.join("out.7z");
-    let mut req = CompressionRequest::new(output, vec![input], "7z");
+    let mut req = CompressionRequest::new(output.clone(), vec![input], "7z");
     req.codec = Some("lzma2".into());
     req.level = Some(6);
     req.threads = Some(2);
@@ -53,6 +53,7 @@ fn real_7zz_creation_cancels_promptly() {
     let result = handle.join().unwrap();
     let elapsed = t.elapsed();
 
+    let partial_left = output.exists();
     let _ = std::fs::remove_dir_all(&dir);
 
     println!("cancel -> return in {elapsed:?}; result: {result:?}");
@@ -63,5 +64,10 @@ fn real_7zz_creation_cancels_promptly() {
     assert!(
         elapsed < Duration::from_secs(2),
         "cancel took too long: {elapsed:?}"
+    );
+    assert!(
+        !partial_left,
+        "cancel left a partial archive behind at {}",
+        output.display()
     );
 }
