@@ -105,20 +105,32 @@ A few of the useful ones:
 
 ## Install
 
-### Flatpak bundle
+### Recommended — signed repo, automatic updates
 
-Download **`Septima.flatpak`** from the
-[latest release](https://github.com/superuser-miguel/septima/releases/latest),
-then:
+Install from the project's own signed Flatpak repo, and new releases arrive
+with `flatpak update`:
+
+```sh
+flatpak install --user https://superuser-miguel.github.io/septima-repo/septima.flatpakref
+flatpak run io.github.superuser_miguel.Septima
+```
+
+> This subscribes you to the repo (like Flathub does), so `flatpak update` — or
+> GNOME Software — pulls new versions automatically. Every release is signed
+> with the project's GPG key.
+
+### Alternative — one-off bundle
+
+Prefer a single file with no remote? Download **`Septima.flatpak`** from the
+[latest release](https://github.com/superuser-miguel/septima/releases/latest):
 
 ```sh
 flatpak install --user ./Septima.flatpak
 flatpak run io.github.superuser_miguel.Septima
 ```
 
-> The bundle is a direct install — to update, download the newer release and
-> reinstall. A self-hosted Flatpak repo with automatic updates (via a
-> `.flatpakref`) is planned.
+> The bundle has **no update path** — to move to a newer version, download it
+> and reinstall (or switch to the signed repo above, which updates itself).
 
 ## Build from source
 
@@ -165,6 +177,8 @@ meson compile -C builddir
 - [x] **Responsive cancel** — Cancel takes effect in well under a second even
       while `7zz` is silent, and the half-written archive is deleted rather than
       left behind looking complete.
+- [x] **Self-hosted Flatpak repo** — a signed OSTree repo + `.flatpakref` so
+      `flatpak update` pulls new releases directly, no re-download needed.
 
 ### Next up
 
@@ -174,9 +188,6 @@ meson compile -C builddir
       alongside a newly created archive (builds on the hash calculator).
 - [ ] **In-archive edit** — delete / rename entries, plus the "Test archive"
       (`t`) action.
-- [ ] **Self-hosted Flatpak repo** — a signed OSTree repo + `.flatpakref` so
-      `flatpak update` pulls new releases directly (currently a manual `.flatpak`
-      download; infra work planned for late July).
 
 ### Later
 

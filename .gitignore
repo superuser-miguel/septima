@@ -37,3 +37,6 @@
 
 # Debug-run trace logs (keep screenshots/notes, not logs)
 /Troubleshooting/*.log
+
+# --- Hosted OSTree repo (build-update-repo output; published out-of-band, never tracked) ---
+/repo-release/
