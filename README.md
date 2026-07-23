@@ -41,8 +41,8 @@ Where Septima aims to *win*, not just match:
   threads, and a **live memory estimate** so you can see the cost before you commit.
 - **"Optimize for executables"** — one switch for the BCJ filter, instead of the
   `-m0=bcj` folklore the Windows tool makes you learn.
-- **Transparent modern tarballs** — create a real `.tar.zst` / `.tar.xz` in one
-  gesture (transparent *browsing* of them is on the roadmap).
+- **Transparent modern tarballs** — create, browse, and extract a real
+  `.tar.zst` / `.tar.xz` in one gesture, both ways.
 
 ## Features
 
@@ -59,6 +59,11 @@ Where Septima aims to *win*, not just match:
   - Executable-optimization (BCJ), free-text advanced parameters.
   - Encryption (AES-256) with optional encrypted file names (7z).
   - Split into volumes (`.001`, `.002`, …).
+- **Checksum calculator** — CRC-32, SHA-256/512, SHA3-256, BLAKE3, xxHash, with
+  copy and verify-against-a-checksum.
+- **Named compression presets** — save your tuning as a reusable preset.
+- **Staged input list** — Add Files / Add Folder across locations, with per-item
+  remove, drag-and-drop, and a live count + total size of what's staged.
 - Ships as a **Flatpak** with `7zz` bundled — **portals only, no host filesystem
   access** by design.
 

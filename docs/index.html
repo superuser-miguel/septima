@@ -5,6 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Septima — modern-codec 7z archiver for Linux</title>
 <meta name="description" content="A GNOME-native GTK4 front-end for 7-Zip ZS: browse, extract, and create archives with modern codecs (Zstandard, Brotli, Fast-LZMA2) and a real compression-tuning UI.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Septima — modern-codec 7z archiver for Linux">
+<meta property="og:description" content="A GNOME-native front-end for 7-Zip ZS: browse, extract, and create archives with Zstandard, Brotli and Fast-LZMA2, and a real compression-tuning UI no other Linux archiver offers.">
+<meta property="og:url" content="https://superuser-miguel.github.io/septima/">
+<meta property="og:image" content="https://superuser-miguel.github.io/septima/screenshots/codec-menu.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Septima — modern-codec 7z archiver for Linux">
+<meta name="twitter:description" content="A GNOME-native front-end for 7-Zip ZS: browse, extract, and create archives with Zstandard, Brotli and Fast-LZMA2, and a real compression-tuning UI no other Linux archiver offers.">
+<meta name="twitter:image" content="https://superuser-miguel.github.io/septima/screenshots/codec-menu.png">
 <style>
   :root {
     --bg: #f6f6fb; --surface: #ffffff; --text: #1c1b22; --muted: #5c5b66;
@@ -165,6 +174,14 @@
     <div class="card">
       <h3>Sandboxed by design</h3>
       <p>A Flatpak that ships <code>7zz</code> and touches your files only through XDG portals — never the whole home directory.</p>
+    </div>
+    <div class="card">
+      <h3>Built-in checksum calculator</h3>
+      <p>CRC-32, SHA-256/512, SHA3-256, BLAKE3 and xxHash, with copy and verify-against-a-checksum.</p>
+    </div>
+    <div class="card">
+      <h3>Named tuning presets</h3>
+      <p>Save your codec/level/dictionary/threads setup once, reuse it on the next archive.</p>
     </div>
   </div>
 </section>
