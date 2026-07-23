@@ -184,11 +184,11 @@ meson compile -C builddir
       left behind looking complete.
 - [x] **Self-hosted Flatpak repo** — a signed OSTree repo + `.flatpakref` so
       `flatpak update` pulls new releases directly, no re-download needed.
+- [x] **Post-extract actions** — a "Show in Files" action and an optional
+      "delete the archive afterwards" toggle, including split-volume archives.
 
 ### Next up
 
-- [ ] **Post-extract actions** — a "Show in Files" action and an optional
-      "delete the archive afterwards" toggle.
 - [ ] **Generate a checksum file** — optionally write a `.sha256` / `SHA256SUMS`
       alongside a newly created archive (builds on the hash calculator).
 - [ ] **In-archive edit** — delete / rename entries, plus the "Test archive"

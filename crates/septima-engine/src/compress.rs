@@ -255,7 +255,7 @@ pub fn run_add(
 /// Every path that currently exists and that `7zz a` would own for this output:
 /// the archive itself, plus `output.001`, `output.002`, … when `-v` splits it
 /// into volumes (with `-v`, `output` itself is never created).
-fn existing_output_paths(output: &Path) -> Vec<PathBuf> {
+pub(crate) fn existing_output_paths(output: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
     if output.symlink_metadata().is_ok() {
         found.push(output.to_path_buf());

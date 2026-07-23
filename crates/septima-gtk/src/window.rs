@@ -220,7 +220,7 @@ impl SeptimaWindow {
                     // Dev/test hook: extract without the folder portal.
                     if crate::config::PROFILE == "Devel" {
                         if let Some(dir) = std::env::var_os("SEPTIMA_AUTO_EXTRACT") {
-                            window.start_extract(archive_path, PathBuf::from(dir), password);
+                            window.start_extract(archive_path, PathBuf::from(dir), password, false);
                         }
                     }
                 }
@@ -253,7 +253,7 @@ impl SeptimaWindow {
         let window = self.clone();
         dialog.select_folder(Some(self), gio::Cancellable::NONE, move |result| match result {
             Ok(folder) => match folder.path() {
-                Some(dest) => window.start_extract(archive.clone(), dest, password.clone()),
+                Some(dest) => window.confirm_extract(archive.clone(), dest, password.clone()),
                 None => window.show_toast(&gettext("That folder can't be written to directly.")),
             },
             Err(err) => {
@@ -264,7 +264,37 @@ impl SeptimaWindow {
         });
     }
 
-    fn start_extract(&self, archive: PathBuf, dest: PathBuf, password: Option<String>) {
+    /// Offer "delete the archive afterwards" before starting the extract job.
+    fn confirm_extract(&self, archive: PathBuf, dest: PathBuf, password: Option<String>) {
+        let delete_after = gtk::CheckButton::builder()
+            .label(gettext("Delete the archive after extracting"))
+            .build();
+
+        let dialog = adw::AlertDialog::builder()
+            .heading(gettext("Extract Archive"))
+            .body(gettext("Extract the contents of this archive to the chosen folder?"))
+            .extra_child(&delete_after)
+            .build();
+        dialog.add_response("cancel", &gettext("Cancel"));
+        dialog.add_response("extract", &gettext("Extract"));
+        dialog.set_response_appearance("extract", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("extract"));
+
+        let window = self.clone();
+        dialog.connect_response(None, move |_, response| {
+            if response == "extract" {
+                window.start_extract(
+                    archive.clone(),
+                    dest.clone(),
+                    password.clone(),
+                    delete_after.is_active(),
+                );
+            }
+        });
+        dialog.present(Some(self));
+    }
+
+    fn start_extract(&self, archive: PathBuf, dest: PathBuf, password: Option<String>, delete_after: bool) {
         let name = file_name(&archive);
         let row = SeptimaProgressRow::new(&format!("{}: {name}", gettext("Extracting")));
         let imp = self.imp();
@@ -299,18 +329,37 @@ impl SeptimaWindow {
                     Job::Done(result) => {
                         window.finish_job(&row);
                         match result {
-                            Ok(()) => window.show_toast(&format!(
-                                "{} {}",
-                                gettext("Extracted to"),
-                                dest.display()
-                            )),
+                            Ok(()) => {
+                                window.show_extracted_toast(&dest);
+                                if delete_after {
+                                    let archive = archive.clone();
+                                    let window = window.clone();
+                                    glib::spawn_future_local(async move {
+                                        let outcome =
+                                            gio::spawn_blocking(move || septima_engine::delete_archive(&archive))
+                                                .await;
+                                        if !matches!(outcome, Ok(Ok(()))) {
+                                            window.show_toast(&gettext(
+                                                "Extracted, but the archive couldn't be deleted.",
+                                            ));
+                                        }
+                                    });
+                                }
+                            }
                             Err(EngineError::Cancelled) => {} // silent
                             Err(EngineError::PasswordRequired) => {
                                 let retry = window.clone();
                                 let (archive, dest) = (archive.clone(), dest.clone());
                                 window.prompt_password(
                                     &gettext("This archive is encrypted. Enter its password to extract."),
-                                    move |pw| retry.start_extract(archive.clone(), dest.clone(), Some(pw)),
+                                    move |pw| {
+                                        retry.start_extract(
+                                            archive.clone(),
+                                            dest.clone(),
+                                            Some(pw),
+                                            delete_after,
+                                        )
+                                    },
                                 );
                             }
                             Err(err) => window.show_error(&err.to_string()),
@@ -468,6 +517,29 @@ impl SeptimaWindow {
 
     fn show_toast(&self, message: &str) {
         self.imp().toast_overlay.add_toast(adw::Toast::new(message));
+    }
+
+    /// The post-extract toast: destination path, plus a "Show in Files" button
+    /// that opens `dest` in the file manager via the OpenURI portal.
+    fn show_extracted_toast(&self, dest: &std::path::Path) {
+        let toast = adw::Toast::builder()
+            .title(format!("{} {}", gettext("Extracted to"), dest.display()))
+            .button_label(gettext("Show in Files"))
+            .build();
+
+        let window = self.clone();
+        let dest = dest.to_path_buf();
+        toast.connect_button_clicked(move |_| {
+            let launcher = gtk::FileLauncher::new(Some(&gio::File::for_path(&dest)));
+            let window_for_err = window.clone();
+            launcher.launch(Some(&window), gio::Cancellable::NONE, move |result| {
+                if let Err(err) = result {
+                    window_for_err.show_toast(&err.message());
+                }
+            });
+        });
+
+        self.imp().toast_overlay.add_toast(toast);
     }
 
     /// Show a full (possibly long) error in a dialog — toasts truncate.

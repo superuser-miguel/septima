@@ -5,9 +5,41 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::command::is_compressed_tar;
+use crate::compress::existing_output_paths;
 use crate::error::EngineError;
 use crate::progress::{apply_fragment, ExtractProgress};
 use crate::supervise::supervise;
+
+/// Delete `archive` and any of its volume parts (`archive.001`, `archive.002`, …)
+/// after a successful extract. `archive` may itself be any one part (whichever
+/// the user opened) — the base name is recovered before scanning for siblings.
+/// Best-effort: keeps going past a failed removal and returns the first error
+/// encountered, if any.
+pub fn delete_archive(archive: &Path) -> std::io::Result<()> {
+    let mut first_err = None;
+    for path in existing_output_paths(&volume_base(archive)) {
+        if let Err(e) = std::fs::remove_file(&path) {
+            first_err.get_or_insert(e);
+        }
+    }
+    first_err.map_or(Ok(()), Err)
+}
+
+/// If `path` ends in a `-v`-style volume suffix (`.001`, `.002`, …), strip it
+/// to recover the archive's base name; otherwise return `path` unchanged.
+fn volume_base(path: &Path) -> PathBuf {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return path.to_path_buf();
+    };
+    let Some((stem, suffix)) = name.rsplit_once('.') else {
+        return path.to_path_buf();
+    };
+    if suffix.len() >= 2 && suffix.bytes().all(|b| b.is_ascii_digit()) {
+        path.with_file_name(stem)
+    } else {
+        path.to_path_buf()
+    }
+}
 
 /// How `7zz` should treat files that already exist at the destination (`-ao*`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -180,4 +212,70 @@ fn extract_compressed_tar(
         code,
         stderr: untar_err,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::delete_archive;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// A unique scratch dir; caller removes it.
+    fn scratch(tag: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("septima-test-{tag}-{nanos}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn deletes_a_single_file_archive() {
+        let dir = scratch("delete-single");
+        let archive = dir.join("out.7z");
+        std::fs::write(&archive, b"an archive").unwrap();
+
+        delete_archive(&archive).unwrap();
+
+        assert!(!archive.exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn deletes_every_volume_part_given_the_base_name() {
+        let dir = scratch("delete-volumes-base");
+        let archive = dir.join("out.7z");
+        std::fs::write(dir.join("out.7z.001"), b"vol1").unwrap();
+        std::fs::write(dir.join("out.7z.002"), b"vol2").unwrap();
+        std::fs::write(dir.join("other.7z"), b"keep").unwrap();
+
+        delete_archive(&archive).unwrap();
+
+        assert!(!dir.join("out.7z.001").exists());
+        assert!(!dir.join("out.7z.002").exists());
+        assert!(dir.join("other.7z").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The user opens (and Septima is handed) whichever part they picked, not
+    /// the bare base name — e.g. `out.7z.001`. Every sibling part must still
+    /// go, not just the one that was opened.
+    #[test]
+    fn deletes_every_volume_part_given_the_part_the_user_opened() {
+        let dir = scratch("delete-volumes-part");
+        std::fs::write(dir.join("out.7z.001"), b"vol1").unwrap();
+        std::fs::write(dir.join("out.7z.002"), b"vol2").unwrap();
+        std::fs::write(dir.join("out.7z.003"), b"vol3").unwrap();
+        std::fs::write(dir.join("other.7z"), b"keep").unwrap();
+
+        delete_archive(&dir.join("out.7z.001")).unwrap();
+
+        assert!(!dir.join("out.7z.001").exists());
+        assert!(!dir.join("out.7z.002").exists());
+        assert!(!dir.join("out.7z.003").exists());
+        assert!(dir.join("other.7z").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

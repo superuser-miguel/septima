@@ -26,7 +26,9 @@ pub use command::{list_archive, sevenzip_path};
 pub use compress::{estimate_add_memory, run_add, run_tar_and_compress, CompressionRequest};
 pub use hash::{hash_algorithms, hash_file, hash_file_progress, Digest, HashAlgo};
 pub use error::EngineError;
-pub use extract::{new_cancel_token, run_extract, CancelToken, ExtractRequest, OverwriteMode};
+pub use extract::{
+    delete_archive, new_cancel_token, run_extract, CancelToken, ExtractRequest, OverwriteMode,
+};
 pub use listing::{parse_listing, ArchiveEntry, ArchiveListing};
 pub use measure::{measure_selection, Selection};
 pub use progress::ExtractProgress;
