@@ -12,6 +12,8 @@ pub enum EngineError {
     Cancelled,
     /// `7zz` exited non-zero for another reason.
     SevenZip { code: Option<i32>, stderr: String },
+    /// A filesystem operation around the archive (not `7zz` itself) failed.
+    Io(io::Error),
 }
 
 impl fmt::Display for EngineError {
@@ -24,6 +26,7 @@ impl fmt::Display for EngineError {
                 Some(c) => write!(f, "7zz exited with code {c}: {}", stderr.trim()),
                 None => write!(f, "7zz was terminated: {}", stderr.trim()),
             },
+            EngineError::Io(e) => write!(f, "{e}"),
         }
     }
 }
@@ -32,6 +35,7 @@ impl std::error::Error for EngineError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             EngineError::Spawn(e) => Some(e),
+            EngineError::Io(e) => Some(e),
             _ => None,
         }
     }

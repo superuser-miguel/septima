@@ -1,8 +1,9 @@
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::Ordering;
 
+use crate::compress::existing_output_paths;
 use crate::error::EngineError;
 use crate::extract::CancelToken;
 use crate::progress::{apply_fragment, ExtractProgress};
@@ -130,6 +131,36 @@ pub fn hash_file_progress(
     }
 
     Ok(parse_digests(&String::from_utf8_lossy(&full)))
+}
+
+/// Hash `output` (and, for a split archive, every volume part) with SHA-256
+/// and write the digests to `<output>.sha256` in the standard `sha256sum`
+/// checksum-file format (`<hex>  <filename>`, one line per file), so it can
+/// be verified later with this app's own hash calculator or plain `sha256sum`.
+pub fn write_checksum_file(sevenzip: &Path, output: &Path) -> Result<PathBuf, EngineError> {
+    let mut parts = existing_output_paths(output);
+    parts.sort();
+
+    let mut contents = String::new();
+    for part in &parts {
+        let digests = hash_file(sevenzip, part, &["SHA256"])?;
+        let sha256 = digests
+            .into_iter()
+            .find(|d| d.algo.eq_ignore_ascii_case("SHA256"))
+            .ok_or_else(|| {
+                EngineError::Io(std::io::Error::other("7zz did not report a SHA-256 digest"))
+            })?;
+        let name = part.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+        contents.push_str(&format!("{}  {name}\n", sha256.hex));
+    }
+
+    let checksum_path = {
+        let mut name = output.file_name().unwrap_or_default().to_os_string();
+        name.push(".sha256");
+        output.with_file_name(name)
+    };
+    std::fs::write(&checksum_path, contents).map_err(EngineError::Io)?;
+    Ok(checksum_path)
 }
 
 /// Parse `7zz h`'s `<ALGO> for data:  <hex>` summary lines (one input file, so

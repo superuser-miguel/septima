@@ -127,6 +127,11 @@ template $SeptimaCreateDialog: Adw.Dialog {
         Adw.ComboRow volume_row {
           title: _("Split into volumes");
         }
+
+        Adw.SwitchRow checksum_row {
+          title: _("Generate a checksum file");
+          subtitle: _("Writes a .sha256 file alongside the new archive");
+        }
       }
 
       Adw.PreferencesGroup {

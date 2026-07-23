@@ -61,6 +61,7 @@ pub struct CreateSettings {
     pub password: Option<String>,
     pub encrypt_headers: bool,
     pub extra_params: Vec<String>,
+    pub write_checksum: bool,
 }
 
 type CreateCallback = Box<dyn Fn(&SeptimaCreateDialog)>;
@@ -95,6 +96,8 @@ mod imp {
         pub bcj_row: TemplateChild<adw::SwitchRow>,
         #[template_child]
         pub volume_row: TemplateChild<adw::ComboRow>,
+        #[template_child]
+        pub checksum_row: TemplateChild<adw::SwitchRow>,
         #[template_child]
         pub params_row: TemplateChild<adw::EntryRow>,
         #[template_child]
@@ -538,6 +541,7 @@ impl SeptimaCreateDialog {
             password,
             encrypt_headers: format.supports_header_encryption && imp.encrypt_headers_row.is_active(),
             extra_params,
+            write_checksum: imp.checksum_row.is_active(),
         }
     }
 

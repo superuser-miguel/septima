@@ -429,7 +429,10 @@ impl SeptimaWindow {
         let window = self.clone();
         dialog.save(Some(self), gio::Cancellable::NONE, move |result| match result {
             Ok(file) => match file.path() {
-                Some(output) => window.start_compress(compression_request(&settings, output)),
+                Some(output) => {
+                    let write_checksum = settings.write_checksum;
+                    window.start_compress(compression_request(&settings, output), write_checksum)
+                }
                 None => window.show_toast(&gettext("That location can't be written to directly.")),
             },
             Err(err) => {
@@ -440,7 +443,7 @@ impl SeptimaWindow {
         });
     }
 
-    fn start_compress(&self, req: CompressionRequest) {
+    fn start_compress(&self, req: CompressionRequest, write_checksum: bool) {
         let output = req.output.clone();
         let row = SeptimaProgressRow::new(&format!("{}: {}", gettext("Creating"), file_name(&output)));
         let imp = self.imp();
@@ -453,6 +456,7 @@ impl SeptimaWindow {
 
         let (sender, receiver) = async_channel::unbounded::<Job>();
         let sevenzip = septima_engine::sevenzip_path();
+        let sevenzip_for_checksum = sevenzip.clone();
 
         std::thread::spawn(move || {
             let progress = |p: &ExtractProgress| {
@@ -475,11 +479,34 @@ impl SeptimaWindow {
                     Job::Done(result) => {
                         window.finish_job(&row);
                         match result {
-                            Ok(()) => window.show_toast(&format!(
-                                "{} {}",
-                                gettext("Created"),
-                                output.display()
-                            )),
+                            Ok(()) => {
+                                window.show_toast(&format!(
+                                    "{} {}",
+                                    gettext("Created"),
+                                    output.display()
+                                ));
+                                if write_checksum {
+                                    let output = output.clone();
+                                    let window = window.clone();
+                                    let sevenzip = sevenzip_for_checksum.clone();
+                                    glib::spawn_future_local(async move {
+                                        let outcome = gio::spawn_blocking(move || {
+                                            septima_engine::write_checksum_file(&sevenzip, &output)
+                                        })
+                                        .await;
+                                        match outcome {
+                                            Ok(Ok(checksum_path)) => window.show_toast(&format!(
+                                                "{} {}",
+                                                gettext("Wrote"),
+                                                file_name(&checksum_path)
+                                            )),
+                                            _ => window.show_toast(&gettext(
+                                                "Created, but the checksum file couldn't be written.",
+                                            )),
+                                        }
+                                    });
+                                }
+                            }
                             Err(EngineError::Cancelled) => {}
                             Err(err) => window.show_error(&err.to_string()),
                         }

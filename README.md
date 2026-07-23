@@ -186,11 +186,11 @@ meson compile -C builddir
       `flatpak update` pulls new releases directly, no re-download needed.
 - [x] **Post-extract actions** — a "Show in Files" action and an optional
       "delete the archive afterwards" toggle, including split-volume archives.
+- [x] **Generate a checksum file** — optionally write a `.sha256` file next to
+      a newly created archive (one line per volume part, for split archives).
 
 ### Next up
 
-- [ ] **Generate a checksum file** — optionally write a `.sha256` / `SHA256SUMS`
-      alongside a newly created archive (builds on the hash calculator).
 - [ ] **In-archive edit** — delete / rename entries, plus the "Test archive"
       (`t`) action.
 
