@@ -190,6 +190,8 @@ meson compile -C builddir
       a newly created archive (one line per volume part, for split archives).
 - [x] **In-archive edit** — delete / rename entries (multi-select for delete),
       plus a "Test Archive" action with the same live progress as extract.
+- [x] **Batch extract** — select or drop several archives at once and each
+      extracts into its own new folder next to itself, no per-archive prompts.
 
 ### Later
 

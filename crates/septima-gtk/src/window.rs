@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
 use adw::prelude::*;
@@ -105,8 +105,8 @@ mod imp {
             obj.add_action_entries([checksums, close, test_archive]);
             obj.set_archive_actions_enabled(false);
 
-            // Drop an archive onto the window to open it. A multi-file drop
-            // opens the first; the others are ignored (one archive at a time).
+            // Drop an archive onto the window to open it; drop several to
+            // batch-extract them instead (see open_or_batch_extract).
             let drop = gtk::DropTarget::new(
                 gtk::gdk::FileList::static_type(),
                 gtk::gdk::DragAction::COPY,
@@ -118,8 +118,9 @@ mod imp {
                 false,
                 move |_, value, _, _| {
                     if let Ok(list) = value.get::<gtk::gdk::FileList>() {
-                        if let Some(file) = list.files().into_iter().next() {
-                            obj.open_file(file);
+                        let files = list.files();
+                        if !files.is_empty() {
+                            obj.open_or_batch_extract(files);
                             return true;
                         }
                     }
@@ -161,6 +162,7 @@ impl SeptimaWindow {
 
     // --- Open ---------------------------------------------------------------
 
+    /// Pick one archive to open and browse, or several to batch-extract.
     fn open_archive_dialog(&self) {
         let dialog = gtk::FileDialog::builder()
             .title(gettext("Open Archive"))
@@ -168,14 +170,25 @@ impl SeptimaWindow {
             .build();
 
         let window = self.clone();
-        dialog.open(Some(self), gio::Cancellable::NONE, move |result| match result {
-            Ok(file) => window.open_file(file),
+        dialog.open_multiple(Some(self), gio::Cancellable::NONE, move |result| match result {
+            Ok(files) => window.open_or_batch_extract(files.iter::<gio::File>().filter_map(Result::ok).collect()),
             Err(err) => {
                 if !err.matches(gtk::DialogError::Dismissed) {
                     window.show_toast(err.message());
                 }
             }
         });
+    }
+
+    /// A single file opens for browsing (unchanged); two or more trigger a
+    /// batch-extract flow instead — one at a time isn't what someone picking
+    /// several archives at once wants.
+    fn open_or_batch_extract(&self, mut files: Vec<gio::File>) {
+        match files.len() {
+            0 => {}
+            1 => self.open_file(files.remove(0)),
+            _ => self.confirm_batch_extract(files),
+        }
     }
 
     /// Open and list `file` (file chooser, CLI args, or a file manager).
@@ -198,6 +211,62 @@ impl SeptimaWindow {
             return;
         }
         self.load_archive(path, None);
+    }
+
+    /// Confirm, then extract every archive in `files` into a new sibling
+    /// folder next to itself (e.g. `photos.zip` -> `photos/`) — one Extract
+    /// job per archive, run independently, no per-archive prompts.
+    fn confirm_batch_extract(&self, files: Vec<gio::File>) {
+        let skipped = files.len();
+        let archives: Vec<PathBuf> = files
+            .into_iter()
+            .filter_map(|f| f.path())
+            .filter(|p| std::fs::File::open(p).is_ok())
+            .collect();
+        let skipped = skipped - archives.len();
+        if archives.is_empty() {
+            self.show_error(&gettext(
+                "Septima couldn't read those files. If you dragged them in, use the \
+                 Open Archive button instead — some apps hand over files in a way \
+                 the sandbox can't access.",
+            ));
+            return;
+        }
+
+        let delete_after = gtk::CheckButton::builder()
+            .label(gettext("Delete the archives after extracting"))
+            .build();
+
+        let body = if skipped > 0 {
+            format!(
+                "{} {}",
+                n_archives_body(archives.len()),
+                n_skipped(skipped)
+            )
+        } else {
+            n_archives_body(archives.len())
+        };
+        let dialog = adw::AlertDialog::builder()
+            .heading(gettext("Extract Archives"))
+            .body(body)
+            .extra_child(&delete_after)
+            .build();
+        dialog.add_response("cancel", &gettext("Cancel"));
+        dialog.add_response("extract", &gettext("Extract"));
+        dialog.set_response_appearance("extract", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("extract"));
+
+        let window = self.clone();
+        dialog.connect_response(None, move |_, response| {
+            if response != "extract" {
+                return;
+            }
+            for archive in &archives {
+                let dest = sibling_extract_dir(archive);
+                window.start_extract(archive.clone(), dest, None, delete_after.is_active());
+            }
+        });
+        dialog.present(Some(self));
     }
 
     /// List `path` (optionally with `password`); on an encrypted archive, prompt
@@ -834,4 +903,36 @@ fn n_entries_body(n: usize) -> String {
 
 fn n_deleted(n: usize) -> String {
     gettextrs::ngettext("{} entry deleted.", "{} entries deleted.", n as u32).replacen("{}", &n.to_string(), 1)
+}
+
+fn n_archives_body(n: usize) -> String {
+    gettextrs::ngettext(
+        "Extract {} archive? Each will be extracted into a new folder next to itself.",
+        "Extract {} archives? Each will be extracted into a new folder next to itself.",
+        n as u32,
+    )
+    .replacen("{}", &n.to_string(), 1)
+}
+
+fn n_skipped(n: usize) -> String {
+    gettextrs::ngettext(
+        "({} file couldn't be read and will be skipped.)",
+        "({} files couldn't be read and will be skipped.)",
+        n as u32,
+    )
+    .replacen("{}", &n.to_string(), 1)
+}
+
+/// Where a batch-extracted archive's contents land: a new folder next to it,
+/// named after the archive (`photos.zip` -> `photos/`, `data.tar.gz` -> `data/`).
+fn sibling_extract_dir(archive: &Path) -> PathBuf {
+    let stem = archive
+        .file_stem()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| archive.to_path_buf());
+    let stem = match stem.extension() {
+        Some(ext) if ext.eq_ignore_ascii_case("tar") => stem.file_stem().map(PathBuf::from).unwrap_or(stem),
+        _ => stem,
+    };
+    archive.with_file_name(stem)
 }
