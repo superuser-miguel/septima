@@ -233,9 +233,23 @@ impl SeptimaWindow {
             return;
         }
 
+        // These batches usually share one password, so offer a single field
+        // applied to every archive — no need to retype it per archive. An
+        // archive with a different (or no) password falls back to the named
+        // per-archive prompt in start_extract.
+        let password_entry = gtk::PasswordEntry::builder()
+            .show_peek_icon(true)
+            .placeholder_text(gettext("Password (only if encrypted)"))
+            .build();
         let delete_after = gtk::CheckButton::builder()
             .label(gettext("Delete the archives after extracting"))
             .build();
+        let extra = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(12)
+            .build();
+        extra.append(&password_entry);
+        extra.append(&delete_after);
 
         let body = if skipped > 0 {
             format!(
@@ -249,7 +263,7 @@ impl SeptimaWindow {
         let dialog = adw::AlertDialog::builder()
             .heading(gettext("Extract Archives"))
             .body(body)
-            .extra_child(&delete_after)
+            .extra_child(&extra)
             .build();
         dialog.add_response("cancel", &gettext("Cancel"));
         dialog.add_response("extract", &gettext("Extract"));
@@ -261,9 +275,11 @@ impl SeptimaWindow {
             if response != "extract" {
                 return;
             }
+            let pw = password_entry.text().to_string();
+            let password = (!pw.is_empty()).then_some(pw);
             for archive in &archives {
                 let dest = sibling_extract_dir(archive);
-                window.start_extract(archive.clone(), dest, None, delete_after.is_active());
+                window.start_extract(archive.clone(), dest, password.clone(), delete_after.is_active());
             }
         });
         dialog.present(Some(self));
@@ -433,17 +449,16 @@ impl SeptimaWindow {
                             Err(EngineError::PasswordRequired) => {
                                 let retry = window.clone();
                                 let (archive, dest) = (archive.clone(), dest.clone());
-                                window.prompt_password(
-                                    &gettext("This archive is encrypted. Enter its password to extract."),
-                                    move |pw| {
-                                        retry.start_extract(
-                                            archive.clone(),
-                                            dest.clone(),
-                                            Some(pw),
-                                            delete_after,
-                                        )
-                                    },
-                                );
+                                let body = gettext("“{}” is encrypted. Enter its password to extract.")
+                                    .replacen("{}", &file_name(&archive), 1);
+                                window.prompt_password(&body, move |pw| {
+                                    retry.start_extract(
+                                        archive.clone(),
+                                        dest.clone(),
+                                        Some(pw),
+                                        delete_after,
+                                    )
+                                });
                             }
                             Err(err) => window.show_error(&err.to_string()),
                         }
