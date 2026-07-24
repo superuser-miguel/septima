@@ -14,6 +14,20 @@ template $SeptimaArchiveView: Adw.Bin {
         ellipsize: end;
         selectable: true;
       }
+
+      Gtk.Button rename_button {
+        icon-name: "document-edit-symbolic";
+        tooltip-text: _("Rename Entry");
+        sensitive: false;
+        clicked => $on_rename_clicked() swapped;
+      }
+
+      Gtk.Button delete_button {
+        icon-name: "user-trash-symbolic";
+        tooltip-text: _("Delete Entries");
+        sensitive: false;
+        clicked => $on_delete_clicked() swapped;
+      }
     }
 
     Gtk.ScrolledWindow {

@@ -98,9 +98,12 @@ mod imp {
             let close = gio::ActionEntry::builder("close-archive")
                 .activate(|window: &super::SeptimaWindow, _, _| window.close_archive())
                 .build();
+            let test_archive = gio::ActionEntry::builder("test-archive")
+                .activate(|window: &super::SeptimaWindow, _, _| window.test_archive())
+                .build();
             let obj = self.obj();
-            obj.add_action_entries([checksums, close]);
-            obj.set_close_enabled(false);
+            obj.add_action_entries([checksums, close, test_archive]);
+            obj.set_archive_actions_enabled(false);
 
             // Drop an archive onto the window to open it. A multi-file drop
             // opens the first; the others are ignored (one archive at a time).
@@ -124,6 +127,17 @@ mod imp {
                 }
             ));
             obj.add_controller(drop);
+
+            self.archive_view.connect_delete_requested(glib::clone!(
+                #[weak]
+                obj,
+                move |paths| obj.delete_entries(paths)
+            ));
+            self.archive_view.connect_rename_requested(glib::clone!(
+                #[weak]
+                obj,
+                move |path| obj.rename_entry(path)
+            ));
         }
     }
 
@@ -216,7 +230,7 @@ impl SeptimaWindow {
                         n_files(listing.file_count()),
                         glib::format_size(listing.total_size())
                     ));
-                    window.set_close_enabled(true);
+                    window.set_archive_actions_enabled(true);
                     // Dev/test hook: extract without the folder portal.
                     if crate::config::PROFILE == "Devel" {
                         if let Some(dir) = std::env::var_os("SEPTIMA_AUTO_EXTRACT") {
@@ -521,6 +535,200 @@ impl SeptimaWindow {
         crate::hash_dialog::SeptimaHashDialog::new().present(Some(self));
     }
 
+    /// Verify the open archive's integrity via `7zz t`.
+    fn test_archive(&self) {
+        let Some(archive) = self.imp().archive_path.borrow().clone() else {
+            return;
+        };
+        let password = self.imp().archive_password.borrow().clone();
+        self.run_test_job(archive, password);
+    }
+
+    fn run_test_job(&self, archive: PathBuf, password: Option<String>) {
+        let row = SeptimaProgressRow::new(&format!("{}: {}", gettext("Testing"), file_name(&archive)));
+        let imp = self.imp();
+        imp.jobs_box.append(&row);
+        imp.jobs_revealer.set_reveal_child(true);
+
+        let cancel = septima_engine::new_cancel_token();
+        let cancel_ui = cancel.clone();
+        row.connect_cancel(move || cancel_ui.store(true, Ordering::Relaxed));
+
+        let (sender, receiver) = async_channel::unbounded::<Job>();
+        let sevenzip = septima_engine::sevenzip_path();
+        let archive_for_retry = archive.clone();
+
+        std::thread::spawn(move || {
+            let result = septima_engine::run_test(&sevenzip, &archive, password.as_deref(), &cancel, |p| {
+                let _ = sender.send_blocking(Job::Progress(p.clone()));
+            });
+            let _ = sender.send_blocking(Job::Done(result));
+        });
+
+        let window = self.clone();
+        glib::spawn_future_local(async move {
+            while let Ok(message) = receiver.recv().await {
+                match message {
+                    Job::Progress(p) => row.set_progress(p.percent, p.current_file.as_deref()),
+                    Job::Done(result) => {
+                        window.finish_job(&row);
+                        match result {
+                            Ok(()) => window.show_toast(&gettext(
+                                "No errors found — the archive is intact.",
+                            )),
+                            Err(EngineError::Cancelled) => {}
+                            Err(EngineError::PasswordRequired) => {
+                                let retry = window.clone();
+                                let archive = archive_for_retry.clone();
+                                window.prompt_password(
+                                    &gettext("This archive is encrypted. Enter its password to test it."),
+                                    move |pw| {
+                                        retry.imp().archive_password.replace(Some(pw.clone()));
+                                        retry.run_test_job(archive.clone(), Some(pw));
+                                    },
+                                );
+                            }
+                            Err(err) => window.show_error(&err.to_string()),
+                        }
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    /// Ask to confirm, then delete `paths` from the open archive.
+    fn delete_entries(&self, paths: Vec<String>) {
+        if paths.is_empty() {
+            return;
+        }
+        let Some(archive) = self.imp().archive_path.borrow().clone() else {
+            return;
+        };
+        let password = self.imp().archive_password.borrow().clone();
+
+        let dialog = adw::AlertDialog::new(
+            Some(&gettext("Delete Entries")),
+            Some(&n_entries_body(paths.len())),
+        );
+        dialog.add_response("cancel", &gettext("Cancel"));
+        dialog.add_response("delete", &gettext("Delete"));
+        dialog.set_response_appearance("delete", adw::ResponseAppearance::Destructive);
+        dialog.set_default_response(Some("cancel"));
+        dialog.set_close_response("cancel");
+
+        let window = self.clone();
+        dialog.connect_response(None, move |_, response| {
+            if response == "delete" {
+                window.run_delete_job(archive.clone(), password.clone(), paths.clone());
+            }
+        });
+        dialog.present(Some(self));
+    }
+
+    fn run_delete_job(&self, archive: PathBuf, password: Option<String>, paths: Vec<String>) {
+        let window = self.clone();
+        let archive_for_retry = archive.clone();
+        let paths_for_retry = paths.clone();
+        glib::spawn_future_local(async move {
+            let sevenzip = septima_engine::sevenzip_path();
+            let archive_job = archive.clone();
+            let password_job = password.clone();
+            let paths_job = paths.clone();
+            let outcome = gio::spawn_blocking(move || {
+                septima_engine::run_delete(&sevenzip, &archive_job, &paths_job, password_job.as_deref())
+            })
+            .await;
+            match outcome {
+                Ok(Ok(())) => {
+                    window.show_toast(&n_deleted(paths.len()));
+                    window.load_archive(archive, password);
+                }
+                Ok(Err(EngineError::PasswordRequired)) => {
+                    let retry = window.clone();
+                    let archive = archive_for_retry.clone();
+                    let paths = paths_for_retry.clone();
+                    window.prompt_password(
+                        &gettext("This archive is encrypted. Enter its password to make changes."),
+                        move |pw| {
+                            retry.imp().archive_password.replace(Some(pw.clone()));
+                            retry.run_delete_job(archive.clone(), Some(pw), paths.clone());
+                        },
+                    );
+                }
+                Ok(Err(err)) => window.show_error(&err.to_string()),
+                Err(_) => window.show_error(&gettext("The delete task failed.")),
+            }
+        });
+    }
+
+    /// Ask for a new path, then rename `old_path` within the open archive.
+    fn rename_entry(&self, old_path: String) {
+        let Some(archive) = self.imp().archive_path.borrow().clone() else {
+            return;
+        };
+        let password = self.imp().archive_password.borrow().clone();
+
+        let dialog = adw::AlertDialog::new(Some(&gettext("Rename Entry")), None);
+        dialog.add_response("cancel", &gettext("Cancel"));
+        dialog.add_response("rename", &gettext("Rename"));
+        dialog.set_response_appearance("rename", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("rename"));
+        dialog.set_close_response("cancel");
+
+        let entry = adw::EntryRow::builder()
+            .title(gettext("New path"))
+            .text(old_path.as_str())
+            .build();
+        dialog.set_extra_child(Some(&entry));
+
+        let window = self.clone();
+        dialog.connect_response(None, move |_, response| {
+            let new_path = entry.text().to_string();
+            if response == "rename" && !new_path.is_empty() && new_path != old_path {
+                window.run_rename_job(archive.clone(), password.clone(), old_path.clone(), new_path);
+            }
+        });
+        dialog.present(Some(self));
+    }
+
+    fn run_rename_job(&self, archive: PathBuf, password: Option<String>, old_path: String, new_path: String) {
+        let window = self.clone();
+        let archive_for_retry = archive.clone();
+        let old_for_retry = old_path.clone();
+        let new_for_retry = new_path.clone();
+        glib::spawn_future_local(async move {
+            let sevenzip = septima_engine::sevenzip_path();
+            let archive_job = archive.clone();
+            let password_job = password.clone();
+            let renames = vec![(old_path.clone(), new_path.clone())];
+            let outcome = gio::spawn_blocking(move || {
+                septima_engine::run_rename(&sevenzip, &archive_job, &renames, password_job.as_deref())
+            })
+            .await;
+            match outcome {
+                Ok(Ok(())) => {
+                    window.show_toast(&gettext("Entry renamed."));
+                    window.load_archive(archive, password);
+                }
+                Ok(Err(EngineError::PasswordRequired)) => {
+                    let retry = window.clone();
+                    let archive = archive_for_retry.clone();
+                    let (old_path, new_path) = (old_for_retry.clone(), new_for_retry.clone());
+                    window.prompt_password(
+                        &gettext("This archive is encrypted. Enter its password to make changes."),
+                        move |pw| {
+                            retry.imp().archive_password.replace(Some(pw.clone()));
+                            retry.run_rename_job(archive.clone(), Some(pw), old_path.clone(), new_path.clone());
+                        },
+                    );
+                }
+                Ok(Err(err)) => window.show_error(&err.to_string()),
+                Err(_) => window.show_error(&gettext("The rename task failed.")),
+            }
+        });
+    }
+
     /// Clear the open archive and return to the welcome screen.
     fn close_archive(&self) {
         let imp = self.imp();
@@ -530,15 +738,14 @@ impl SeptimaWindow {
         imp.archive_password.replace(None);
         imp.window_title.set_title("Septima");
         imp.window_title.set_subtitle("");
-        self.set_close_enabled(false);
+        self.set_archive_actions_enabled(false);
     }
 
-    fn set_close_enabled(&self, enabled: bool) {
-        if let Some(action) = self
-            .lookup_action("close-archive")
-            .and_downcast::<gio::SimpleAction>()
-        {
-            action.set_enabled(enabled);
+    fn set_archive_actions_enabled(&self, enabled: bool) {
+        for name in ["close-archive", "test-archive"] {
+            if let Some(action) = self.lookup_action(name).and_downcast::<gio::SimpleAction>() {
+                action.set_enabled(enabled);
+            }
         }
     }
 
@@ -618,4 +825,13 @@ fn file_name(path: &std::path::Path) -> String {
 
 fn n_files(n: usize) -> String {
     gettextrs::ngettext("{} file", "{} files", n as u32).replacen("{}", &n.to_string(), 1)
+}
+
+fn n_entries_body(n: usize) -> String {
+    gettextrs::ngettext("Delete {} entry from this archive?", "Delete {} entries from this archive?", n as u32)
+        .replacen("{}", &n.to_string(), 1)
+}
+
+fn n_deleted(n: usize) -> String {
+    gettextrs::ngettext("{} entry deleted.", "{} entries deleted.", n as u32).replacen("{}", &n.to_string(), 1)
 }

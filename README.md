@@ -188,11 +188,8 @@ meson compile -C builddir
       "delete the archive afterwards" toggle, including split-volume archives.
 - [x] **Generate a checksum file** — optionally write a `.sha256` file next to
       a newly created archive (one line per volume part, for split archives).
-
-### Next up
-
-- [ ] **In-archive edit** — delete / rename entries, plus the "Test archive"
-      (`t`) action.
+- [x] **In-archive edit** — delete / rename entries (multi-select for delete),
+      plus a "Test Archive" action with the same live progress as extract.
 
 ### Later
 

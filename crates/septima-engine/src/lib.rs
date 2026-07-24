@@ -13,6 +13,7 @@
 pub mod capabilities;
 mod command;
 mod compress;
+mod edit;
 mod error;
 mod extract;
 mod hash;
@@ -24,6 +25,7 @@ mod supervise;
 pub use capabilities::{formats, Codec, Format};
 pub use command::{list_archive, sevenzip_path};
 pub use compress::{estimate_add_memory, run_add, run_tar_and_compress, CompressionRequest};
+pub use edit::{run_delete, run_rename, run_test};
 pub use hash::{hash_algorithms, hash_file, hash_file_progress, write_checksum_file, Digest, HashAlgo};
 pub use error::EngineError;
 pub use extract::{

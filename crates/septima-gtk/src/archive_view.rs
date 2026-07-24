@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use adw::subclass::prelude::*;
 use gtk::prelude::*;
 use gtk::{gio, glib, pango, CompositeTemplate, TemplateChild};
@@ -6,18 +8,27 @@ use septima_engine::{ArchiveEntry, ArchiveListing};
 
 use crate::entry_object::EntryObject;
 
+type DeleteCallback = Box<dyn Fn(Vec<String>)>;
+type RenameCallback = Box<dyn Fn(String)>;
+
 mod imp {
     use super::*;
     use std::cell::OnceCell;
 
-    #[derive(Debug, Default, CompositeTemplate)]
+    #[derive(Default, CompositeTemplate)]
     #[template(resource = "/io/github/superuser_miguel/Septima/archive_view.ui")]
     pub struct SeptimaArchiveView {
         #[template_child]
         pub summary_label: TemplateChild<gtk::Label>,
         #[template_child]
         pub column_view: TemplateChild<gtk::ColumnView>,
+        #[template_child]
+        pub rename_button: TemplateChild<gtk::Button>,
+        #[template_child]
+        pub delete_button: TemplateChild<gtk::Button>,
         pub model: OnceCell<gio::ListStore>,
+        pub on_delete: RefCell<Option<DeleteCallback>>,
+        pub on_rename: RefCell<Option<RenameCallback>>,
     }
 
     #[glib::object_subclass]
@@ -28,6 +39,7 @@ mod imp {
 
         fn class_init(klass: &mut Self::Class) {
             klass.bind_template();
+            klass.bind_template_callbacks();
         }
 
         fn instance_init(obj: &glib::subclass::InitializingObject<Self>) {
@@ -40,8 +52,13 @@ mod imp {
             self.parent_constructed();
 
             let model = gio::ListStore::new::<EntryObject>();
-            self.column_view
-                .set_model(Some(&gtk::NoSelection::new(Some(model.clone()))));
+            let selection = gtk::MultiSelection::new(Some(model.clone()));
+            selection.connect_selection_changed(glib::clone!(
+                #[weak(rename_to = imp)]
+                self,
+                move |selection, _, _| imp.update_selection_sensitivity(selection)
+            ));
+            self.column_view.set_model(Some(&selection));
             self.model.set(model).unwrap();
 
             let view = &*self.column_view;
@@ -58,6 +75,32 @@ mod imp {
 
     impl WidgetImpl for SeptimaArchiveView {}
     impl BinImpl for SeptimaArchiveView {}
+
+    #[gtk::template_callbacks]
+    impl SeptimaArchiveView {
+        fn update_selection_sensitivity(&self, selection: &gtk::MultiSelection) {
+            let n = selection.selection().size();
+            self.delete_button.set_sensitive(n >= 1);
+            self.rename_button.set_sensitive(n == 1);
+        }
+
+        #[template_callback]
+        fn on_delete_clicked(&self) {
+            let paths = self.obj().selected_paths();
+            if let Some(cb) = self.on_delete.borrow().as_ref() {
+                cb(paths);
+            }
+        }
+
+        #[template_callback]
+        fn on_rename_clicked(&self) {
+            if let Some(path) = self.obj().selected_paths().into_iter().next() {
+                if let Some(cb) = self.on_rename.borrow().as_ref() {
+                    cb(path);
+                }
+            }
+        }
+    }
 }
 
 glib::wrapper! {
@@ -94,6 +137,31 @@ impl SeptimaArchiveView {
         for entry in &listing.entries {
             model.append(&EntryObject::new(entry.clone()));
         }
+    }
+
+    /// In-archive paths of the currently selected entries.
+    fn selected_paths(&self) -> Vec<String> {
+        let Some(selection) = self.imp().column_view.model().and_downcast::<gtk::MultiSelection>() else {
+            return Vec::new();
+        };
+        let bitset = selection.selection();
+        (0..bitset.size())
+            .filter_map(|i| selection.item(bitset.nth(i as u32)))
+            .filter_map(|obj| obj.downcast::<EntryObject>().ok())
+            .map(|obj| obj.entry().path.clone())
+            .collect()
+    }
+
+    /// Register the handler run when the user asks to delete the current
+    /// selection (one or more entries).
+    pub fn connect_delete_requested<F: Fn(Vec<String>) + 'static>(&self, f: F) {
+        self.imp().on_delete.replace(Some(Box::new(f)));
+    }
+
+    /// Register the handler run when the user asks to rename the current
+    /// (single-entry) selection. Called with the entry's in-archive path.
+    pub fn connect_rename_requested<F: Fn(String) + 'static>(&self, f: F) {
+        self.imp().on_rename.replace(Some(Box::new(f)));
     }
 }
 
