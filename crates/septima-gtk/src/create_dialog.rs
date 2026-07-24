@@ -62,6 +62,7 @@ pub struct CreateSettings {
     pub encrypt_headers: bool,
     pub extra_params: Vec<String>,
     pub write_checksum: bool,
+    pub batch_mode: bool,
 }
 
 type CreateCallback = Box<dyn Fn(&SeptimaCreateDialog)>;
@@ -76,6 +77,8 @@ mod imp {
         pub create_button: TemplateChild<gtk::Button>,
         #[template_child]
         pub files_group: TemplateChild<adw::PreferencesGroup>,
+        #[template_child]
+        pub batch_row: TemplateChild<adw::SwitchRow>,
         #[template_child]
         pub name_row: TemplateChild<adw::EntryRow>,
         #[template_child]
@@ -542,6 +545,7 @@ impl SeptimaCreateDialog {
             encrypt_headers: format.supports_header_encryption && imp.encrypt_headers_row.is_active(),
             extra_params,
             write_checksum: imp.checksum_row.is_active(),
+            batch_mode: imp.batch_row.is_active(),
         }
     }
 

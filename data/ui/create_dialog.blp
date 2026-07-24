@@ -55,6 +55,11 @@ template $SeptimaCreateDialog: Adw.Dialog {
             clicked => $on_add_folder() swapped;
           }
         }
+
+        Adw.SwitchRow batch_row {
+          title: _("Create a separate archive for each item");
+          subtitle: _("Saves one archive next to each item instead of combining them into one");
+        }
       }
 
       Adw.PreferencesGroup {

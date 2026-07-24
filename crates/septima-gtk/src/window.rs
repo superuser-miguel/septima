@@ -511,7 +511,11 @@ impl SeptimaWindow {
                 return;
             }
             dlg.close();
-            window.choose_output_and_compress(settings);
+            if settings.batch_mode && settings.inputs.len() >= 2 {
+                window.confirm_batch_compress(settings);
+            } else {
+                window.choose_output_and_compress(settings);
+            }
         });
         dialog.present(Some(self));
     }
@@ -529,7 +533,8 @@ impl SeptimaWindow {
             Ok(file) => match file.path() {
                 Some(output) => {
                     let write_checksum = settings.write_checksum;
-                    window.start_compress(compression_request(&settings, output), write_checksum)
+                    let inputs = settings.inputs.clone();
+                    window.start_compress(compression_request(&settings, inputs, output), write_checksum)
                 }
                 None => window.show_toast(&gettext("That location can't be written to directly.")),
             },
@@ -539,6 +544,38 @@ impl SeptimaWindow {
                 }
             }
         });
+    }
+
+    /// Confirm, then compress each staged item into its own archive saved
+    /// next to it (e.g. `dir1/` -> `dir1.7z`) — no per-item Save dialog.
+    fn confirm_batch_compress(&self, settings: CreateSettings) {
+        let items = settings.inputs.clone();
+        let ext = archive_extension(&settings);
+
+        let dialog = adw::AlertDialog::new(
+            Some(&gettext("Create Archives")),
+            Some(&n_archives_create_body(items.len())),
+        );
+        dialog.add_response("cancel", &gettext("Cancel"));
+        dialog.add_response("create", &gettext("Create"));
+        dialog.set_response_appearance("create", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("create"));
+
+        let window = self.clone();
+        dialog.connect_response(None, move |_, response| {
+            if response != "create" {
+                return;
+            }
+            for item in &items {
+                let Some(stem) = item.file_stem() else {
+                    continue;
+                };
+                let output = item.with_file_name(format!("{}.{ext}", stem.to_string_lossy()));
+                let req = compression_request(&settings, vec![item.clone()], output);
+                window.start_compress(req, settings.write_checksum);
+            }
+        });
+        dialog.present(Some(self));
     }
 
     fn start_compress(&self, req: CompressionRequest, write_checksum: bool) {
@@ -886,8 +923,8 @@ fn archive_extension(settings: &CreateSettings) -> String {
     }
 }
 
-fn compression_request(settings: &CreateSettings, output: PathBuf) -> CompressionRequest {
-    let mut req = CompressionRequest::new(output, settings.inputs.clone(), settings.format.id);
+fn compression_request(settings: &CreateSettings, inputs: Vec<PathBuf>, output: PathBuf) -> CompressionRequest {
+    let mut req = CompressionRequest::new(output, inputs, settings.format.id);
     req.codec = Some(settings.codec.id.to_string());
     req.level = settings.level;
     req.threads = Some(settings.threads);
@@ -933,6 +970,15 @@ fn n_skipped(n: usize) -> String {
     gettextrs::ngettext(
         "({} file couldn't be read and will be skipped.)",
         "({} files couldn't be read and will be skipped.)",
+        n as u32,
+    )
+    .replacen("{}", &n.to_string(), 1)
+}
+
+fn n_archives_create_body(n: usize) -> String {
+    gettextrs::ngettext(
+        "Create {} archive? It will be saved next to the item it's made from.",
+        "Create {} archives? Each will be saved next to the item it's made from.",
         n as u32,
     )
     .replacen("{}", &n.to_string(), 1)

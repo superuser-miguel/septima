@@ -192,6 +192,9 @@ meson compile -C builddir
       plus a "Test Archive" action with the same live progress as extract.
 - [x] **Batch extract** — select or drop several archives at once and each
       extracts into its own new folder next to itself, no per-archive prompts.
+- [x] **Batch compress** — stage several files/folders, flip "Create a separate
+      archive for each item," and each one is compressed into its own archive
+      saved next to it, instead of combining them into one.
 
 ### Later
 
@@ -207,6 +210,12 @@ meson compile -C builddir
 - [ ] **More encryption methods** — XChaCha20-Poly1305, AES+XChaCha20 and
       friends via `-mem`, *blocked until* the bundled 7-Zip ZS ships them
       ([mcmilk/7-Zip-zstd#505](https://github.com/mcmilk/7-Zip-zstd/pull/505)).
+- [ ] **Nautilus (Files) integration** — right-click "Extract Here" / "Extract
+      to…" / "Compress…", like File Roller's extension. *Not a pure app
+      feature*: a Nautilus extension loads into Nautilus's own host process,
+      which the Flatpak sandbox can't do from inside Septima — this would need
+      a small separate host-side package (e.g. distro-packaged, talking to
+      Septima over D-Bus or the CLI), not something the Flatpak alone can ship.
 
 ## Acknowledgements
 
