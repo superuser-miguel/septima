@@ -52,6 +52,7 @@ const LZMA: Codec = Codec { id: "lzma", label: "LZMA", level_min: 1, level_max: 
 const PPMD: Codec = Codec { id: "ppmd", label: "PPMd", level_min: 1, level_max: 9, default_level: 6 };
 const BZIP2: Codec = Codec { id: "bzip2", label: "BZip2", level_min: 1, level_max: 9, default_level: 5 };
 const DEFLATE: Codec = Codec { id: "deflate", label: "Deflate", level_min: 1, level_max: 9, default_level: 5 };
+const DEFLATE64: Codec = Codec { id: "deflate64", label: "Deflate64", level_min: 1, level_max: 9, default_level: 5 };
 const ZSTD: Codec = Codec { id: "zstd", label: "Zstandard", level_min: 1, level_max: 22, default_level: 3 };
 const BROTLI: Codec = Codec { id: "brotli", label: "Brotli", level_min: 0, level_max: 11, default_level: 6 };
 const LZ4: Codec = Codec { id: "lz4", label: "LZ4", level_min: 1, level_max: 12, default_level: 1 };
@@ -65,9 +66,11 @@ const GZIP: Codec = Codec { id: "gzip", label: "gzip", level_min: 1, level_max: 
 
 const SEVENZ_CODECS: &[Codec] =
     &[LZMA2, LZMA, PPMD, ZSTD, BROTLI, FLZMA2, BZIP2, LZ4, LZ5, LIZARD, DEFLATE, COPY];
-const ZIP_CODECS: &[Codec] = &[DEFLATE, ZSTD, BZIP2, LZMA, PPMD, COPY];
+// zip additionally accepts xz and deflate64 (verified); brotli/lz4/lz5/lizard
+// are 7z-only and rejected inside zip.
+const ZIP_CODECS: &[Codec] = &[DEFLATE, DEFLATE64, ZSTD, XZ, LZMA, PPMD, BZIP2, COPY];
 // For tar, the "codec" chooses an optional post-compressor (tar → .tar.<ext>).
-const TAR_CODECS: &[Codec] = &[COPY, ZSTD, XZ, GZIP, BZIP2];
+const TAR_CODECS: &[Codec] = &[COPY, ZSTD, XZ, GZIP, BZIP2, BROTLI, LZ4, LZ5, LIZARD];
 
 const FORMATS: &[Format] = &[
     Format {

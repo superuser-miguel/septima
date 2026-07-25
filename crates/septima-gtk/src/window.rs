@@ -915,6 +915,10 @@ fn archive_extension(settings: &CreateSettings) -> String {
             "xz" => "tar.xz",
             "gzip" => "tar.gz",
             "bzip2" => "tar.bz2",
+            "brotli" => "tar.br",
+            "lz4" => "tar.lz4",
+            "lz5" => "tar.lz5",
+            "lizard" => "tar.liz",
             _ => "tar",
         }
         .to_string()

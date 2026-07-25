@@ -161,7 +161,11 @@ fn inner_tar_name(output: &Path) -> String {
         .trim_end_matches(".xz")
         .trim_end_matches(".gz")
         .trim_end_matches(".bz2")
-        .trim_end_matches(".bzip2");
+        .trim_end_matches(".bzip2")
+        .trim_end_matches(".br")
+        .trim_end_matches(".lz4")
+        .trim_end_matches(".lz5")
+        .trim_end_matches(".liz");
     if base.ends_with(".tar") {
         base.to_string()
     } else {
@@ -342,6 +346,28 @@ mod tests {
         let mut req = CompressionRequest::new("out.zip", vec![], "zip");
         req.codec = Some("zstd".into());
         assert_eq!(req.method_args(), ["-mm=zstd"]);
+    }
+
+    #[test]
+    fn zip_xz_and_deflate64_method_args() {
+        let mut req = CompressionRequest::new("out.zip", vec![], "zip");
+        req.codec = Some("xz".into());
+        req.level = Some(9);
+        assert_eq!(req.method_args(), ["-mm=xz", "-mx=9"]);
+
+        let mut req = CompressionRequest::new("out.zip", vec![], "zip");
+        req.codec = Some("deflate64".into());
+        assert_eq!(req.method_args(), ["-mm=deflate64"]);
+    }
+
+    #[test]
+    fn inner_tar_name_strips_new_compressor_extensions() {
+        assert_eq!(inner_tar_name(Path::new("photos.tar.br")), "photos.tar");
+        assert_eq!(inner_tar_name(Path::new("data.tar.lz4")), "data.tar");
+        assert_eq!(inner_tar_name(Path::new("x.tar.lz5")), "x.tar");
+        assert_eq!(inner_tar_name(Path::new("y.tar.liz")), "y.tar");
+        // an output without a compressor suffix still gets a .tar
+        assert_eq!(inner_tar_name(Path::new("plain")), "plain.tar");
     }
 
     #[test]
