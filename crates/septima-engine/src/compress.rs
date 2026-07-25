@@ -32,6 +32,9 @@ pub struct CompressionRequest {
     pub password: Option<String>,
     /// `-mhe=on` encrypted headers (7z only).
     pub encrypt_headers: bool,
+    /// zip-only cipher via `-mem=` (e.g. `"AES256"`). `None` = 7zz's default,
+    /// which for zip is the weak legacy ZipCrypto. Ignored for 7z (always AES-256).
+    pub zip_encryption: Option<String>,
     /// Free-text extra `-m*`/other switches (power-user escape hatch).
     pub extra_params: Vec<String>,
 }
@@ -51,6 +54,7 @@ impl CompressionRequest {
             bcj: false,
             password: None,
             encrypt_headers: false,
+            zip_encryption: None,
             extra_params: Vec::new(),
         }
     }
@@ -228,6 +232,12 @@ pub fn run_add(
         cmd.arg(format!("-p{password}"));
         if req.encrypt_headers && req.format == "7z" {
             cmd.arg("-mhe=on");
+        }
+        // zip defaults to weak ZipCrypto; opt into a real cipher when asked.
+        if req.format == "zip" {
+            if let Some(method) = &req.zip_encryption {
+                cmd.arg(format!("-mem={method}"));
+            }
         }
     }
     if let Some(volume) = &req.volume_size {

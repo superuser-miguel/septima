@@ -60,10 +60,16 @@ pub struct CreateSettings {
     pub bcj: bool,
     pub password: Option<String>,
     pub encrypt_headers: bool,
+    /// zip-only cipher (`-mem=`); `None` outside zip or for the ZipCrypto choice.
+    pub zip_encryption: Option<String>,
     pub extra_params: Vec<String>,
     pub write_checksum: bool,
     pub batch_mode: bool,
 }
+
+/// Zip encryption choices: (label, `-mem` value). `None` = 7zz default (ZipCrypto).
+const ZIP_ENCRYPTION: &[(&str, Option<&str>)] =
+    &[("AES-256", Some("AES256")), ("ZipCrypto (legacy)", None)];
 
 type CreateCallback = Box<dyn Fn(&SeptimaCreateDialog)>;
 
@@ -105,6 +111,8 @@ mod imp {
         pub params_row: TemplateChild<adw::EntryRow>,
         #[template_child]
         pub password_row: TemplateChild<adw::PasswordEntryRow>,
+        #[template_child]
+        pub encryption_row: TemplateChild<adw::ComboRow>,
         #[template_child]
         pub encrypt_headers_row: TemplateChild<adw::SwitchRow>,
         #[template_child]
@@ -173,6 +181,9 @@ mod imp {
 
             let vol_labels: Vec<&str> = VOLUME_PRESETS.iter().map(|(l, _)| *l).collect();
             self.volume_row.set_model(Some(&gtk::StringList::new(&vol_labels)));
+
+            let enc_labels: Vec<&str> = ZIP_ENCRYPTION.iter().map(|(l, _)| *l).collect();
+            self.encryption_row.set_model(Some(&gtk::StringList::new(&enc_labels)));
 
             let cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
             self.threads_row.adjustment().set_upper(cpus.max(1) as f64);
@@ -268,6 +279,8 @@ mod imp {
             self.codec_row.set_selected(0); // fires on_codec_changed
             self.solid_row.set_sensitive(fmt.supports_solid);
             self.bcj_row.set_sensitive(fmt.id == "7z");
+            // Only zip has a cipher choice; 7z is always AES-256, tar has none.
+            self.encryption_row.set_sensitive(fmt.id == "zip");
             self.encrypt_headers_row.set_sensitive(fmt.supports_header_encryption);
             self.on_codec_changed();
         }
@@ -543,6 +556,9 @@ impl SeptimaCreateDialog {
             bcj: format.id == "7z" && imp.bcj_row.is_active(),
             password,
             encrypt_headers: format.supports_header_encryption && imp.encrypt_headers_row.is_active(),
+            zip_encryption: (format.id == "zip")
+                .then(|| ZIP_ENCRYPTION[imp.encryption_row.selected() as usize].1.map(str::to_string))
+                .flatten(),
             extra_params,
             write_checksum: imp.checksum_row.is_active(),
             batch_mode: imp.batch_row.is_active(),

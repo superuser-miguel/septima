@@ -157,6 +157,11 @@ template $SeptimaCreateDialog: Adw.Dialog {
           title: _("Password");
         }
 
+        Adw.ComboRow encryption_row {
+          title: _("Zip encryption");
+          subtitle: _("AES-256 is secure; ZipCrypto is weak but reads on old tools");
+        }
+
         Adw.SwitchRow encrypt_headers_row {
           title: _("Encrypt file names");
           subtitle: _("Hides the file list (7z only)");
