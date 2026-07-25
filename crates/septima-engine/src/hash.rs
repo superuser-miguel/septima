@@ -15,14 +15,23 @@ pub struct HashAlgo {
     pub label: &'static str,
 }
 
-/// The algorithms the calculator offers (a modern, useful spread).
+/// Every digest the bundled `7zz h -scrc<NAME>` computes, in a sensible display
+/// order (checksums, legacy, SHA-2, SHA-3, BLAKE, xxHash). Verified against the
+/// pinned build; BLAKE2b/BLAKE2s/XXH3/cksum are *not* accepted and are omitted.
 pub fn hash_algorithms() -> &'static [HashAlgo] {
     &[
         HashAlgo { switch: "CRC32", label: "CRC-32" },
+        HashAlgo { switch: "CRC64", label: "CRC-64" },
+        HashAlgo { switch: "MD5", label: "MD5" },
+        HashAlgo { switch: "SHA1", label: "SHA-1" },
         HashAlgo { switch: "SHA256", label: "SHA-256" },
+        HashAlgo { switch: "SHA384", label: "SHA-384" },
         HashAlgo { switch: "SHA512", label: "SHA-512" },
         HashAlgo { switch: "SHA3-256", label: "SHA3-256" },
+        HashAlgo { switch: "SHA3-512", label: "SHA3-512" },
+        HashAlgo { switch: "BLAKE2sp", label: "BLAKE2sp" },
         HashAlgo { switch: "BLAKE3", label: "BLAKE3" },
+        HashAlgo { switch: "XXH32", label: "xxHash-32" },
         HashAlgo { switch: "XXH64", label: "xxHash-64" },
     ]
 }
@@ -180,6 +189,14 @@ fn parse_digests(output: &str) -> Vec<Digest> {
             });
         }
     }
+    // 7zz emits digests in its own order; present them in the canonical
+    // hash_algorithms() order so the results list is stable and grouped.
+    digests.sort_by_key(|d| {
+        hash_algorithms()
+            .iter()
+            .position(|a| a.switch.eq_ignore_ascii_case(&d.algo))
+            .unwrap_or(usize::MAX)
+    });
     digests
 }
 
