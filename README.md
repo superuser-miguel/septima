@@ -196,6 +196,26 @@ meson compile -C builddir
       archive for each item," and each one is compressed into its own archive
       saved next to it, instead of combining them into one.
 
+### Next up — full `7zz` CLI parity
+
+Closing these gives genuine 1:1 coverage of what the bundled `7zz` can do on
+Linux (ordered easiest-first; higher-value items like the filter picker come
+once the quick wins are banked):
+
+- [ ] **Complete the hash calculator** — add CRC-64, MD5, SHA-1, SHA-384 and
+      BLAKE2sp, and split xxHash into XXH32 / XXH64, so every digest `7zz h`
+      computes is reachable from the UI.
+- [ ] **Zip encryption method** — offer AES-256 for zip (`-mem=AES256`) instead
+      of silently defaulting to weak ZipCrypto. (7z is already AES-256.)
+- [ ] **Architecture / filter picker** — promote the filter family from the
+      free-text field to a real control: Delta, ARM64, ARM/ARMT, PPC, SPARC,
+      RISC-V and BCJ2, alongside the existing x86 BCJ.
+- [ ] **Lizard family × level picker** — levels 10–49 encode four method
+      families (fastLZ4 / LIZv1, ± Huffman) × level; surface both, not one flat
+      slider.
+- [ ] **Standalone single-stream creation** — write a raw `.zst` / `.br` /
+      `.lz4` / `.lz5` stream, not only `tar` + a compressor.
+
 ### Later
 
 - [ ] **Drag-out to extract** — drag entries out of an open archive to a folder
@@ -205,7 +225,6 @@ meson compile -C builddir
       (`-snl`), word size / fast bytes (`-mfb`), update modes (`-u`).
 - [ ] **Free-space check** — show available space at the extract destination
       before starting.
-- [ ] **Lizard family × level picker.**
 - [ ] **Custom visual styling and app icon.**
 - [ ] **More encryption methods** — XChaCha20-Poly1305, AES+XChaCha20 and
       friends via `-mem`, *blocked until* the bundled 7-Zip ZS ships them

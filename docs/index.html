@@ -229,6 +229,9 @@
   <h2>Roadmap</h2>
   <p class="sub">Honest about what's next. (Nested tarballs, presets, drop-to-open, the hash calculator, responsive cancel with clean-up of the partial archive, post-extract actions, checksum-file generation, in-archive edit, batch extract, batch compress, and auto-updates via the signed Flatpak repo already shipped.)</p>
   <ul class="road">
+    <li><b>Full <code>7zz</code> CLI parity</b> — surface everything the bundled binary can do: a complete hash calculator (CRC-64, MD5, SHA-1/384, BLAKE2sp), AES-256 for zip, and an architecture-filter picker (Delta, ARM64, RISC-V, BCJ2…).</li>
+    <li><b>Lizard family × level picker</b> — expose Lizard's four method families, not one flat slider.</li>
+    <li><b>Standalone streams</b> — write a raw <code>.zst</code> / <code>.br</code> / <code>.lz4</code> file, not only <code>tar</code> + a compressor.</li>
     <li><b>Drag-out to extract</b> — drag entries out of an open archive to a folder to extract them (dropping an archive <em>in</em> to open it already works).</li>
     <li><b>Nautilus integration</b> — right-click "Extract Here" / "Compress…" in GNOME Files, like File Roller.</li>
     <li><b>Visual polish</b> — custom styling and a bespoke app icon.</li>
