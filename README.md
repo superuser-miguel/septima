@@ -207,6 +207,10 @@ once the quick wins are banked):
       computes is reachable from the UI.
 - [ ] **Zip encryption method** — offer AES-256 for zip (`-mem=AES256`) instead
       of silently defaulting to weak ZipCrypto. (7z is already AES-256.)
+- [ ] **Expand format × codec coverage** — add the combinations the bundled
+      `7zz` supports but Septima doesn't yet surface: **XZ** and **Deflate64**
+      inside zip, and **Brotli / LZ4 / LZ5 / Lizard** as `tar` post-compressors
+      (alongside the current zstd / xz / gzip / bzip2).
 - [ ] **Architecture / filter picker** — promote the filter family from the
       free-text field to a real control: Delta, ARM64, ARM/ARMT, PPC, SPARC,
       RISC-V and BCJ2, alongside the existing x86 BCJ.
