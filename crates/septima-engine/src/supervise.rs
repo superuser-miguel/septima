@@ -51,6 +51,12 @@ pub(crate) fn supervise(
 
     let mut fragment: Vec<u8> = Vec::new();
     let mut state = ExtractProgress::default();
+    // 7zz writes its "Enter password:" prompt to *stdout* (no trailing newline),
+    // while "Break signaled" goes to stderr. Keep the stdout text so a missing
+    // password on an encrypted-content-only archive (e.g. an AES zip, whose
+    // headers list fine without a password) is recognised as PasswordRequired
+    // rather than surfacing as a generic exit-255 break.
+    let mut stdout_text = String::new();
 
     let cancelled = loop {
         if cancel.load(Ordering::Relaxed) {
@@ -58,6 +64,7 @@ pub(crate) fn supervise(
         }
         match rx.recv_timeout(CANCEL_POLL) {
             Ok(chunk) => {
+                stdout_text.push_str(&String::from_utf8_lossy(&chunk));
                 for &byte in &chunk {
                     if byte == b'\r' || byte == b'\n' {
                         flush(&mut fragment, &mut state, &mut on_progress);
@@ -99,10 +106,14 @@ pub(crate) fn supervise(
     if status.success() {
         return Ok(());
     }
-    if stderr.contains("Wrong password")
-        || stderr.contains("Enter password")
-        || stderr.contains("Data Error in encrypted")
-    {
+    // Password markers can land on either stream: the prompt on stdout, the
+    // "Wrong password"/"Data Error in encrypted" diagnostics on stderr.
+    let needs_password = |s: &str| {
+        s.contains("Wrong password")
+            || s.contains("Enter password")
+            || s.contains("Data Error in encrypted")
+    };
+    if needs_password(&stderr) || needs_password(&stdout_text) {
         return Err(EngineError::PasswordRequired);
     }
     Err(EngineError::SevenZip {
