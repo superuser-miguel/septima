@@ -121,6 +121,11 @@ fn extract_without_password_asks_across_all_ciphers() {
             matches!(try_extract(&archive, &dest, Some("wrong")), Err(EngineError::PasswordRequired)),
             "{name}: extract with a wrong password must be PasswordRequired"
         );
+        // No 0-byte placeholder should be left behind after the failure.
+        assert!(
+            !dest.join("payload.txt").exists(),
+            "{name}: a failed-password extract must not leave a leftover file"
+        );
     }
     std::fs::remove_dir_all(&dir).unwrap();
 }

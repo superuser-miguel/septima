@@ -121,8 +121,69 @@ pub fn run_extract(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    // A wrong/missing password makes 7zz create each encrypted entry as an
+    // empty placeholder file before it fails to decrypt (zip does this; 7z
+    // writes nothing). Snapshot the destination so those 0-byte leftovers can
+    // be swept if the extract turns out to need a password.
+    let before = existing_files(&req.dest_dir);
     let child = cmd.spawn().map_err(EngineError::Spawn)?;
-    supervise(child, cancel, on_progress)
+    let result = supervise(child, cancel, on_progress);
+    if matches!(result, Err(EngineError::PasswordRequired)) {
+        remove_new_empty_files(&req.dest_dir, &before);
+    }
+    result
+}
+
+/// Every regular file that currently exists under `dir` (recursively). Cheap
+/// for Septima's usual extract targets — a fresh or empty destination folder.
+fn existing_files(dir: &Path) -> std::collections::HashSet<PathBuf> {
+    let mut found = std::collections::HashSet::new();
+    collect_files(dir, &mut found);
+    found
+}
+
+fn collect_files(dir: &Path, out: &mut std::collections::HashSet<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        match entry.file_type() {
+            Ok(t) if t.is_dir() => collect_files(&path, out),
+            Ok(t) if t.is_file() => {
+                out.insert(path);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Delete 0-byte files under `dir` that weren't there in `before` (the empty
+/// placeholders a failed-password extract leaves), then prune directories that
+/// this leaves empty. Never touches pre-existing or non-empty files.
+fn remove_new_empty_files(dir: &Path, before: &std::collections::HashSet<PathBuf>) {
+    let mut now = std::collections::HashSet::new();
+    collect_files(dir, &mut now);
+    for path in now.difference(before) {
+        if std::fs::symlink_metadata(path).map(|m| m.len() == 0).unwrap_or(false) {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+    prune_empty_dirs(dir);
+}
+
+/// Remove now-empty subdirectories of `dir` (bottom-up); leaves `dir` itself.
+fn prune_empty_dirs(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            let sub = entry.path();
+            prune_empty_dirs(&sub);
+            let _ = std::fs::remove_dir(&sub); // only succeeds if now empty
+        }
+    }
 }
 
 /// Extract a compressed tar to `dest_dir` by piping the decompressed outer
@@ -216,7 +277,7 @@ fn extract_compressed_tar(
 
 #[cfg(test)]
 mod tests {
-    use super::delete_archive;
+    use super::{delete_archive, existing_files, remove_new_empty_files};
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -240,6 +301,32 @@ mod tests {
         delete_archive(&archive).unwrap();
 
         assert!(!archive.exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn cleanup_removes_new_empty_files_only() {
+        let dir = scratch("cleanup");
+        // Pre-existing content the snapshot must protect.
+        std::fs::write(dir.join("keep_nonempty.txt"), b"real").unwrap();
+        std::fs::write(dir.join("keep_empty.txt"), b"").unwrap(); // empty but pre-existing
+        let before = existing_files(&dir);
+
+        // Simulate a failed-password extract: new empty placeholders + a nested one.
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("placeholder.txt"), b"").unwrap();
+        std::fs::write(dir.join("sub/nested.txt"), b"").unwrap();
+        // A new non-empty file must survive (only 0-byte leftovers are swept).
+        std::fs::write(dir.join("partial.bin"), b"xx").unwrap();
+
+        remove_new_empty_files(&dir, &before);
+
+        assert!(!dir.join("placeholder.txt").exists(), "new empty file removed");
+        assert!(!dir.join("sub").exists(), "emptied new dir pruned");
+        assert!(dir.join("keep_nonempty.txt").exists(), "pre-existing file kept");
+        assert!(dir.join("keep_empty.txt").exists(), "pre-existing empty file kept");
+        assert!(dir.join("partial.bin").exists(), "new non-empty file kept");
+
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
