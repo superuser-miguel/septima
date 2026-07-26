@@ -1,4 +1,21 @@
-//! Integration test: zip encryption method (`-mem=`) against a real `7zz`.
+//! Integration tests: the full encryption matrix against a real `7zz`.
+//!
+//! Ground truth gathered 2026-07-26 by probing `7zz` directly:
+//!
+//! | archive              | list no-pw | list wrong-pw | extract no/wrong-pw | extract right-pw |
+//! |----------------------|-----------|---------------|---------------------|------------------|
+//! | 7z (AES, headers off)| OK        | OK            | PasswordRequired    | OK               |
+//! | 7z (AES, -mhe=on)    | **PwReq** | **PwReq**     | PasswordRequired    | OK               |
+//! | zip ZipCrypto        | OK        | OK            | PasswordRequired*   | OK               |
+//! | zip AES-128/192/256  | OK        | OK            | PasswordRequired*   | OK               |
+//!
+//! Only 7z with encrypted headers (`-mhe=on`) hides filenames, so only it needs
+//! a password to *list*. Everything else lists freely and needs the password at
+//! *extract*. `7zz` puts "Enter password:" on stdout and "Wrong password" /
+//! "Break signaled" on stderr, so detection must scan both streams.
+//!
+//! (*) A failed-password zip extract leaves a 0-byte placeholder file behind;
+//! the normal prompt→retry path overwrites it (`-aoa`). Not asserted here.
 //!
 //! Ignored by default (spawns 7zz). Run with:
 //!   cargo test -p septima-engine --test real_encrypt -- --ignored --nocapture
@@ -8,81 +25,142 @@ use septima_engine::{
     EngineError, ExtractRequest, OverwriteMode,
 };
 
+const PW: &str = "CorrectPass123";
+
 fn scratch(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("septima-encrypt-test-{tag}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("septima-encrypt-{tag}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
 
+/// Build an encrypted archive. `mem` = zip cipher (`-mem=`); `headers` = 7z
+/// encrypted headers (`-mhe=on`).
+fn build(dir: &std::path::Path, name: &str, format: &str, mem: Option<&str>, headers: bool) -> std::path::PathBuf {
+    let input = dir.join("payload.txt");
+    std::fs::write(&input, b"confidential contents for encryption testing").unwrap();
+    let archive = dir.join(name);
+    let mut req = CompressionRequest::new(archive.clone(), vec![input], format);
+    req.password = Some(PW.into());
+    req.zip_encryption = mem.map(String::from);
+    req.encrypt_headers = headers;
+    run_add(&sevenzip_path(), &req, &new_cancel_token(), |_| {}).unwrap();
+    archive
+}
+
+fn try_list(archive: &std::path::Path, pw: Option<&str>) -> Result<(), EngineError> {
+    list_archive(&sevenzip_path(), archive, pw).map(|_| ())
+}
+
+fn try_extract(archive: &std::path::Path, dest: &std::path::Path, pw: Option<&str>) -> Result<(), EngineError> {
+    std::fs::create_dir_all(dest).unwrap();
+    let req = ExtractRequest {
+        archive: archive.to_path_buf(),
+        dest_dir: dest.to_path_buf(),
+        password: pw.map(String::from),
+        overwrite: OverwriteMode::default(),
+    };
+    run_extract(&sevenzip_path(), &req, &new_cancel_token(), |_| {})
+}
+
+// --- Listing: only 7z-with-headers needs a password -----------------------
+
 #[test]
 #[ignore = "spawns real 7zz"]
-fn zip_aes256_uses_the_aes_cipher() {
-    let dir = scratch("zip-aes");
-    let input = dir.join("secret.txt");
-    std::fs::write(&input, b"top secret contents that must be encrypted with AES").unwrap();
-
-    let archive = dir.join("out.zip");
-    let mut req = CompressionRequest::new(archive.clone(), vec![input], "zip");
-    req.codec = Some("deflate".into());
-    req.password = Some("hunter2".into());
-    req.zip_encryption = Some("AES256".into());
-    run_add(&sevenzip_path(), &req, &new_cancel_token(), |_| {}).unwrap();
-
-    // List with the password; the entry's method should mention AES, not ZipCrypto.
-    let listing = list_archive(&sevenzip_path(), &archive, Some("hunter2")).unwrap();
-    let method = listing
-        .entries
-        .iter()
-        .find(|e| e.path == "secret.txt")
-        .and_then(|e| e.method.clone())
-        .unwrap_or_default();
-    assert!(
-        method.contains("AES"),
-        "expected an AES cipher, got method = {method:?}"
-    );
-    assert!(
-        !method.contains("ZipCrypto"),
-        "should not fall back to ZipCrypto, got {method:?}"
-    );
-
+fn plain_encryption_lists_without_a_password() {
+    // 7z (headers off) and every zip cipher list fine with no password.
+    let dir = scratch("list-free");
+    for (name, fmt, mem) in [
+        ("a.7z", "7z", None),
+        ("a.zip", "zip", None),           // ZipCrypto
+        ("aes.zip", "zip", Some("AES256")),
+    ] {
+        let archive = build(&dir, name, fmt, mem, false);
+        assert!(try_list(&archive, None).is_ok(), "{name} should list without a password");
+        assert!(try_list(&archive, Some("wrong")).is_ok(), "{name} lists even with a wrong password");
+    }
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// An AES zip lists without a password (its filenames aren't encrypted), so the
-/// missing password only bites at *extract* time. 7zz prints "Enter password:"
-/// to stdout and "Break signaled" to stderr, exiting 255 — this must be mapped
-/// to PasswordRequired (so the UI prompts), not a generic engine error.
 #[test]
 #[ignore = "spawns real 7zz"]
-fn extracting_an_encrypted_zip_without_a_password_asks_for_one() {
-    let dir = scratch("zip-noprompt");
-    let input = dir.join("secret.txt");
-    std::fs::write(&input, b"content").unwrap();
-    let archive = dir.join("enc.zip");
-    let mut req = CompressionRequest::new(archive.clone(), vec![input], "zip");
-    req.password = Some("hunter2".into());
-    req.zip_encryption = Some("AES256".into());
-    run_add(&sevenzip_path(), &req, &new_cancel_token(), |_| {}).unwrap();
-
-    // Extract with NO password → must be PasswordRequired, not SevenZip(255).
-    let dest = dir.join("out");
-    std::fs::create_dir_all(&dest).unwrap();
-    let ereq = ExtractRequest {
-        archive: archive.clone(),
-        dest_dir: dest.clone(),
-        password: None,
-        overwrite: OverwriteMode::default(),
-    };
-    let result = run_extract(&sevenzip_path(), &ereq, &new_cancel_token(), |_| {});
+fn encrypted_headers_require_a_password_to_list() {
+    let dir = scratch("list-hdr");
+    let archive = build(&dir, "hdr.7z", "7z", None, true);
     assert!(
-        matches!(result, Err(EngineError::PasswordRequired)),
-        "expected PasswordRequired, got {result:?}"
+        matches!(try_list(&archive, None), Err(EngineError::PasswordRequired)),
+        "encrypted-header 7z must ask for a password to list"
     );
+    assert!(
+        matches!(try_list(&archive, Some("wrong")), Err(EngineError::PasswordRequired)),
+        "a wrong password on an encrypted-header 7z must map to PasswordRequired"
+    );
+    assert!(try_list(&archive, Some(PW)).is_ok(), "the right password lists it");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
 
-    // With the right password it succeeds.
-    let ereq = ExtractRequest { password: Some("hunter2".into()), ..ereq };
-    run_extract(&sevenzip_path(), &ereq, &new_cancel_token(), |_| {}).unwrap();
-    assert!(dest.join("secret.txt").exists());
+// --- Extraction: everything needs the password; no/wrong → PasswordRequired ---
 
+#[test]
+#[ignore = "spawns real 7zz"]
+fn extract_without_password_asks_across_all_ciphers() {
+    let dir = scratch("ex-nopw");
+    for (name, fmt, mem, hdr) in [
+        ("a.7z", "7z", None, false),
+        ("hdr.7z", "7z", None, true),
+        ("zc.zip", "zip", None, false),
+        ("a128.zip", "zip", Some("AES128"), false),
+        ("a256.zip", "zip", Some("AES256"), false),
+    ] {
+        let archive = build(&dir, name, fmt, mem, hdr);
+        let dest = dir.join(format!("out-{name}"));
+        assert!(
+            matches!(try_extract(&archive, &dest, None), Err(EngineError::PasswordRequired)),
+            "{name}: extract with no password must be PasswordRequired"
+        );
+        assert!(
+            matches!(try_extract(&archive, &dest, Some("wrong")), Err(EngineError::PasswordRequired)),
+            "{name}: extract with a wrong password must be PasswordRequired"
+        );
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+#[ignore = "spawns real 7zz"]
+fn correct_password_extracts_every_variant() {
+    let dir = scratch("ex-right");
+    for (name, fmt, mem, hdr) in [
+        ("a.7z", "7z", None, false),
+        ("hdr.7z", "7z", None, true),
+        ("zc.zip", "zip", None, false),
+        ("a128.zip", "zip", Some("AES128"), false),
+        ("a192.zip", "zip", Some("AES192"), false),
+        ("a256.zip", "zip", Some("AES256"), false),
+    ] {
+        let archive = build(&dir, name, fmt, mem, hdr);
+        let dest = dir.join(format!("out-{name}"));
+        try_extract(&archive, &dest, Some(PW)).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        let got = std::fs::read(dest.join("payload.txt")).unwrap();
+        assert_eq!(got, b"confidential contents for encryption testing", "{name} content");
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+// --- The specific cipher actually applied ---------------------------------
+
+#[test]
+#[ignore = "spawns real 7zz"]
+fn zip_aes256_uses_the_aes_cipher_not_zipcrypto() {
+    let dir = scratch("cipher");
+    let archive = build(&dir, "aes.zip", "zip", Some("AES256"), false);
+    let listing = list_archive(&sevenzip_path(), &archive, Some(PW)).unwrap();
+    let method = listing
+        .entries
+        .iter()
+        .find(|e| e.path == "payload.txt")
+        .and_then(|e| e.method.clone())
+        .unwrap_or_default();
+    assert!(method.contains("AES"), "expected AES, got {method:?}");
+    assert!(!method.contains("ZipCrypto"), "should not be ZipCrypto, got {method:?}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
