@@ -39,6 +39,18 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.3.0" date="2026-07-26">
+      <description>
+        <p>A 7-Zip CLI-parity release, plus a real-world encryption fix.</p>
+        <ul>
+          <li>Fixed: extracting a password-protected zip now prompts for the password instead of failing — and no longer leaves an empty file behind on a wrong password.</li>
+          <li>Complete hash calculator — CRC-64, MD5, SHA-1/384, SHA3-512 and BLAKE2sp added, and xxHash split into XXH32/XXH64.</li>
+          <li>Zip encryption method — choose strong AES-256 instead of the weak ZipCrypto default.</li>
+          <li>More format × codec combinations — XZ and Deflate64 inside zip, and Brotli/LZ4/LZ5/Lizard tarballs.</li>
+          <li>Batch compress — turn several files or folders into one archive each.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-07-24">
       <description>
         <p>A batch-and-verify release, plus in-place archive editing.</p>
