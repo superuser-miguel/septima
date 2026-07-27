@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The brotli archive that could only be opened on the machine that made it — Septima blog</title>
+<meta name="description" content="How a failing round-trip test in Septima uncovered a silent, thread-coupled brotli corruption in 7-Zip ZS — and why a thin, well-tested CLI wrapper is worth it.">
+<meta property="og:type" content="article">
+<meta property="og:title" content="The brotli archive that could only be opened on the machine that made it">
+<meta property="og:description" content="A failing round-trip test uncovered a silent, thread-coupled brotli corruption in 7-Zip ZS — the archive opened only on the machine that made it.">
+<meta property="og:url" content="https://superuser-miguel.github.io/septima/blog/2026-07-27-brotli-mmt-corruption.html">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="The brotli archive that could only be opened on the machine that made it">
+<meta name="twitter:description" content="A failing round-trip test uncovered a silent, thread-coupled brotli corruption in 7-Zip ZS.">
+<style>
+  :root {
+    --bg:#f6f6fb; --surface:#fff; --text:#1c1b22; --muted:#5c5b66;
+    --border:#e4e3ee; --accent:#4b53d6; --code-bg:#f0f0f7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#16151c; --surface:#1f1e28; --text:#ececf2; --muted:#a7a6b4;
+            --border:#2d2c39; --accent:#8b90f0; --code-bg:#26252f; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:17px/1.65 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:720px; margin:0 auto; padding:0 20px; }
+  header.top { padding:24px 0; border-bottom:1px solid var(--border); }
+  header.top a { color:var(--accent); text-decoration:none; font-weight:600; }
+  article { padding:40px 0 56px; }
+  h1 { font-size:2rem; line-height:1.2; letter-spacing:-.02em; margin:0 0 8px; }
+  .meta { color:var(--muted); font-size:.95rem; margin:0 0 32px; }
+  h2 { font-size:1.35rem; letter-spacing:-.01em; margin:2.2rem 0 .6rem; }
+  p, ul { margin:0 0 1.1rem; }
+  a { color:var(--accent); }
+  code { background:var(--code-bg); padding:1px 6px; border-radius:6px; font-size:.9em; }
+  pre { background:var(--code-bg); border:1px solid var(--border); border-radius:10px;
+        padding:14px 16px; overflow-x:auto; font-size:.86rem; line-height:1.5; }
+  pre code { background:none; padding:0; }
+  blockquote { margin:1.1rem 0; padding:.4rem 0 .4rem 16px; border-left:3px solid var(--accent);
+               color:var(--muted); }
+  .callout { background:var(--surface); border:1px solid var(--border); border-radius:12px;
+             padding:16px 18px; margin:1.4rem 0; }
+  footer { border-top:1px solid var(--border); color:var(--muted); font-size:.9rem;
+           padding:24px 0 48px; }
+  footer a { color:var(--accent); }
+</style>
+</head>
+<body>
+
+<header class="top"><div class="wrap"><a href="./">← Septima blog</a></div></header>
+
+<article class="wrap">
+  <h1>The brotli archive that could only be opened on the machine that made it</h1>
+  <p class="meta">2026-07-27 · engineering</p>
+
+  <p>Septima is a small thing: a GTK front-end that drives the <code>7zz</code>
+  binary from <a href="https://github.com/mcmilk/7-Zip-zstd">7-Zip ZS</a>. It
+  doesn't reimplement compression — it builds the right command line and reads
+  back what <code>7zz</code> prints. That thinness is the whole design. It also
+  means Septima inherits <code>7zz</code>'s bugs — and, if you're paying
+  attention, catches them.</p>
+
+  <p>This is the story of one that would have quietly shipped corrupt archives to
+  users, and how a single failing test caught it.</p>
+
+  <h2>The trigger</h2>
+
+  <p>In v0.3.0 we added Brotli, LZ4, LZ5 and Lizard as <code>tar</code>
+  post-compressors — so you can make a real <code>.tar.br</code> in one gesture.
+  Building the <em>next</em> feature (raw single-file streams), I wrote a
+  round-trip test: compress a blob, extract it, assert the bytes come back
+  identical. Every codec passed. Then <code>brotli</code> failed.</p>
+
+  <h2>Isolating it</h2>
+
+  <p>First guess: the compression level. I swept brotli levels 0–11 — all fine.
+  So not the level. Same file, same everything, and yet the test built a
+  <code>.tar.br</code> that <code>7zz</code> itself refused to read:</p>
+
+  <pre><code>7zz t out.tar.br
+# ERROR: E_FAIL : Unspecified error</code></pre>
+
+  <p>The difference between my passing manual test and the failing automated one
+  turned out to be a single flag the app always adds: <code>-mmt</code>
+  (multithreading, set to the CPU count). Drop it, and the archive is fine. Add
+  it — <em>any</em> value, even <code>-mmt=1</code> — and it's unreadable.</p>
+
+  <h2>The twist: it isn't corruption</h2>
+
+  <p>"Unreadable" sounded like corruption, but the data was intact. The stream is
+  just <strong>coupled to the thread count it was created with</strong>:</p>
+
+  <pre><code>7zz a -tbrotli -mx5 -mmt4 out-mt.br file
+
+7zz t        out-mt.br     # ERROR: E_FAIL   (default threads)
+7zz t -mmt4  out-mt.br     # Everything is Ok (matching threads)</code></pre>
+
+  <p>So a multithreaded brotli stream can only be verified — or extracted — by
+  passing the <em>same</em> <code>-mmt</code> back. And here's the part that makes
+  it a real trap: the thread count came from the <em>creating</em> machine's core
+  count. An archive made on a 12-core box needs <code>-mmt=12</code> to open, with
+  no hint of that stored anywhere. Move it to a laptop and it's a brick — a
+  <code>.tar.br</code> that opens only on the machine that made it.</p>
+
+  <div class="callout">
+  <p style="margin:0"><strong>The inversion.</strong> The behaviour flips by
+  context. Brotli <em>inside a 7z container</em> (<code>-m0=brotli</code>) works
+  fine <em>with</em> threads — so Septima's shipped 7z-brotli was never affected.
+  It's only the <em>standalone</em> <code>-tbrotli</code> stream (which
+  <code>tar → brotli</code> and raw <code>.br</code> both use) that breaks
+  <em>with</em> threads. Same codec, opposite thread behaviour.</p>
+  </div>
+
+  <h2>The fix</h2>
+
+  <p>A single-threaded standard <code>.br</code> is portable and reads anywhere,
+  so the fix is to <strong>omit <code>-mmt</code> for the <code>-tbrotli</code>
+  path</strong> — while keeping threads for 7z-container brotli, where they're
+  both correct and useful:</p>
+
+  <pre><code>// engine: build the -m* args
+if let Some(threads) = self.threads {
+    if self.format != "brotli" {      // the standalone -tbrotli case
+        args.push(format!("-mmt={threads}"));
+    }
+}</code></pre>
+
+  <p>Hunting it also surfaced a second, quieter bug from the same v0.3.0 work:
+  the code that recognises "this is a compressed tar, browse inside it" had never
+  learned <code>.tar.br</code> / <code>.tar.lz5</code> / <code>.tar.liz</code> —
+  so those archives, creatable since v0.3.0, couldn't be transparently opened.
+  Fixed in the same pass.</p>
+
+  <h2>Upstream</h2>
+
+  <p>None of this is really Septima's bug — it's a sharp edge in how
+  <code>7zz</code> handles brotli threading. It's adjacent to already-closed
+  upstream discussion (<a href="https://github.com/mcmilk/7-Zip-zstd/issues/351">#351</a>,
+  <a href="https://github.com/mcmilk/7-Zip-zstd/issues/352">#352</a>), which
+  documents that <code>-mmt</code> makes a brotli-mt stream "incompatible with
+  standard brotli." The genuinely new bit is the failure mode: <code>7zz</code>
+  can't read its <em>own</em> output with default threads and reports a bare
+  <code>E_FAIL</code> — no hint that <code>-mmt=N</code> is needed. We
+  <a href="https://github.com/mcmilk/7-Zip-zstd/issues/352">flagged that</a>,
+  respectfully — the maintainer runs this in his spare time.</p>
+
+  <h2>Why a thin wrapper earns its keep</h2>
+
+  <p>It would be easy to dismiss "just shells out to <code>7zz</code>" as barely
+  a project. But the thinness is exactly why this got caught: Septima's job is to
+  build correct command lines and verify what comes back, and its test suite
+  round-trips real archives through the real binary. That's what turned a silent,
+  machine-specific corruption into a red test on a Tuesday — before a single user
+  made an unopenable <code>.tar.br</code>.</p>
+
+  <p>The fix lands in <strong>0.4.x</strong>, along with the rest of the
+  <code>7zz</code> CLI-parity work. If you're on the signed Flatpak repo, it'll
+  arrive with <code>flatpak update</code>.</p>
+</article>
+
+<footer><div class="wrap">
+  <p><a href="../">Septima</a> · <a href="./">more posts</a> ·
+  <a href="https://github.com/superuser-miguel/septima">GitHub</a></p>
+</div></footer>
+
+</body>
+</html>

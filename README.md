@@ -159,7 +159,7 @@ meson compile -C builddir
 
 ## Roadmap
 
-### Shipped
+### Shipped (through v0.3.0)
 
 - [x] **Browse & extract** — any archive `7zz` reads, with live progress, cancel
       and password support.
@@ -196,29 +196,39 @@ meson compile -C builddir
       archive for each item," and each one is compressed into its own archive
       saved next to it, instead of combining them into one.
 
-### Next up — full `7zz` CLI parity
+### Landing in 0.4.x — full `7zz` CLI parity
 
-Closing these gives genuine 1:1 coverage of what the bundled `7zz` can do on
-Linux (ordered easiest-first; higher-value items like the filter picker come
-once the quick wins are banked):
+_Built and on `main`; ships in the next release. Gives genuine 1:1 coverage of
+what the bundled `7zz` can create on Linux._
 
-- [ ] **Complete the hash calculator** — add CRC-64, MD5, SHA-1, SHA-384 and
-      BLAKE2sp, and split xxHash into XXH32 / XXH64, so every digest `7zz h`
-      computes is reachable from the UI.
-- [ ] **Zip encryption method** — offer AES-256 for zip (`-mem=AES256`) instead
-      of silently defaulting to weak ZipCrypto. (7z is already AES-256.)
-- [ ] **Expand format × codec coverage** — add the combinations the bundled
-      `7zz` supports but Septima doesn't yet surface: **XZ** and **Deflate64**
-      inside zip, and **Brotli / LZ4 / LZ5 / Lizard** as `tar` post-compressors
-      (alongside the current zstd / xz / gzip / bzip2).
-- [ ] **Architecture / filter picker** — promote the filter family from the
-      free-text field to a real control: Delta, ARM64, ARM/ARMT, PPC, SPARC,
-      RISC-V and BCJ2, alongside the existing x86 BCJ.
-- [ ] **Lizard family × level picker** — levels 10–49 encode four method
-      families (fastLZ4 / LIZv1, ± Huffman) × level; surface both, not one flat
-      slider.
-- [ ] **Standalone single-stream creation** — write a raw `.zst` / `.br` /
-      `.lz4` / `.lz5` stream, not only `tar` + a compressor.
+- **Complete hash calculator** — CRC-64, MD5, SHA-1, SHA-384, SHA3-512 and
+  BLAKE2sp added, and xxHash split into XXH32 / XXH64 (13 digests in all).
+- **Zip encryption method** — choose AES-256 for zip instead of the weak
+  ZipCrypto default.
+- **More format × codec combinations** — **XZ** and **Deflate64** inside zip,
+  and **Brotli / LZ4 / LZ5 / Lizard** as `tar` post-compressors.
+- **Architecture / filter picker** — a real control for the filter family:
+  Delta, ARM64, ARM/ARMT, PPC, SPARC, RISC-V and BCJ2, alongside x86 BCJ.
+- **Lizard family × level picker** — surface the four method families
+  (fastLZ4 / LIZv1, ± Huffman) instead of one flat 10–49 slider.
+- **Standalone single-stream creation** — write a raw `.zst` / `.br` / `.lz4` /
+  `.lz5` / `.xz` / `.gz` / `.bz2` stream, not only `tar` + a compressor.
+
+Plus two fixes to already-shipped work: `.tar.br` archives were corrupt when
+created with threads (an upstream brotli-`-mmt` quirk we work around and
+[reported upstream](https://github.com/mcmilk/7-Zip-zstd/issues/352)), and
+`.tar.br` / `.tar.lz5` / `.tar.liz` couldn't be transparently browsed.
+
+### In design — the headline 0.4.x feature
+
+- **Batch-encrypt with a portable manifest** — compress a pile of files/folders,
+  each into its own archive with a **freshly generated password**, and write a
+  **portable manifest** (a CSV that doubles as an integrity record). You store
+  that manifest wherever *you* keep secrets — KeePassXC, Bitwarden, `pass`, a
+  GPG-encrypted file, the GNOME keyring — and later hand it back to Septima to
+  **batch-decrypt** the whole set. Septima never talks to a vault's API; the
+  manifest is just a file, so every vault is compatible by default. Sandbox-clean
+  and built on your own tools. (Engine foundation already landed.)
 
 ### Later
 

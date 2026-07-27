@@ -227,12 +227,27 @@
 
 <section class="wrap">
   <h2>Roadmap</h2>
-  <p class="sub">Honest about what's next. (Nested tarballs, presets, drop-to-open, the hash calculator, responsive cancel with clean-up of the partial archive, post-extract actions, checksum-file generation, in-archive edit, batch extract, batch compress, and auto-updates via the signed Flatpak repo already shipped.)</p>
+  <p class="sub">Honest about where it's headed. <strong>v0.3.0 is out now</strong>; the items below are in flight for <strong>0.4.x</strong>. (Read the deep-dive: <a href="blog/">the Septima blog</a>.)</p>
+
+  <h3 style="margin:1.5rem 0 .4rem;font-size:1.1rem">Landing in 0.4.x — full <code>7zz</code> CLI parity</h3>
+  <p class="sub" style="margin-bottom:.8rem">Built and on <code>main</code>, shipping in the next release.</p>
   <ul class="road">
-    <li><b>Full <code>7zz</code> CLI parity</b> — surface everything the bundled binary can do: a complete hash calculator (CRC-64, MD5, SHA-1/384, BLAKE2sp), AES-256 for zip, more format×codec combos (XZ/Deflate64 in zip, Brotli/LZ4/LZ5/Lizard tarballs), and an architecture-filter picker (Delta, ARM64, RISC-V, BCJ2…).</li>
-    <li><b>Lizard family × level picker</b> — expose Lizard's four method families, not one flat slider.</li>
+    <li><b>Complete hash calculator</b> — 13 digests (CRC-64, MD5, SHA-1/384, SHA3-512, BLAKE2sp, XXH32/64).</li>
+    <li><b>Zip AES-256</b> — choose strong encryption over the weak ZipCrypto default.</li>
+    <li><b>More format × codec combos</b> — XZ / Deflate64 in zip; Brotli / LZ4 / LZ5 / Lizard tarballs.</li>
+    <li><b>Architecture / filter picker</b> — Delta, ARM64, ARM/ARMT, PPC, SPARC, RISC-V, BCJ2 as a real control.</li>
+    <li><b>Lizard family × level</b> — expose Lizard's four method families, not one flat slider.</li>
     <li><b>Standalone streams</b> — write a raw <code>.zst</code> / <code>.br</code> / <code>.lz4</code> file, not only <code>tar</code> + a compressor.</li>
-    <li><b>Drag-out to extract</b> — drag entries out of an open archive to a folder to extract them (dropping an archive <em>in</em> to open it already works).</li>
+  </ul>
+
+  <h3 style="margin:1.5rem 0 .4rem;font-size:1.1rem">In design — the headline 0.4.x feature</h3>
+  <ul class="road">
+    <li><b>Batch-encrypt with a portable manifest</b> — compress a pile of folders, each into its own archive with a generated password, and write a portable manifest you keep in <em>your</em> vault (KeePassXC, Bitwarden, <code>pass</code>, a GPG file, the GNOME keyring). Hand it back later to batch-decrypt the whole set. Septima never touches a vault's API — the manifest is just a file, so every vault works by default. Sandbox-clean, built on your own tools.</li>
+  </ul>
+
+  <h3 style="margin:1.5rem 0 .4rem;font-size:1.1rem">Later</h3>
+  <ul class="road">
+    <li><b>Drag-out to extract</b> — drag entries out of an open archive (dropping one <em>in</em> already works).</li>
     <li><b>Nautilus integration</b> — right-click "Extract Here" / "Compress…" in GNOME Files, like File Roller.</li>
     <li><b>Visual polish</b> — custom styling and a bespoke app icon.</li>
   </ul>

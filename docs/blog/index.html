@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Septima blog</title>
+<meta name="description" content="Engineering notes from Septima — a GNOME-native front-end for 7-Zip ZS.">
+<style>
+  :root {
+    --bg:#f6f6fb; --surface:#fff; --text:#1c1b22; --muted:#5c5b66;
+    --border:#e4e3ee; --accent:#4b53d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#16151c; --surface:#1f1e28; --text:#ececf2; --muted:#a7a6b4;
+            --border:#2d2c39; --accent:#8b90f0; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:17px/1.65 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:720px; margin:0 auto; padding:0 20px; }
+  header.top { padding:24px 0; border-bottom:1px solid var(--border); }
+  header.top a { color:var(--accent); text-decoration:none; font-weight:600; }
+  main { padding:40px 0 56px; }
+  h1 { font-size:2rem; letter-spacing:-.02em; margin:0 0 6px; }
+  .lede { color:var(--muted); margin:0 0 36px; }
+  .post { display:block; text-decoration:none; color:inherit; background:var(--surface);
+          border:1px solid var(--border); border-radius:14px; padding:20px 22px; margin:0 0 16px; }
+  .post:hover { border-color:var(--accent); }
+  .post h2 { margin:0 0 6px; font-size:1.2rem; color:var(--text); }
+  .post .date { color:var(--muted); font-size:.85rem; }
+  .post p { margin:.5rem 0 0; color:var(--muted); font-size:.97rem; }
+  footer { border-top:1px solid var(--border); color:var(--muted); font-size:.9rem;
+           padding:24px 0 48px; }
+  footer a { color:var(--accent); }
+</style>
+</head>
+<body>
+
+<header class="top"><div class="wrap"><a href="../">← Septima</a></div></header>
+
+<main class="wrap">
+  <h1>Septima blog</h1>
+  <p class="lede">Engineering notes from a GNOME-native front-end for 7-Zip ZS.</p>
+
+  <a class="post" href="2026-07-27-brotli-mmt-corruption.html">
+    <span class="date">2026-07-27 · engineering</span>
+    <h2>The brotli archive that could only be opened on the machine that made it</h2>
+    <p>How a failing round-trip test uncovered a silent, thread-coupled brotli
+    corruption in 7-Zip ZS — and why a thin, well-tested CLI wrapper is worth it.</p>
+  </a>
+</main>
+
+<footer><div class="wrap">
+  <p><a href="../">Septima</a> · <a href="https://github.com/superuser-miguel/septima">GitHub</a></p>
+</div></footer>
+
+</body>
+</html>
