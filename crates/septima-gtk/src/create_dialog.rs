@@ -232,6 +232,12 @@ mod imp {
                 obj,
                 move |_| obj.imp().on_codec_changed()
             ));
+            // Toggling batch mode changes what inputs a raw stream will accept.
+            self.batch_row.connect_active_notify(glib::clone!(
+                #[weak]
+                obj,
+                move |_| obj.update_create_state()
+            ));
             self.dictionary_row.connect_selected_notify(refresh.clone());
             self.level_row.adjustment().connect_value_changed(glib::clone!(
                 #[weak]
@@ -310,6 +316,8 @@ mod imp {
             self.encryption_row.set_sensitive(fmt.id == "zip");
             self.encrypt_headers_row.set_sensitive(fmt.supports_header_encryption);
             self.on_codec_changed();
+            // Re-check Create: a raw stream needs exactly one file.
+            self.obj().update_create_state();
         }
 
         fn on_codec_changed(&self) {
@@ -467,9 +475,40 @@ impl SeptimaCreateDialog {
             imp.files_group.add(&row);
             imp.input_rows.borrow_mut().push(row);
         }
-        imp.create_button.set_sensitive(!inputs.is_empty());
         drop(inputs);
-        self.start_measure();
+        self.update_create_state();
+    }
+
+    /// Enable Create when the staged inputs suit the chosen format, and show a
+    /// hint when they don't. A raw stream needs exactly one file; the container
+    /// formats just need something staged.
+    fn update_create_state(&self) {
+        let imp = self.imp();
+        let inputs = imp.inputs.borrow();
+        let is_stream = imp.current_format().id == "stream";
+        // A raw stream is one file. In batch mode each item becomes its own
+        // stream, so any number of files is fine — but never a folder.
+        let all_files = !inputs.is_empty() && inputs.iter().all(|p| p.is_file());
+        let stream_ok = if imp.batch_row.is_active() {
+            all_files
+        } else {
+            inputs.len() == 1 && inputs[0].is_file()
+        };
+        if is_stream && !stream_ok {
+            imp.create_button.set_sensitive(false);
+            let msg = if inputs.is_empty() {
+                gettext("Add one file to compress into a raw stream.")
+            } else if imp.batch_row.is_active() {
+                gettext("Raw streams hold a single file each — remove any folders, or pick a container format.")
+            } else {
+                gettext("A raw stream holds exactly one file — remove the extras (or a folder), turn on batch mode, or pick a container format.")
+            };
+            imp.files_group.set_description(Some(&msg));
+        } else {
+            imp.create_button.set_sensitive(!inputs.is_empty());
+            drop(inputs);
+            self.start_measure();
+        }
     }
 
     /// Total up the staged selection on a background thread and report it under

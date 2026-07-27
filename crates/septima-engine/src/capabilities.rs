@@ -74,6 +74,9 @@ const SEVENZ_CODECS: &[Codec] =
 const ZIP_CODECS: &[Codec] = &[DEFLATE, DEFLATE64, ZSTD, XZ, LZMA, PPMD, BZIP2, COPY];
 // For tar, the "codec" chooses an optional post-compressor (tar → .tar.<ext>).
 const TAR_CODECS: &[Codec] = &[COPY, ZSTD, XZ, GZIP, BZIP2, BROTLI, LZ4, LZ5, LIZARD];
+// Raw single-file streams: the "codec" *is* the format (`-t<codec>`), one file,
+// no container. Lizard is omitted (its family picker doesn't apply here).
+const STREAM_CODECS: &[Codec] = &[ZSTD, XZ, GZIP, BZIP2, BROTLI, LZ4, LZ5];
 
 const FORMATS: &[Format] = &[
     Format {
@@ -103,7 +106,30 @@ const FORMATS: &[Format] = &[
         supports_header_encryption: false,
         supports_solid: false,
     },
+    Format {
+        id: "stream",
+        label: "Single file (raw stream)",
+        extension: "", // follows the chosen codec (zst/xz/gz/…)
+        codecs: STREAM_CODECS,
+        supports_encryption: false,
+        supports_header_encryption: false,
+        supports_solid: false,
+    },
 ];
+
+/// The single-file extension for a raw-stream codec (`zstd` -> `zst`, …).
+pub fn stream_extension(codec_id: &str) -> &'static str {
+    match codec_id {
+        "zstd" => "zst",
+        "xz" => "xz",
+        "gzip" => "gz",
+        "bzip2" => "bz2",
+        "brotli" => "br",
+        "lz4" => "lz4",
+        "lz5" => "lz5",
+        _ => "bin",
+    }
+}
 
 /// Every creatable format, in menu order (7z first).
 pub fn formats() -> &'static [Format] {

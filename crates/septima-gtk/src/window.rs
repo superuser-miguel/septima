@@ -909,6 +909,10 @@ impl SeptimaWindow {
 
 /// Full file extension for the chosen settings, e.g. `7z`, `zip`, `tar.zst`.
 fn archive_extension(settings: &CreateSettings) -> String {
+    if settings.format.id == "stream" {
+        // Raw single-file stream: the extension is the codec's (zst/xz/gz/…).
+        return septima_engine::stream_extension(settings.codec.id).to_string();
+    }
     if settings.format.id == "tar" {
         match settings.codec.id {
             "zstd" => "tar.zst",
@@ -928,6 +932,15 @@ fn archive_extension(settings: &CreateSettings) -> String {
 }
 
 fn compression_request(settings: &CreateSettings, inputs: Vec<PathBuf>, output: PathBuf) -> CompressionRequest {
+    // A raw stream is `-t<codec>` on one file with no method chain: the codec is
+    // the format, so build the request around it directly.
+    if settings.format.id == "stream" {
+        let mut req = CompressionRequest::new(output, inputs, settings.codec.id);
+        req.level = settings.level;
+        req.threads = Some(settings.threads);
+        req.extra_params = settings.extra_params.clone();
+        return req;
+    }
     let mut req = CompressionRequest::new(output, inputs, settings.format.id);
     req.codec = Some(settings.codec.id.to_string());
     req.level = settings.level;
