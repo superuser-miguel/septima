@@ -57,7 +57,10 @@ const ZSTD: Codec = Codec { id: "zstd", label: "Zstandard", level_min: 1, level_
 const BROTLI: Codec = Codec { id: "brotli", label: "Brotli", level_min: 0, level_max: 11, default_level: 6 };
 const LZ4: Codec = Codec { id: "lz4", label: "LZ4", level_min: 1, level_max: 12, default_level: 1 };
 const LZ5: Codec = Codec { id: "lz5", label: "LZ5", level_min: 1, level_max: 15, default_level: 1 };
-const LIZARD: Codec = Codec { id: "lizard", label: "Lizard", level_min: 10, level_max: 49, default_level: 10 };
+// Lizard's -mx encodes family (tens: 10/20/30/40) × sub-level (ones: 0-9). The
+// UI picks the family separately, so the codec's own level is just the 0-9
+// sub-level; the create dialog adds the family base back on.
+const LIZARD: Codec = Codec { id: "lizard", label: "Lizard", level_min: 0, level_max: 9, default_level: 2 };
 const FLZMA2: Codec = Codec { id: "flzma2", label: "Fast-LZMA2", level_min: 1, level_max: 9, default_level: 6 };
 const COPY: Codec = Codec { id: "copy", label: "Store (no compression)", level_min: 0, level_max: 0, default_level: 0 };
 // tar post-compressors: applied to the tar stream (tar → .tar.zst/.tar.xz/…).

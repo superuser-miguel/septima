@@ -72,6 +72,19 @@ pub struct CreateSettings {
 const ZIP_ENCRYPTION: &[(&str, Option<&str>)] =
     &[("AES-256", Some("AES256")), ("ZipCrypto (legacy)", None)];
 
+/// Lizard families: (label, `-mx` base). The selected family's base is added to
+/// the 0-9 Level to form the final `-mx` (base 10/20/30/40).
+const LIZARD_FAMILIES: &[(&str, u8)] = &[
+    ("fastLZ4", 10),
+    ("LIZv1", 20),
+    ("fastLZ4 + Huffman", 30),
+    ("LIZv1 + Huffman", 40),
+];
+
+fn lizard_base(family_index: u32) -> u8 {
+    LIZARD_FAMILIES.get(family_index as usize).map(|(_, b)| *b).unwrap_or(10)
+}
+
 type CreateCallback = Box<dyn Fn(&SeptimaCreateDialog)>;
 
 mod imp {
@@ -92,6 +105,8 @@ mod imp {
         pub format_row: TemplateChild<adw::ComboRow>,
         #[template_child]
         pub codec_row: TemplateChild<adw::ComboRow>,
+        #[template_child]
+        pub lizard_family_row: TemplateChild<adw::ComboRow>,
         #[template_child]
         pub level_row: TemplateChild<adw::SpinRow>,
         #[template_child]
@@ -185,6 +200,10 @@ mod imp {
 
             let enc_labels: Vec<&str> = ZIP_ENCRYPTION.iter().map(|(l, _)| *l).collect();
             self.encryption_row.set_model(Some(&gtk::StringList::new(&enc_labels)));
+
+            let lizard_labels: Vec<&str> = LIZARD_FAMILIES.iter().map(|(l, _)| *l).collect();
+            self.lizard_family_row.set_model(Some(&gtk::StringList::new(&lizard_labels)));
+            self.lizard_family_row.set_list_factory(Some(&non_ellipsizing_factory()));
 
             let filter_labels: Vec<&str> = filters().iter().map(|f| f.label).collect();
             self.filter_row.set_model(Some(&gtk::StringList::new(&filter_labels)));
@@ -305,6 +324,7 @@ mod imp {
                 adj.set_value(codec.default_level as f64);
             }
             self.dictionary_row.set_sensitive(codec_uses_dictionary(codec));
+            self.lizard_family_row.set_sensitive(codec.id == "lizard");
             self.update_memory();
         }
 
@@ -536,7 +556,15 @@ impl SeptimaCreateDialog {
         let format = imp.current_format();
         let codec = imp.current_codec();
 
-        let level = (!codec.is_store()).then(|| imp.level_row.value() as u8);
+        let level = (!codec.is_store()).then(|| {
+            let sub = imp.level_row.value() as u8;
+            // Lizard's real -mx is the family base plus the 0-9 sub-level.
+            if codec.id == "lizard" {
+                lizard_base(imp.lizard_family_row.selected()) + sub
+            } else {
+                sub
+            }
+        });
         let (dictionary, _) = imp.selected_dict();
         let password = {
             let text = imp.password_row.text().to_string();
@@ -607,7 +635,14 @@ impl SeptimaCreateDialog {
         imp.codec_row
             .set_selected(codec_index(imp.current_format(), &p.codec));
         if let Some(level) = p.level {
-            imp.level_row.set_value(level as f64);
+            if p.codec == "lizard" {
+                // Stored -mx (10-49) splits back into family (tens) + sub-level.
+                let family = (level / 10).saturating_sub(1).min(3) as u32;
+                imp.lizard_family_row.set_selected(family);
+                imp.level_row.set_value((level % 10) as f64);
+            } else {
+                imp.level_row.set_value(level as f64);
+            }
         }
         imp.threads_row.set_value(p.threads as f64);
         imp.dictionary_row.set_selected(dict_index(p.dictionary.as_deref()));
