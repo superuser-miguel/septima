@@ -10,6 +10,7 @@
 
 # --- Flatpak ---
 /.flatpak-builder/
+/.publish-tmp.*/
 /build-dir/
 /repo/
 

@@ -19,7 +19,9 @@
 # Usage:  build-aux/publish-repo.sh
 set -euo pipefail
 
-KEYID="D67DB8E03D50A8C0"          # signs the tags too; public key is baked into the .flatpakref
+KEYID="D67DB8E03D50A8C0"          # signs the OSTree repo; public key is baked into the .flatpakref
+                                  # (NB: it signs the repo ONLY — git tags and
+                                  # commits are currently unsigned.)
 APP_ID="io.github.superuser_miguel.Septima"
 PAGES_URL="https://superuser-miguel.github.io/septima-repo"
 PUBLISH_REMOTE="git@github.com:superuser-miguel/septima-repo.git"
@@ -28,14 +30,18 @@ MANIFEST="build-aux/${APP_ID}.json"
 here="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$here"
 
-work="$(mktemp -d)"
+# Must live on the same filesystem as the flatpak-builder state dir, so NOT in
+# /tmp — that is tmpfs here, which flatpak-builder rejects outright ("state dir
+# is not on the same filesystem as the target dir") and which would put the
+# whole cargo build in RAM anyway. Kept inside the project and gitignored.
+work="$(mktemp -d "$here/.publish-tmp.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 repo="$work/repo"
 build="$work/build-dir"
 
 echo ">> Building signed release into a fresh OSTree repo…"
-flatpak-builder --user --force-clean --repo="$repo" --gpg-sign="$KEYID" \
-    "$build" "$MANIFEST"
+flatpak-builder --user --force-clean --state-dir="$work/state" \
+    --repo="$repo" --gpg-sign="$KEYID" "$build" "$MANIFEST"
 
 echo ">> Generating static deltas + signing the summary…"
 flatpak build-update-repo --generate-static-deltas --prune --gpg-sign="$KEYID" "$repo"
@@ -71,7 +77,7 @@ flatpak run io.github.superuser_miguel.Septima</code></pre>
 EOF
 
 echo ">> Force-pushing as a single squashed commit…"
-version="$(gpg --version >/dev/null; date +%Y-%m-%d)"
+version="$(date +%Y-%m-%d)"
 git -C "$pub" init -q -b main
 git -C "$pub" add -A
 git -C "$pub" -c user.name=superuser-miguel \
