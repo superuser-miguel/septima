@@ -106,3 +106,29 @@ const FORMATS: &[Format] = &[
 pub fn formats() -> &'static [Format] {
     FORMATS
 }
+
+/// A pre-codec filter (`-m0=<id> -m1=<codec>`), for the create dialog's Filter
+/// picker. 7z only. `id: ""` is the "None" entry (menu order, None first).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Filter {
+    /// `7zz` method name, or `""` for no filter.
+    pub id: &'static str,
+    pub label: &'static str,
+}
+
+/// The filters offered in the UI, verified accepted by the pinned `7zz`. The
+/// obscure ones (IA64, Swap2/Swap4) stay reachable via the advanced field.
+pub fn filters() -> &'static [Filter] {
+    &[
+        Filter { id: "", label: "None" },
+        Filter { id: "BCJ", label: "Executables — x86 (BCJ)" },
+        Filter { id: "BCJ2", label: "Executables — x86 (BCJ2)" },
+        Filter { id: "ARM64", label: "Executables — ARM64" },
+        Filter { id: "ARM", label: "Executables — ARM" },
+        Filter { id: "ARMT", label: "Executables — ARM Thumb" },
+        Filter { id: "PPC", label: "Executables — PowerPC" },
+        Filter { id: "SPARC", label: "Executables — SPARC" },
+        Filter { id: "RISCV", label: "Executables — RISC-V" },
+        Filter { id: "Delta", label: "Delta (audio, tables, bitmaps)" },
+    ]
+}

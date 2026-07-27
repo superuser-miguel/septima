@@ -15,7 +15,8 @@ pub struct Preset {
     pub dictionary: Option<String>,
     pub solid: Option<bool>,
     pub volume_size: Option<String>,
-    pub bcj: bool,
+    /// Pre-codec filter method name (`BCJ`, `ARM64`, `Delta`, …); `None` = off.
+    pub filter: Option<String>,
     pub encrypt_headers: bool,
     pub extra_params: Vec<String>,
 }
@@ -31,7 +32,7 @@ impl Preset {
             self.dictionary.clone().unwrap_or_default(),
             opt_bool(self.solid),
             self.volume_size.clone().unwrap_or_default(),
-            bool_str(self.bcj),
+            self.filter.clone().unwrap_or_default(),
             bool_str(self.encrypt_headers),
             self.extra_params.join(" "),
         ];
@@ -52,7 +53,13 @@ impl Preset {
             dictionary: non_empty(f[5]),
             solid: parse_opt_bool(f[6]),
             volume_size: non_empty(f[7]),
-            bcj: f[8] == "1",
+            // field[8] used to be a bcj bool ("0"/"1"); now it holds the filter
+            // method name. Migrate a legacy "1" to the BCJ filter it stood for.
+            filter: match f[8] {
+                "" | "0" => None,
+                "1" => Some("BCJ".to_string()),
+                other => Some(other.to_string()),
+            },
             encrypt_headers: f[9] == "1",
             extra_params: f[10].split_whitespace().map(str::to_string).collect(),
         })

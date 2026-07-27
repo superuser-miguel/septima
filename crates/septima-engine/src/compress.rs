@@ -27,8 +27,10 @@ pub struct CompressionRequest {
     pub solid: Option<bool>,
     /// Split into volumes of this size, e.g. `"100m"` (`-v`). `None` = single file.
     pub volume_size: Option<String>,
-    /// Prepend a BCJ executable filter (`-m0=BCJ -m1=<codec>`) — 7z only.
-    pub bcj: bool,
+    /// Prepend a filter ahead of the codec (`-m0=<filter> -m1=<codec>`) — 7z
+    /// only. `None` = no filter. Values are `7zz` method names: `BCJ`, `BCJ2`,
+    /// `ARM64`, `ARM`, `ARMT`, `PPC`, `SPARC`, `RISCV`, `Delta`.
+    pub filter: Option<String>,
     pub password: Option<String>,
     /// `-mhe=on` encrypted headers (7z only).
     pub encrypt_headers: bool,
@@ -51,7 +53,7 @@ impl CompressionRequest {
             dictionary: None,
             solid: None,
             volume_size: None,
-            bcj: false,
+            filter: None,
             password: None,
             encrypt_headers: false,
             zip_encryption: None,
@@ -70,14 +72,16 @@ impl CompressionRequest {
         let mut args = Vec::new();
         let method_key = if self.format == "zip" { "-mm=" } else { "-m0=" };
 
-        let mut bcj_active = false;
+        // A filter (BCJ/ARM64/Delta/…) goes ahead of the codec in the 7z chain,
+        // making the codec method 1. 7z only, and never in front of Store.
+        let filter = self
+            .filter
+            .as_deref()
+            .filter(|_| self.format == "7z" && self.codec.as_deref() != Some("copy"));
         if let Some(codec) = &self.codec {
             let name = if codec == "copy" { "Copy" } else { codec.as_str() };
-            // BCJ executable filter goes ahead of the codec in the 7z chain,
-            // making the codec method 1.
-            if self.bcj && self.format == "7z" && codec != "copy" {
-                bcj_active = true;
-                args.push("-m0=BCJ".to_string());
+            if let Some(filter) = filter {
+                args.push(format!("-m0={filter}"));
                 args.push(format!("-m1={name}"));
             } else {
                 args.push(format!("{method_key}{name}"));
@@ -87,8 +91,8 @@ impl CompressionRequest {
             args.push(format!("-mx={level}"));
         }
         if let Some(dict) = &self.dictionary {
-            // Dict targets the codec method: `-m1d` inside a BCJ chain, else `-md`.
-            let key = if bcj_active { "-m1d=" } else { "-md=" };
+            // Dict targets the codec method: `-m1d` inside a filter chain, else `-md`.
+            let key = if filter.is_some() { "-m1d=" } else { "-md=" };
             args.push(format!("{key}{dict}"));
         }
         if let Some(threads) = self.threads {
@@ -396,19 +400,39 @@ mod tests {
     }
 
     #[test]
-    fn bcj_chains_before_codec() {
+    fn filter_chains_before_codec() {
         let mut req = CompressionRequest::new("out.7z", vec![], "7z");
         req.codec = Some("lzma2".into());
-        req.bcj = true;
+        req.filter = Some("BCJ".into());
         req.level = Some(9);
         assert_eq!(req.method_args(), ["-m0=BCJ", "-m1=lzma2", "-mx=9"]);
+
+        // any filter method, not just BCJ
+        let mut req = CompressionRequest::new("out.7z", vec![], "7z");
+        req.codec = Some("lzma2".into());
+        req.filter = Some("ARM64".into());
+        assert_eq!(req.method_args(), ["-m0=ARM64", "-m1=lzma2"]);
     }
 
     #[test]
-    fn bcj_dictionary_targets_method_one() {
+    fn filter_is_ignored_for_zip_and_store() {
+        // 7z + Store: no filter chain (filter never goes in front of Copy).
+        let mut req = CompressionRequest::new("out.7z", vec![], "7z");
+        req.codec = Some("copy".into());
+        req.filter = Some("BCJ".into());
+        assert_eq!(req.method_args(), ["-m0=Copy"]);
+        // zip ignores filters entirely.
+        let mut req = CompressionRequest::new("out.zip", vec![], "zip");
+        req.codec = Some("deflate".into());
+        req.filter = Some("BCJ".into());
+        assert_eq!(req.method_args(), ["-mm=deflate"]);
+    }
+
+    #[test]
+    fn filter_dictionary_targets_method_one() {
         let mut req = CompressionRequest::new("out.7z", vec![], "7z");
         req.codec = Some("lzma2".into());
-        req.bcj = true;
+        req.filter = Some("BCJ".into());
         req.dictionary = Some("16m".into());
         assert_eq!(req.method_args(), ["-m0=BCJ", "-m1=lzma2", "-m1d=16m"]);
     }

@@ -124,9 +124,9 @@ template $SeptimaCreateDialog: Adw.Dialog {
       Adw.PreferencesGroup {
         title: _("Options");
 
-        Adw.SwitchRow bcj_row {
-          title: _("Optimize for executables");
-          subtitle: _("Adds a BCJ filter that helps compress programs (7z)");
+        Adw.ComboRow filter_row {
+          title: _("Filter");
+          subtitle: _("Reorders bytes to compress better — pick your data's kind (7z)");
         }
 
         Adw.ComboRow volume_row {

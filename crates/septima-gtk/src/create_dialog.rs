@@ -6,7 +6,7 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{gdk, gio, glib, CompositeTemplate, TemplateChild};
 
-use septima_engine::capabilities::{formats, Codec, Format};
+use septima_engine::capabilities::{filters, formats, Codec, Format};
 use septima_engine::{estimate_add_memory, measure_selection, new_cancel_token, CancelToken, Selection};
 
 use crate::preset::{Preset, PresetStore};
@@ -57,7 +57,8 @@ pub struct CreateSettings {
     pub dictionary: Option<String>,
     pub solid: Option<bool>,
     pub volume_size: Option<String>,
-    pub bcj: bool,
+    /// Pre-codec filter method name (`BCJ`/`ARM64`/`Delta`/…); `None` = off / non-7z.
+    pub filter: Option<String>,
     pub password: Option<String>,
     pub encrypt_headers: bool,
     /// zip-only cipher (`-mem=`); `None` outside zip or for the ZipCrypto choice.
@@ -102,7 +103,7 @@ mod imp {
         #[template_child]
         pub memory_row: TemplateChild<adw::ActionRow>,
         #[template_child]
-        pub bcj_row: TemplateChild<adw::SwitchRow>,
+        pub filter_row: TemplateChild<adw::ComboRow>,
         #[template_child]
         pub volume_row: TemplateChild<adw::ComboRow>,
         #[template_child]
@@ -184,6 +185,13 @@ mod imp {
 
             let enc_labels: Vec<&str> = ZIP_ENCRYPTION.iter().map(|(l, _)| *l).collect();
             self.encryption_row.set_model(Some(&gtk::StringList::new(&enc_labels)));
+
+            let filter_labels: Vec<&str> = filters().iter().map(|f| f.label).collect();
+            self.filter_row.set_model(Some(&gtk::StringList::new(&filter_labels)));
+            // The default combo factory ellipsizes list items to a narrow fixed
+            // width, truncating "…x86 (BCJ2)" etc. A non-ellipsizing factory lets
+            // the popover size to the full labels.
+            self.filter_row.set_list_factory(Some(&non_ellipsizing_factory()));
 
             let cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
             self.threads_row.adjustment().set_upper(cpus.max(1) as f64);
@@ -278,7 +286,7 @@ mod imp {
             self.codec_row.set_model(Some(&gtk::StringList::new(&labels)));
             self.codec_row.set_selected(0); // fires on_codec_changed
             self.solid_row.set_sensitive(fmt.supports_solid);
-            self.bcj_row.set_sensitive(fmt.id == "7z");
+            self.filter_row.set_sensitive(fmt.id == "7z");
             // Only zip has a cipher choice; 7z is always AES-256, tar has none.
             self.encryption_row.set_sensitive(fmt.id == "zip");
             self.encrypt_headers_row.set_sensitive(fmt.supports_header_encryption);
@@ -553,7 +561,13 @@ impl SeptimaCreateDialog {
             volume_size: VOLUME_PRESETS[imp.volume_row.selected() as usize]
                 .1
                 .map(str::to_string),
-            bcj: format.id == "7z" && imp.bcj_row.is_active(),
+            filter: (format.id == "7z")
+                .then(|| {
+                    let i = imp.filter_row.selected() as usize;
+                    let id = filters().get(i).map(|f| f.id).unwrap_or("");
+                    (!id.is_empty()).then(|| id.to_string())
+                })
+                .flatten(),
             password,
             encrypt_headers: format.supports_header_encryption && imp.encrypt_headers_row.is_active(),
             zip_encryption: (format.id == "zip")
@@ -579,7 +593,7 @@ impl SeptimaCreateDialog {
             dictionary: s.dictionary,
             solid: s.solid,
             volume_size: s.volume_size,
-            bcj: s.bcj,
+            filter: s.filter,
             encrypt_headers: s.encrypt_headers,
             extra_params: s.extra_params,
         }
@@ -601,7 +615,7 @@ impl SeptimaCreateDialog {
             imp.solid_row.set_active(solid);
         }
         imp.volume_row.set_selected(vol_index(p.volume_size.as_deref()));
-        imp.bcj_row.set_active(p.bcj);
+        imp.filter_row.set_selected(filter_index(p.filter.as_deref()));
         imp.encrypt_headers_row.set_active(p.encrypt_headers);
         imp.params_row.set_text(&p.extra_params.join(" "));
         imp.update_memory();
@@ -755,4 +769,34 @@ fn dict_index(arg: Option<&str>) -> u32 {
 
 fn vol_index(arg: Option<&str>) -> u32 {
     VOLUME_PRESETS.iter().position(|(_, a)| *a == arg).unwrap_or(0) as u32
+}
+
+fn filter_index(id: Option<&str>) -> u32 {
+    let id = id.unwrap_or("");
+    filters().iter().position(|f| f.id == id).unwrap_or(0) as u32
+}
+
+/// A dropdown list factory whose rows show their full label (no ellipsis), so
+/// the popover widens to fit instead of truncating longer entries.
+fn non_ellipsizing_factory() -> gtk::SignalListItemFactory {
+    let factory = gtk::SignalListItemFactory::new();
+    factory.connect_setup(|_, item| {
+        if let Some(item) = item.downcast_ref::<gtk::ListItem>() {
+            item.set_child(Some(&gtk::Label::builder().xalign(0.0).build()));
+        }
+    });
+    factory.connect_bind(|_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let text = item
+            .item()
+            .and_downcast::<gtk::StringObject>()
+            .map(|s| s.string())
+            .unwrap_or_default();
+        if let Some(label) = item.child().and_downcast::<gtk::Label>() {
+            label.set_label(&text);
+        }
+    });
+    factory
 }
