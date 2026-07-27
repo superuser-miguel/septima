@@ -95,8 +95,14 @@ impl CompressionRequest {
             let key = if filter.is_some() { "-m1d=" } else { "-md=" };
             args.push(format!("{key}{dict}"));
         }
+        // The bundled 7zz produces a corrupt *standalone* brotli stream
+        // (`-tbrotli`, used by raw .br and tar→brotli) whenever `-mmt` is
+        // present — any value, even off is fragile, so omit it entirely. Brotli
+        // inside a 7z container (`-m0=brotli`, format "7z") is unaffected.
         if let Some(threads) = self.threads {
-            args.push(format!("-mmt={threads}"));
+            if self.format != "brotli" {
+                args.push(format!("-mmt={threads}"));
+            }
         }
         if let Some(solid) = self.solid {
             args.push(format!("-ms={}", if solid { "on" } else { "off" }));
@@ -353,6 +359,21 @@ mod tests {
         req.level = Some(19);
         req.threads = Some(4);
         assert_eq!(req.method_args(), ["-m0=zstd", "-mx=19", "-mmt=4"]);
+    }
+
+    #[test]
+    fn standalone_brotli_stream_omits_threads() {
+        // -tbrotli + -mmt corrupts in the bundled 7zz, so the flag is dropped.
+        let mut req = CompressionRequest::new("out.br", vec![], "brotli");
+        req.level = Some(5);
+        req.threads = Some(8);
+        assert_eq!(req.method_args(), ["-mx=5"]);
+
+        // …but brotli inside a 7z container keeps its threads.
+        let mut req = CompressionRequest::new("out.7z", vec![], "7z");
+        req.codec = Some("brotli".into());
+        req.threads = Some(8);
+        assert_eq!(req.method_args(), ["-m0=brotli", "-mmt=8"]);
     }
 
     #[test]

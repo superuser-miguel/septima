@@ -29,8 +29,8 @@ pub fn is_compressed_tar(path: &Path) -> bool {
         .unwrap_or("")
         .to_ascii_lowercase();
     const SUFFIXES: &[&str] = &[
-        ".tar.zst", ".tar.xz", ".tar.gz", ".tar.bz2", ".tar.lz4", ".tzst", ".txz", ".tgz",
-        ".tbz2", ".tbz",
+        ".tar.zst", ".tar.xz", ".tar.gz", ".tar.bz2", ".tar.lz4", ".tar.lz5", ".tar.br",
+        ".tar.liz", ".tzst", ".txz", ".tgz", ".tbz2", ".tbz", ".tlz4", ".tlz5", ".tbr", ".tliz",
     ];
     SUFFIXES.iter().any(|s| name.ends_with(s))
 }

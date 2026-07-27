@@ -175,10 +175,13 @@ mod tests {
     fn detects_compressed_tars() {
         use crate::command::is_compressed_tar;
         use std::path::Path;
-        for yes in ["a.tar.zst", "b.TAR.GZ", "c.tgz", "d.tar.xz", "e.tbz2"] {
+        for yes in [
+            "a.tar.zst", "b.TAR.GZ", "c.tgz", "d.tar.xz", "e.tbz2",
+            "f.tar.br", "g.tar.lz5", "h.tar.liz", "i.tbr", "j.tliz",
+        ] {
             assert!(is_compressed_tar(Path::new(yes)), "{yes}");
         }
-        for no in ["a.7z", "b.zip", "c.tar", "d.zst"] {
+        for no in ["a.7z", "b.zip", "c.tar", "d.zst", "e.br"] {
             assert!(!is_compressed_tar(Path::new(no)), "{no}");
         }
     }
