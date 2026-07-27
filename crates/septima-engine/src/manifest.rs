@@ -100,6 +100,9 @@ impl Manifest {
     /// Parse a manifest CSV. A leading `archive,…` header row is skipped; rows
     /// with fewer than five fields are padded with empty strings, extras dropped.
     pub fn from_csv(text: &str) -> Manifest {
+        // A spreadsheet (Excel/LibreOffice) may save the file with a UTF-8 BOM;
+        // strip it so the first cell is "archive", not "\u{feff}archive".
+        let text = text.strip_prefix('\u{feff}').unwrap_or(text);
         let mut rows = parse_csv(text).into_iter();
         // Skip a header row if present.
         let mut first = rows.next();
@@ -237,6 +240,16 @@ mod tests {
         let csv = m.to_csv();
         assert!(csv.contains("\"a,b\"\".7z\""), "field should be quoted+escaped: {csv}");
         assert_eq!(Manifest::from_csv(&csv), m);
+    }
+
+    #[test]
+    fn from_csv_strips_utf8_bom() {
+        // Excel/LibreOffice save with a leading BOM; the header must still skip.
+        let csv = "\u{feff}archive,source,password,sha256,created\r\nx.7z,src,pw,,\r\n";
+        let m = Manifest::from_csv(csv);
+        assert_eq!(m.entries.len(), 1);
+        assert_eq!(m.entries[0].archive, "x.7z");
+        assert_eq!(m.entries[0].password, "pw");
     }
 
     #[test]
