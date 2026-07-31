@@ -44,9 +44,10 @@
 
   <a class="post" href="2026-07-27-brotli-mmt-corruption.html">
     <span class="date">2026-07-27 · engineering</span>
-    <h2>The brotli archive that could only be opened on the machine that made it</h2>
-    <p>How a failing round-trip test uncovered a silent, thread-coupled brotli
-    corruption in 7-Zip ZS — and why a thin, well-tested CLI wrapper is worth it.</p>
+    <h2>One flag, two incompatible brotli streams</h2>
+    <p>How a failing round-trip test found that <code>-mmt</code> silently switches
+    7-Zip ZS between two mutually unreadable brotli formats — with no header to
+    record which one you got.</p>
   </a>
 </main>
 

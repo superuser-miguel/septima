@@ -214,10 +214,13 @@ what the bundled `7zz` can create on Linux._
 - **Standalone single-stream creation** — write a raw `.zst` / `.br` / `.lz4` /
   `.lz5` / `.xz` / `.gz` / `.bz2` stream, not only `tar` + a compressor.
 
-Plus two fixes to already-shipped work: `.tar.br` archives were corrupt when
-created with threads (an upstream brotli-`-mmt` quirk we work around and
-[reported upstream](https://github.com/mcmilk/7-Zip-zstd/issues/352)), and
-`.tar.br` / `.tar.lz5` / `.tar.liz` couldn't be transparently browsed.
+Plus fixes to already-shipped work: `.tar.br` archives created with threads were
+unreadable by default, because `-mmt` silently switches `7zz` between two
+incompatible brotli stream formats (an upstream quirk we now work around on both
+the write *and* read side, and
+[reported upstream](https://github.com/mcmilk/7-Zip-zstd/pull/352#issuecomment-5144178288)
+— see [the write-up](https://superuser-miguel.github.io/septima/blog/2026-07-27-brotli-mmt-corruption.html)),
+and `.tar.br` / `.tar.lz5` / `.tar.liz` couldn't be transparently browsed.
 
 ### In design — the headline 0.4.x feature
 

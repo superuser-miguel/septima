@@ -4,7 +4,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use crate::command::is_compressed_tar;
+use crate::command::{is_compressed_tar, should_retry_brotli, BROTLI_MT_RETRY};
 use crate::compress::existing_output_paths;
 use crate::error::EngineError;
 use crate::progress::{apply_fragment, ExtractProgress};
@@ -98,13 +98,40 @@ pub fn run_extract(
     sevenzip: &Path,
     req: &ExtractRequest,
     cancel: &CancelToken,
-    on_progress: impl FnMut(&ExtractProgress),
+    mut on_progress: impl FnMut(&ExtractProgress),
 ) -> Result<(), EngineError> {
     // Transparently peel a compressed tar so the files land, not the .tar.
     if is_compressed_tar(&req.archive) {
-        return extract_compressed_tar(sevenzip, req, cancel, on_progress);
+        return match extract_compressed_tar(sevenzip, req, cancel, &mut on_progress, None) {
+            Err(e) if should_retry_brotli(&req.archive, &e) => extract_compressed_tar(
+                sevenzip,
+                req,
+                cancel,
+                &mut on_progress,
+                Some(BROTLI_MT_RETRY),
+            )
+            .map_err(|_| e),
+            other => other,
+        };
     }
 
+    match run_extract_once(sevenzip, req, cancel, &mut on_progress, None) {
+        Err(e) if should_retry_brotli(&req.archive, &e) => {
+            run_extract_once(sevenzip, req, cancel, &mut on_progress, Some(BROTLI_MT_RETRY))
+                .map_err(|_| e)
+        }
+        other => other,
+    }
+}
+
+/// One `7zz x` attempt, with an optional extra flag (see [`BROTLI_MT_RETRY`]).
+fn run_extract_once(
+    sevenzip: &Path,
+    req: &ExtractRequest,
+    cancel: &CancelToken,
+    on_progress: impl FnMut(&ExtractProgress),
+    extra: Option<&str>,
+) -> Result<(), EngineError> {
     let mut cmd = Command::new(sevenzip);
     cmd.arg("x")
         .arg("-bsp1") // progress to stdout
@@ -115,7 +142,8 @@ pub fn run_extract(
     if let Some(password) = &req.password {
         cmd.arg(format!("-p{password}"));
     }
-    cmd.arg("--")
+    cmd.args(extra)
+        .arg("--")
         .arg(&req.archive)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -194,12 +222,14 @@ fn extract_compressed_tar(
     req: &ExtractRequest,
     cancel: &CancelToken,
     mut on_progress: impl FnMut(&ExtractProgress),
+    extra: Option<&str>,
 ) -> Result<(), EngineError> {
     let mut decompress = Command::new(sevenzip)
         .arg("x")
         .arg("-so")
         .arg("-bsp2") // progress to stderr, so stdout stays the tar stream
         .arg("-bb1")
+        .args(extra)
         .arg("--")
         .arg(&req.archive)
         .stdin(Stdio::null())

@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>The brotli archive that could only be opened on the machine that made it — Septima blog</title>
-<meta name="description" content="How a failing round-trip test in Septima uncovered a silent, thread-coupled brotli corruption in 7-Zip ZS — and why a thin, well-tested CLI wrapper is worth it.">
+<title>One flag, two incompatible brotli streams — Septima blog</title>
+<meta name="description" content="How a failing round-trip test in Septima found that -mmt silently switches 7-Zip ZS between two mutually unreadable brotli formats — and why 7zz can't read back its own output.">
 <meta property="og:type" content="article">
-<meta property="og:title" content="The brotli archive that could only be opened on the machine that made it">
-<meta property="og:description" content="A failing round-trip test uncovered a silent, thread-coupled brotli corruption in 7-Zip ZS — the archive opened only on the machine that made it.">
+<meta property="og:title" content="One flag, two incompatible brotli streams">
+<meta property="og:description" content="A failing round-trip test found that -mmt silently switches 7-Zip ZS between two mutually unreadable brotli formats — with no header to record which one you got.">
 <meta property="og:url" content="https://superuser-miguel.github.io/septima/blog/2026-07-27-brotli-mmt-corruption.html">
 <meta name="twitter:card" content="summary">
-<meta name="twitter:title" content="The brotli archive that could only be opened on the machine that made it">
-<meta name="twitter:description" content="A failing round-trip test uncovered a silent, thread-coupled brotli corruption in 7-Zip ZS.">
+<meta name="twitter:title" content="One flag, two incompatible brotli streams">
+<meta name="twitter:description" content="A failing round-trip test found that -mmt silently switches 7-Zip ZS between two mutually unreadable brotli formats.">
 <style>
   :root {
     --bg:#f6f6fb; --surface:#fff; --text:#1c1b22; --muted:#5c5b66;
@@ -41,6 +41,13 @@
                color:var(--muted); }
   .callout { background:var(--surface); border:1px solid var(--border); border-radius:12px;
              padding:16px 18px; margin:1.4rem 0; }
+  .correction { background:var(--surface); border:1px solid var(--accent); border-radius:12px;
+                padding:16px 18px; margin:0 0 2rem; }
+  .correction strong { color:var(--accent); }
+  table { border-collapse:collapse; width:100%; margin:1.1rem 0; font-size:.92rem; }
+  th, td { text-align:left; padding:8px 12px; border-bottom:1px solid var(--border); }
+  th { color:var(--muted); font-weight:600; }
+  .tbl-wrap { overflow-x:auto; }
   footer { border-top:1px solid var(--border); color:var(--muted); font-size:.9rem;
            padding:24px 0 48px; }
   footer a { color:var(--accent); }
@@ -51,18 +58,31 @@
 <header class="top"><div class="wrap"><a href="./">← Septima blog</a></div></header>
 
 <article class="wrap">
-  <h1>The brotli archive that could only be opened on the machine that made it</h1>
-  <p class="meta">2026-07-27 · engineering</p>
+  <h1>One flag, two incompatible brotli streams</h1>
+  <p class="meta">2026-07-27 · engineering · <em>substantially corrected 2026-07-31</em></p>
+
+  <div class="correction">
+  <p style="margin:0"><strong>Correction, 2026-07-31.</strong> This post originally
+  ran under the title <em>"The brotli archive that could only be opened on the
+  machine that made it"</em> and claimed such an archive needs the creating
+  machine's <em>core count</em> passed back to open. That was wrong. Re-testing
+  showed <code>-mmt</code> is a boolean mode switch on decode — the
+  <em>value</em> is ignored, so any <code>-mmt</code> reads the stream and the
+  archives are not machine-specific. The corrected mechanism is below; the
+  <a href="https://github.com/mcmilk/7-Zip-zstd/pull/352#issuecomment-5144178288">upstream
+  report has been corrected</a> too. The failure mode is still real, just less
+  dire — and considerably cheaper to work around.</p>
+  </div>
 
   <p>Septima is a small thing: a GTK front-end that drives the <code>7zz</code>
   binary from <a href="https://github.com/mcmilk/7-Zip-zstd">7-Zip ZS</a>. It
   doesn't reimplement compression — it builds the right command line and reads
   back what <code>7zz</code> prints. That thinness is the whole design. It also
-  means Septima inherits <code>7zz</code>'s bugs — and, if you're paying
+  means Septima inherits <code>7zz</code>'s sharp edges — and, if you're paying
   attention, catches them.</p>
 
-  <p>This is the story of one that would have quietly shipped corrupt archives to
-  users, and how a single failing test caught it.</p>
+  <p>This is the story of one that would have quietly shipped unreadable archives
+  to users, and how a single failing test caught it.</p>
 
   <h2>The trigger</h2>
 
@@ -82,42 +102,66 @@
 # ERROR: E_FAIL : Unspecified error</code></pre>
 
   <p>The difference between my passing manual test and the failing automated one
-  turned out to be a single flag the app always adds: <code>-mmt</code>
+  turned out to be a single flag the app always added: <code>-mmt</code>
   (multithreading, set to the CPU count). Drop it, and the archive is fine. Add
-  it — <em>any</em> value, even <code>-mmt=1</code> — and it's unreadable.</p>
+  it — <em>any</em> value, even <code>-mmt=1</code> — and <code>7zz</code> can no
+  longer read its own output.</p>
 
-  <h2>The twist: it isn't corruption</h2>
+  <h2>It isn't corruption — it's two formats</h2>
 
-  <p>"Unreadable" sounded like corruption, but the data was intact. The stream is
-  just <strong>coupled to the thread count it was created with</strong>:</p>
+  <p>"Unreadable" sounded like corruption, but the data was intact.
+  <code>-mmt</code> selects between two different stream formats: the
+  multithreaded chain, and plain brotli. Whichever one you wrote, you have to ask
+  for the same one back.</p>
 
-  <pre><code>7zz a -tbrotli -mx5 -mmt4 out-mt.br file
+  <p>The trap is that <code>-mmt</code> means opposite things on the two sides.
+  On <em>compress</em> it's a thread count. On <em>decompress</em> it's a boolean
+  format selector, and the number is ignored entirely:</p>
 
-7zz t        out-mt.br     # ERROR: E_FAIL   (default threads)
-7zz t -mmt4  out-mt.br     # Everything is Ok (matching threads)</code></pre>
+  <pre><code># created with -mmt4
+7zz t          mt4.br    # ERROR: E_FAIL
+7zz t -mmt=1   mt4.br    # Everything is Ok
+7zz t -mmt=2   mt4.br    # Everything is Ok
+7zz t -mmt=32  mt4.br    # Everything is Ok
 
-  <p>So a multithreaded brotli stream can only be verified — or extracted — by
-  passing the <em>same</em> <code>-mmt</code> back. And here's the part that makes
-  it a real trap: the thread count came from the <em>creating</em> machine's core
-  count. An archive made on a 12-core box needs <code>-mmt=12</code> to open, with
-  no hint of that stored anywhere. Move it to a laptop and it's a brick — a
-  <code>.tar.br</code> that opens only on the machine that made it.</p>
+# created without -mmt
+7zz t          st.br     # Everything is Ok
+7zz t -mmt=1   st.br     # ERROR: E_FAIL</code></pre>
+
+  <p>Stated plainly, with <code>-mmt=off</code> behaving like the default and
+  <code>-mmt=on</code> like any <code>-mmt=N</code>:</p>
+
+  <div class="tbl-wrap">
+  <table>
+    <tr><th>decode flag</th><th>mt stream</th><th>plain stream</th></tr>
+    <tr><td><code>-mmt=off</code> (or nothing)</td><td>E_FAIL</td><td>Ok</td></tr>
+    <tr><td><code>-mmt=on</code> (or any N)</td><td>Ok</td><td>E_FAIL</td></tr>
+  </table>
+  </div>
+
+  <p>A stream created with <code>-mmt12</code> extracts byte-identical using
+  <code>-mmt=2</code>. So this is one bit of information — and brotli has
+  <a href="https://github.com/mcmilk/7-Zip-zstd/pull/352#issuecomment-5094978224">no
+  header block to record it in</a>, which is exactly why <code>7zz</code> can't
+  just detect it. You get a bare <code>E_FAIL</code> with no hint that a flag
+  would fix it.</p>
 
   <div class="callout">
   <p style="margin:0"><strong>The inversion.</strong> The behaviour flips by
   context. Brotli <em>inside a 7z container</em> (<code>-m0=brotli</code>) works
   fine <em>with</em> threads — so Septima's shipped 7z-brotli was never affected.
   It's only the <em>standalone</em> <code>-tbrotli</code> stream (which
-  <code>tar → brotli</code> and raw <code>.br</code> both use) that breaks
-  <em>with</em> threads. Same codec, opposite thread behaviour.</p>
+  <code>tar → brotli</code> and raw <code>.br</code> both use) that splits into
+  two formats. Same codec, opposite thread behaviour.</p>
   </div>
 
-  <h2>The fix</h2>
+  <h2>The fix, write side</h2>
 
-  <p>A single-threaded standard <code>.br</code> is portable and reads anywhere,
-  so the fix is to <strong>omit <code>-mmt</code> for the <code>-tbrotli</code>
-  path</strong> — while keeping threads for 7z-container brotli, where they're
-  both correct and useful:</p>
+  <p>A single-threaded standard <code>.br</code> is portable and reads anywhere —
+  including with plain <code>brotli</code>, outside 7-Zip entirely. So the fix is
+  to <strong>omit <code>-mmt</code> for the <code>-tbrotli</code> path</strong>,
+  while keeping threads for 7z-container brotli, where they're both correct and
+  useful:</p>
 
   <pre><code>// engine: build the -m* args
 if let Some(threads) = self.threads {
@@ -132,18 +176,24 @@ if let Some(threads) = self.threads {
   so those archives, creatable since v0.3.0, couldn't be transparently opened.
   Fixed in the same pass.</p>
 
-  <h2>Upstream</h2>
+  <h2>The fix, read side</h2>
 
-  <p>None of this is really Septima's bug — it's a sharp edge in how
-  <code>7zz</code> handles brotli threading. It's adjacent to already-closed
-  upstream discussion (<a href="https://github.com/mcmilk/7-Zip-zstd/issues/351">#351</a>,
-  <a href="https://github.com/mcmilk/7-Zip-zstd/issues/352">#352</a>), which
-  documents that <code>-mmt</code> makes a brotli-mt stream "incompatible with
-  standard brotli." The genuinely new bit is the failure mode: <code>7zz</code>
-  can't read its <em>own</em> output with default threads and reports a bare
-  <code>E_FAIL</code> — no hint that <code>-mmt=N</code> is needed. We
-  <a href="https://github.com/mcmilk/7-Zip-zstd/issues/352">flagged that</a>,
-  respectfully — the maintainer runs this in his spare time.</p>
+  <p>Not producing the trap is only half the job. Users open archives they didn't
+  create — an mt-brotli <code>.tar.br</code> from a colleague, a script, or
+  7-Zip ZS on Windows. Septima passed no <code>-mmt</code> when extracting, so
+  those failed with the same opaque <code>E_FAIL</code>.</p>
+
+  <p>Because there are exactly <em>two</em> modes and the value is irrelevant,
+  the recovery is deterministic — no sniffing, no searching a space of thread
+  counts, no heuristic that can be wrong:</p>
+
+  <pre><code>// extract/test a brotli-family target
+if run(args).failed_with_efail() {
+    run(args + ["-mmt=on"]);   // flip to the other of the two formats
+}</code></pre>
+
+  <p>One retry, only on the failure path, only for brotli. That covers every
+  mt-brotli stream in existence, whatever machine wrote it.</p>
 
   <h2>Why a thin wrapper earns its keep</h2>
 
@@ -151,11 +201,18 @@ if let Some(threads) = self.threads {
   a project. But the thinness is exactly why this got caught: Septima's job is to
   build correct command lines and verify what comes back, and its test suite
   round-trips real archives through the real binary. That's what turned a silent,
-  machine-specific corruption into a red test on a Tuesday — before a single user
-  made an unopenable <code>.tar.br</code>.</p>
+  flag-dependent failure into a red test on a Tuesday — before a single user made
+  an unopenable <code>.tar.br</code>.</p>
 
-  <p>The fix lands in <strong>0.4.x</strong>, along with the rest of the
-  <code>7zz</code> CLI-parity work. If you're on the signed Flatpak repo, it'll
+  <p>It's also why the correction at the top of this post exists. The first
+  version of this write-up got the mechanism wrong in a way that <em>sounded</em>
+  worse than reality, and the same wrong claim went upstream. Re-running the
+  matrix — every decode flag against both stream types, extraction and not just
+  <code>t</code> — is what settled it. Test the thing; don't reason about it from
+  one data point.</p>
+
+  <p>Both fixes land in <strong>0.4.x</strong>, along with the rest of the
+  <code>7zz</code> CLI-parity work. If you're on the signed Flatpak repo, they'll
   arrive with <code>flatpak update</code>.</p>
 </article>
 
