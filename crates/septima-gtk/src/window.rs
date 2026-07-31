@@ -951,7 +951,7 @@ fn compression_request(settings: &CreateSettings, inputs: Vec<PathBuf>, output: 
     req.filter = settings.filter.clone();
     req.password = settings.password.clone();
     req.encrypt_headers = settings.encrypt_headers;
-    req.zip_encryption = settings.zip_encryption.clone();
+    req.encryption_method = settings.encryption_method.clone();
     req.extra_params = settings.extra_params.clone();
     req
 }

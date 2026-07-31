@@ -34,9 +34,10 @@ pub struct CompressionRequest {
     pub password: Option<String>,
     /// `-mhe=on` encrypted headers (7z only).
     pub encrypt_headers: bool,
-    /// zip-only cipher via `-mem=` (e.g. `"AES256"`). `None` = 7zz's default,
-    /// which for zip is the weak legacy ZipCrypto. Ignored for 7z (always AES-256).
-    pub zip_encryption: Option<String>,
+    /// Cipher via `-mem=` (e.g. `"AES256"` for zip, `"AES256GCM"` for 7z).
+    /// `None` = the format's built-in default: AES-256-CBC for 7z, the weak
+    /// legacy ZipCrypto for zip. Only 7z and zip accept `-mem=`.
+    pub encryption_method: Option<String>,
     /// Free-text extra `-m*`/other switches (power-user escape hatch).
     pub extra_params: Vec<String>,
 }
@@ -56,7 +57,7 @@ impl CompressionRequest {
             filter: None,
             password: None,
             encrypt_headers: false,
-            zip_encryption: None,
+            encryption_method: None,
             extra_params: Vec::new(),
         }
     }
@@ -243,9 +244,10 @@ pub fn run_add(
         if req.encrypt_headers && req.format == "7z" {
             cmd.arg("-mhe=on");
         }
-        // zip defaults to weak ZipCrypto; opt into a real cipher when asked.
-        if req.format == "zip" {
-            if let Some(method) = &req.zip_encryption {
+        // Both accept -mem=; the defaults differ in how much they deserve it
+        // (zip's is weak ZipCrypto, 7z's is AES-256-CBC without authentication).
+        if req.format == "zip" || req.format == "7z" {
+            if let Some(method) = &req.encryption_method {
                 cmd.arg(format!("-mem={method}"));
             }
         }

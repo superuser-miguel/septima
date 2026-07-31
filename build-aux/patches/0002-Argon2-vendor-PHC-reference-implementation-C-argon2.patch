@@ -1,0 +1,4928 @@
+From 1fc86f994d2cd0486c4b9f33211f42f9d596b51e Mon Sep 17 00:00:00 2001
+From: magnus_python <miguelsensacion@gmail.com>
+Date: Fri, 31 Jul 2026 11:12:11 -0400
+Subject: [PATCH] Argon2: vendor PHC reference implementation (C/argon2/)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Septima encryption expansion, patch 2/N: Argon2id KDF (RFC 9106) plus
+its BLAKE2b, as the memory-hard replacement for the legacy iterated
+SHA-256 in 7z password derivation.
+
+- C/argon2/: phc-winner-argon2 release 20190702, vendored VERBATIM
+  (zero modifications) from the pinned tarball, sha256
+  daf972a89577f8772602bf2eb38b6a3dd3d922bf5724d45e7f9589b5e830442c
+  (hash matches conan-center-index's independent record).
+  CC0 1.0 / Apache 2.0 dual license (LICENSE included).
+  Both fill paths vendored: ref.c (portable) and opt.c (SSE/AVX);
+  link exactly one — build wiring comes with the makefile patch.
+- C/Util/Argon2Test/: upstream test.c (verbatim, same tarball) plus
+  argon2_kat.c, self-checking RFC 9106 §5 known-answer tests
+  (argon2d/i/id, full-parameter vectors with secret + AD, expected
+  tags extracted from rfc-editor.org).
+
+Validation on this branch: upstream suite passes on both fill paths;
+RFC 9106 KATs pass on both fill paths; argon2id t=3 m=256MiB p=4
+measures ~0.2 s (opt path, 12-thread desktop).
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ C/Util/Argon2Test/README.md        |  25 ++
+ C/Util/Argon2Test/argon2_kat.c     |  68 +++
+ C/Util/Argon2Test/test.c           | 289 +++++++++++++
+ C/argon2/LICENSE                   | 314 ++++++++++++++
+ C/argon2/argon2.c                  | 452 ++++++++++++++++++++
+ C/argon2/argon2.h                  | 437 +++++++++++++++++++
+ C/argon2/blake2/blake2-impl.h      | 156 +++++++
+ C/argon2/blake2/blake2.h           |  89 ++++
+ C/argon2/blake2/blake2b.c          | 390 +++++++++++++++++
+ C/argon2/blake2/blamka-round-opt.h | 471 +++++++++++++++++++++
+ C/argon2/blake2/blamka-round-ref.h |  56 +++
+ C/argon2/core.c                    | 648 +++++++++++++++++++++++++++++
+ C/argon2/core.h                    | 228 ++++++++++
+ C/argon2/encoding.c                | 463 +++++++++++++++++++++
+ C/argon2/encoding.h                |  57 +++
+ C/argon2/opt.c                     | 283 +++++++++++++
+ C/argon2/ref.c                     | 194 +++++++++
+ C/argon2/thread.c                  |  57 +++
+ C/argon2/thread.h                  |  67 +++
+ 19 files changed, 4744 insertions(+)
+ create mode 100644 C/Util/Argon2Test/README.md
+ create mode 100644 C/Util/Argon2Test/argon2_kat.c
+ create mode 100644 C/Util/Argon2Test/test.c
+ create mode 100644 C/argon2/LICENSE
+ create mode 100644 C/argon2/argon2.c
+ create mode 100644 C/argon2/argon2.h
+ create mode 100644 C/argon2/blake2/blake2-impl.h
+ create mode 100644 C/argon2/blake2/blake2.h
+ create mode 100644 C/argon2/blake2/blake2b.c
+ create mode 100644 C/argon2/blake2/blamka-round-opt.h
+ create mode 100644 C/argon2/blake2/blamka-round-ref.h
+ create mode 100644 C/argon2/core.c
+ create mode 100644 C/argon2/core.h
+ create mode 100644 C/argon2/encoding.c
+ create mode 100644 C/argon2/encoding.h
+ create mode 100644 C/argon2/opt.c
+ create mode 100644 C/argon2/ref.c
+ create mode 100644 C/argon2/thread.c
+ create mode 100644 C/argon2/thread.h
+
+diff --git a/C/Util/Argon2Test/README.md b/C/Util/Argon2Test/README.md
+new file mode 100644
+index 00000000..e8d48623
+--- /dev/null
++++ b/C/Util/Argon2Test/README.md
+@@ -0,0 +1,25 @@
++# Argon2Test — validation for C/argon2 (vendored reference implementation)
++
++`C/argon2` is the PHC reference implementation, vendored **verbatim** (zero
++modifications) from the pinned release tarball:
++
++- `phc-winner-argon2` release `20190702`
++- sha256 `daf972a89577f8772602bf2eb38b6a3dd3d922bf5724d45e7f9589b5e830442c`
++  (matches the hash independently recorded by conan-center-index)
++- License: CC0 1.0 / Apache 2.0 dual (see `C/argon2/LICENSE`)
++
++Two test programs, each built against either fill path
++(`ref.c` portable, or `opt.c` SIMD — link exactly one):
++
++- `test.c` — upstream's own suite, verbatim from the same tarball
++- `argon2_kat.c` — self-checking RFC 9106 §5 known-answer tests
++  (argon2d / argon2i / argon2id full-parameter vectors with secret + AD;
++  expected tags extracted from rfc-editor.org text)
++
++```sh
++A2=../../argon2
++gcc -O2 -I $A2 argon2_kat.c $A2/argon2.c $A2/core.c $A2/ref.c \
++    $A2/encoding.c $A2/thread.c $A2/blake2/blake2b.c -lpthread -o argon2_kat
++./argon2_kat          # 3/3 PASS expected
++# same with test.c; add -mssse3 and swap ref.c -> opt.c for the SIMD path
++```
+diff --git a/C/Util/Argon2Test/argon2_kat.c b/C/Util/Argon2Test/argon2_kat.c
+new file mode 100644
+index 00000000..27e22379
+--- /dev/null
++++ b/C/Util/Argon2Test/argon2_kat.c
+@@ -0,0 +1,68 @@
++/* argon2_kat.c -- self-checking RFC 9106 §5 known-answer tests for C/argon2.
++   Params per RFC: t=3, m=32 KiB, p=4, pwd=32x01, salt=16x02, secret=8x03,
++   ad=12x04, 32-byte tag. Expected tags extracted verbatim from
++   https://www.rfc-editor.org/rfc/rfc9106.txt (§5.1 argon2d, §5.2 argon2i,
++   §5.3 argon2id). Exits 0 only if all three match. */
++#include <stdio.h>
++#include <string.h>
++
++#include "argon2.h"
++
++static const char * const k_expected[3] = {
++  /* 5.1 Argon2d */
++  "512b391b6f1162975371d30919734294f868e3be3984f3c1a13a4db9fabe4acb",
++  /* 5.2 Argon2i */
++  "c814d9d1dc7f37aa13f0d77f2494bda1c8de6b016dd388d29952a4c4672b6ce8",
++  /* 5.3 Argon2id */
++  "0d640df58d78766c08c037a34a8b53c9d01ef0452d75b65eb52520e96b01e659"
++};
++
++static int run(argon2_type type, const char *name, const char *expected)
++{
++  unsigned char out[32], pwd[32], salt[16], secret[8], ad[12];
++  char hex[65];
++  argon2_context c;
++  int rc, i;
++
++  memset(pwd, 0x01, sizeof(pwd));
++  memset(salt, 0x02, sizeof(salt));
++  memset(secret, 0x03, sizeof(secret));
++  memset(ad, 0x04, sizeof(ad));
++  memset(&c, 0, sizeof(c));
++  c.out = out; c.outlen = 32;
++  c.pwd = pwd; c.pwdlen = 32;
++  c.salt = salt; c.saltlen = 16;
++  c.secret = secret; c.secretlen = 8;
++  c.ad = ad; c.adlen = 12;
++  c.t_cost = 3;
++  c.m_cost = 32;
++  c.lanes = 4;
++  c.threads = 4;
++  c.version = ARGON2_VERSION_13;
++  c.flags = ARGON2_DEFAULT_FLAGS;
++
++  rc = argon2_ctx(&c, type);
++  if (rc != ARGON2_OK)
++  {
++    printf("%s: ERROR %s\n", name, argon2_error_message(rc));
++    return 1;
++  }
++  for (i = 0; i < 32; i++)
++    sprintf(hex + i * 2, "%02x", out[i]);
++  if (strcmp(hex, expected) != 0)
++  {
++    printf("%s: FAIL\n  got      %s\n  expected %s\n", name, hex, expected);
++    return 1;
++  }
++  printf("%s: PASS (%s)\n", name, hex);
++  return 0;
++}
++
++int main(void)
++{
++  int fails = 0;
++  fails += run(Argon2_d,  "argon2d  (RFC 9106 5.1)", k_expected[0]);
++  fails += run(Argon2_i,  "argon2i  (RFC 9106 5.2)", k_expected[1]);
++  fails += run(Argon2_id, "argon2id (RFC 9106 5.3)", k_expected[2]);
++  return fails ? 1 : 0;
++}
+diff --git a/C/Util/Argon2Test/test.c b/C/Util/Argon2Test/test.c
+new file mode 100644
+index 00000000..3180cbd1
+--- /dev/null
++++ b/C/Util/Argon2Test/test.c
+@@ -0,0 +1,289 @@
++/*
++ * Argon2 reference source code package - reference C implementations
++ *
++ * Copyright 2015
++ * Daniel Dinu, Dmitry Khovratovich, Jean-Philippe Aumasson, and Samuel Neves
++ *
++ * You may use this work under the terms of a Creative Commons CC0 1.0
++ * License/Waiver or the Apache Public License 2.0, at your option. The terms of
++ * these licenses can be found at:
++ *
++ * - CC0 1.0 Universal : http://creativecommons.org/publicdomain/zero/1.0
++ * - Apache 2.0        : http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * You should have received a copy of both of these licenses along with this
++ * software. If not, they may be obtained at the above URLs.
++ */
++
++#include <stdio.h>
++#include <stdint.h>
++#include <stdlib.h>
++#include <string.h>
++#include <time.h>
++#include <assert.h>
++
++#include "argon2.h"
++
++#define OUT_LEN 32
++#define ENCODED_LEN 108
++
++/* Test harness will assert:
++ * argon2_hash() returns ARGON2_OK
++ * HEX output matches expected
++ * encoded output matches expected
++ * argon2_verify() correctly verifies value
++ */
++
++void hashtest(uint32_t version, uint32_t t, uint32_t m, uint32_t p, char *pwd,
++              char *salt, char *hexref, char *mcfref, argon2_type type) {
++    unsigned char out[OUT_LEN];
++    unsigned char hex_out[OUT_LEN * 2 + 4];
++    char encoded[ENCODED_LEN];
++    int ret, i;
++
++    printf("Hash test: $v=%d t=%d, m=%d, p=%d, pass=%s, salt=%s: ", version,
++           t, m, p, pwd, salt);
++
++    ret = argon2_hash(t, 1 << m, p, pwd, strlen(pwd), salt, strlen(salt), out,
++                      OUT_LEN, encoded, ENCODED_LEN, type, version);
++    assert(ret == ARGON2_OK);
++
++    for (i = 0; i < OUT_LEN; ++i)
++        sprintf((char *)(hex_out + i * 2), "%02x", out[i]);
++    assert(memcmp(hex_out, hexref, OUT_LEN * 2) == 0);
++
++    if (ARGON2_VERSION_NUMBER == version) {
++        assert(memcmp(encoded, mcfref, strlen(mcfref)) == 0);
++    }
++
++    ret = argon2_verify(encoded, pwd, strlen(pwd), type);
++    assert(ret == ARGON2_OK);
++    ret = argon2_verify(mcfref, pwd, strlen(pwd), type);
++    assert(ret == ARGON2_OK);
++
++    printf("PASS\n");
++}
++
++int main() {
++    int ret;
++    unsigned char out[OUT_LEN];
++    char const *msg;
++    int version;
++
++    version = ARGON2_VERSION_10;
++    printf("Test Argon2i version number: %02x\n", version);
++
++    /* Multiple test cases for various input values */
++    hashtest(version, 2, 16, 1, "password", "somesalt",
++             "f6c4db4a54e2a370627aff3db6176b94a2a209a62c8e36152711802f7b30c694",
++             "$argon2i$m=65536,t=2,p=1$c29tZXNhbHQ"
++             "$9sTbSlTio3Biev89thdrlKKiCaYsjjYVJxGAL3swxpQ", Argon2_i);
++#ifdef TEST_LARGE_RAM
++    hashtest(version, 2, 20, 1, "password", "somesalt",
++            "9690ec55d28d3ed32562f2e73ea62b02b018757643a2ae6e79528459de8106e9",
++            "$argon2i$m=1048576,t=2,p=1$c29tZXNhbHQ"
++            "$lpDsVdKNPtMlYvLnPqYrArAYdXZDoq5ueVKEWd6BBuk", Argon2_i);
++#endif
++    hashtest(version, 2, 18, 1, "password", "somesalt",
++             "3e689aaa3d28a77cf2bc72a51ac53166761751182f1ee292e3f677a7da4c2467",
++             "$argon2i$m=262144,t=2,p=1$c29tZXNhbHQ"
++             "$Pmiaqj0op3zyvHKlGsUxZnYXURgvHuKS4/Z3p9pMJGc", Argon2_i);
++    hashtest(version, 2, 8, 1, "password", "somesalt",
++             "fd4dd83d762c49bdeaf57c47bdcd0c2f1babf863fdeb490df63ede9975fccf06",
++             "$argon2i$m=256,t=2,p=1$c29tZXNhbHQ"
++             "$/U3YPXYsSb3q9XxHvc0MLxur+GP960kN9j7emXX8zwY", Argon2_i);
++    hashtest(version, 2, 8, 2, "password", "somesalt",
++             "b6c11560a6a9d61eac706b79a2f97d68b4463aa3ad87e00c07e2b01e90c564fb",
++             "$argon2i$m=256,t=2,p=2$c29tZXNhbHQ"
++             "$tsEVYKap1h6scGt5ovl9aLRGOqOth+AMB+KwHpDFZPs", Argon2_i);
++    hashtest(version, 1, 16, 1, "password", "somesalt",
++             "81630552b8f3b1f48cdb1992c4c678643d490b2b5eb4ff6c4b3438b5621724b2",
++             "$argon2i$m=65536,t=1,p=1$c29tZXNhbHQ"
++             "$gWMFUrjzsfSM2xmSxMZ4ZD1JCytetP9sSzQ4tWIXJLI", Argon2_i);
++    hashtest(version, 4, 16, 1, "password", "somesalt",
++             "f212f01615e6eb5d74734dc3ef40ade2d51d052468d8c69440a3a1f2c1c2847b",
++             "$argon2i$m=65536,t=4,p=1$c29tZXNhbHQ"
++             "$8hLwFhXm6110c03D70Ct4tUdBSRo2MaUQKOh8sHChHs", Argon2_i);
++    hashtest(version, 2, 16, 1, "differentpassword", "somesalt",
++             "e9c902074b6754531a3a0be519e5baf404b30ce69b3f01ac3bf21229960109a3",
++             "$argon2i$m=65536,t=2,p=1$c29tZXNhbHQ"
++             "$6ckCB0tnVFMaOgvlGeW69ASzDOabPwGsO/ISKZYBCaM", Argon2_i);
++    hashtest(version, 2, 16, 1, "password", "diffsalt",
++             "79a103b90fe8aef8570cb31fc8b22259778916f8336b7bdac3892569d4f1c497",
++             "$argon2i$m=65536,t=2,p=1$ZGlmZnNhbHQ"
++             "$eaEDuQ/orvhXDLMfyLIiWXeJFvgza3vaw4kladTxxJc", Argon2_i);
++
++    /* Error state tests */
++
++    /* Handle an invalid encoding correctly (it is missing a $) */
++    ret = argon2_verify("$argon2i$m=65536,t=2,p=1c29tZXNhbHQ"
++                        "$9sTbSlTio3Biev89thdrlKKiCaYsjjYVJxGAL3swxpQ",
++                        "password", strlen("password"), Argon2_i);
++    assert(ret == ARGON2_DECODING_FAIL);
++    printf("Recognise an invalid encoding: PASS\n");
++
++    /* Handle an invalid encoding correctly (it is missing a $) */
++    ret = argon2_verify("$argon2i$m=65536,t=2,p=1$c29tZXNhbHQ"
++                        "9sTbSlTio3Biev89thdrlKKiCaYsjjYVJxGAL3swxpQ",
++                        "password", strlen("password"), Argon2_i);
++    assert(ret == ARGON2_DECODING_FAIL);
++    printf("Recognise an invalid encoding: PASS\n");
++
++    /* Handle an invalid encoding correctly (salt is too short) */
++    ret = argon2_verify("$argon2i$m=65536,t=2,p=1$"
++                        "$9sTbSlTio3Biev89thdrlKKiCaYsjjYVJxGAL3swxpQ",
++                        "password", strlen("password"), Argon2_i);
++    assert(ret == ARGON2_SALT_TOO_SHORT);
++    printf("Recognise an invalid salt in encoding: PASS\n");
++
++    /* Handle an mismatching hash (the encoded password is "passwore") */
++    ret = argon2_verify("$argon2i$m=65536,t=2,p=1$c29tZXNhbHQ"
++                        "$b2G3seW+uPzerwQQC+/E1K50CLLO7YXy0JRcaTuswRo",
++                        "password", strlen("password"), Argon2_i);
++    assert(ret == ARGON2_VERIFY_MISMATCH);
++    printf("Verify with mismatched password: PASS\n");
++
++    msg = argon2_error_message(ARGON2_DECODING_FAIL);
++    assert(strcmp(msg, "Decoding failed") == 0);
++    printf("Decode an error message: PASS\n");
++
++    printf("\n");
++
++    version = ARGON2_VERSION_NUMBER;
++    printf("Test Argon2i version number: %02x\n", version);
++
++    /* Multiple test cases for various input values */
++    hashtest(version, 2, 16, 1, "password", "somesalt",
++             "c1628832147d9720c5bd1cfd61367078729f6dfb6f8fea9ff98158e0d7816ed0",
++             "$argon2i$v=19$m=65536,t=2,p=1$c29tZXNhbHQ"
++             "$wWKIMhR9lyDFvRz9YTZweHKfbftvj+qf+YFY4NeBbtA", Argon2_i);
++#ifdef TEST_LARGE_RAM
++    hashtest(version, 2, 20, 1, "password", "somesalt",
++             "d1587aca0922c3b5d6a83edab31bee3c4ebaef342ed6127a55d19b2351ad1f41",
++             "$argon2i$v=19$m=1048576,t=2,p=1$c29tZXNhbHQ"
++             "$0Vh6ygkiw7XWqD7asxvuPE667zQu1hJ6VdGbI1GtH0E", Argon2_i);
++#endif
++    hashtest(version, 2, 18, 1, "password", "somesalt",
++             "296dbae80b807cdceaad44ae741b506f14db0959267b183b118f9b24229bc7cb",
++             "$argon2i$v=19$m=262144,t=2,p=1$c29tZXNhbHQ"
++             "$KW266AuAfNzqrUSudBtQbxTbCVkmexg7EY+bJCKbx8s", Argon2_i);
++    hashtest(version, 2, 8, 1, "password", "somesalt",
++             "89e9029f4637b295beb027056a7336c414fadd43f6b208645281cb214a56452f",
++             "$argon2i$v=19$m=256,t=2,p=1$c29tZXNhbHQ"
++             "$iekCn0Y3spW+sCcFanM2xBT63UP2sghkUoHLIUpWRS8", Argon2_i);
++    hashtest(version, 2, 8, 2, "password", "somesalt",
++             "4ff5ce2769a1d7f4c8a491df09d41a9fbe90e5eb02155a13e4c01e20cd4eab61",
++             "$argon2i$v=19$m=256,t=2,p=2$c29tZXNhbHQ"
++             "$T/XOJ2mh1/TIpJHfCdQan76Q5esCFVoT5MAeIM1Oq2E", Argon2_i);
++    hashtest(version, 1, 16, 1, "password", "somesalt",
++             "d168075c4d985e13ebeae560cf8b94c3b5d8a16c51916b6f4ac2da3ac11bbecf",
++             "$argon2i$v=19$m=65536,t=1,p=1$c29tZXNhbHQ"
++             "$0WgHXE2YXhPr6uVgz4uUw7XYoWxRkWtvSsLaOsEbvs8", Argon2_i);
++    hashtest(version, 4, 16, 1, "password", "somesalt",
++             "aaa953d58af3706ce3df1aefd4a64a84e31d7f54175231f1285259f88174ce5b",
++             "$argon2i$v=19$m=65536,t=4,p=1$c29tZXNhbHQ"
++             "$qqlT1YrzcGzj3xrv1KZKhOMdf1QXUjHxKFJZ+IF0zls", Argon2_i);
++    hashtest(version, 2, 16, 1, "differentpassword", "somesalt",
++             "14ae8da01afea8700c2358dcef7c5358d9021282bd88663a4562f59fb74d22ee",
++             "$argon2i$v=19$m=65536,t=2,p=1$c29tZXNhbHQ"
++             "$FK6NoBr+qHAMI1jc73xTWNkCEoK9iGY6RWL1n7dNIu4", Argon2_i);
++    hashtest(version, 2, 16, 1, "password", "diffsalt",
++             "b0357cccfbef91f3860b0dba447b2348cbefecadaf990abfe9cc40726c521271",
++             "$argon2i$v=19$m=65536,t=2,p=1$ZGlmZnNhbHQ"
++             "$sDV8zPvvkfOGCw26RHsjSMvv7K2vmQq/6cxAcmxSEnE", Argon2_i);
++
++
++    /* Error state tests */
++
++    /* Handle an invalid encoding correctly (it is missing a $) */
++    ret = argon2_verify("$argon2i$v=19$m=65536,t=2,p=1c29tZXNhbHQ"
++                        "$wWKIMhR9lyDFvRz9YTZweHKfbftvj+qf+YFY4NeBbtA",
++                        "password", strlen("password"), Argon2_i);
++    assert(ret == ARGON2_DECODING_FAIL);
++    printf("Recognise an invalid encoding: PASS\n");
++
++    /* Handle an invalid encoding correctly (it is missing a $) */
++    ret = argon2_verify("$argon2i$v=19$m=65536,t=2,p=1$c29tZXNhbHQ"
++                        "wWKIMhR9lyDFvRz9YTZweHKfbftvj+qf+YFY4NeBbtA",
++                        "password", strlen("password"), Argon2_i);
++    assert(ret == ARGON2_DECODING_FAIL);
++    printf("Recognise an invalid encoding: PASS\n");
++
++    /* Handle an invalid encoding correctly (salt is too short) */
++    ret = argon2_verify("$argon2i$v=19$m=65536,t=2,p=1$"
++                        "$9sTbSlTio3Biev89thdrlKKiCaYsjjYVJxGAL3swxpQ",
++                        "password", strlen("password"), Argon2_i);
++    assert(ret == ARGON2_SALT_TOO_SHORT);
++    printf("Recognise an invalid salt in encoding: PASS\n");
++
++    /* Handle an mismatching hash (the encoded password is "passwore") */
++    ret = argon2_verify("$argon2i$v=19$m=65536,t=2,p=1$c29tZXNhbHQ"
++                        "$8iIuixkI73Js3G1uMbezQXD0b8LG4SXGsOwoQkdAQIM",
++                        "password", strlen("password"), Argon2_i);
++    assert(ret == ARGON2_VERIFY_MISMATCH);
++    printf("Verify with mismatched password: PASS\n");
++
++    msg = argon2_error_message(ARGON2_DECODING_FAIL);
++    assert(strcmp(msg, "Decoding failed") == 0);
++    printf("Decode an error message: PASS\n\n");
++
++    printf("Test Argon2id version number: %02x\n", version);
++
++    /* Multiple test cases for various input values */
++    hashtest(version, 2, 16, 1, "password", "somesalt",
++             "09316115d5cf24ed5a15a31a3ba326e5cf32edc24702987c02b6566f61913cf7",
++             "$argon2id$v=19$m=65536,t=2,p=1$c29tZXNhbHQ"
++             "$CTFhFdXPJO1aFaMaO6Mm5c8y7cJHAph8ArZWb2GRPPc", Argon2_id);
++    hashtest(version, 2, 18, 1, "password", "somesalt",
++             "78fe1ec91fb3aa5657d72e710854e4c3d9b9198c742f9616c2f085bed95b2e8c",
++             "$argon2id$v=19$m=262144,t=2,p=1$c29tZXNhbHQ"
++             "$eP4eyR+zqlZX1y5xCFTkw9m5GYx0L5YWwvCFvtlbLow", Argon2_id);
++    hashtest(version, 2, 8, 1, "password", "somesalt",
++             "9dfeb910e80bad0311fee20f9c0e2b12c17987b4cac90c2ef54d5b3021c68bfe",
++             "$argon2id$v=19$m=256,t=2,p=1$c29tZXNhbHQ"
++             "$nf65EOgLrQMR/uIPnA4rEsF5h7TKyQwu9U1bMCHGi/4", Argon2_id);
++    hashtest(version, 2, 8, 2, "password", "somesalt",
++             "6d093c501fd5999645e0ea3bf620d7b8be7fd2db59c20d9fff9539da2bf57037",
++             "$argon2id$v=19$m=256,t=2,p=2$c29tZXNhbHQ"
++             "$bQk8UB/VmZZF4Oo79iDXuL5/0ttZwg2f/5U52iv1cDc", Argon2_id);
++    hashtest(version, 1, 16, 1, "password", "somesalt",
++             "f6a5adc1ba723dddef9b5ac1d464e180fcd9dffc9d1cbf76cca2fed795d9ca98",
++             "$argon2id$v=19$m=65536,t=1,p=1$c29tZXNhbHQ"
++             "$9qWtwbpyPd3vm1rB1GThgPzZ3/ydHL92zKL+15XZypg", Argon2_id);
++    hashtest(version, 4, 16, 1, "password", "somesalt",
++             "9025d48e68ef7395cca9079da4c4ec3affb3c8911fe4f86d1a2520856f63172c",
++             "$argon2id$v=19$m=65536,t=4,p=1$c29tZXNhbHQ"
++             "$kCXUjmjvc5XMqQedpMTsOv+zyJEf5PhtGiUghW9jFyw", Argon2_id);
++    hashtest(version, 2, 16, 1, "differentpassword", "somesalt",
++             "0b84d652cf6b0c4beaef0dfe278ba6a80df6696281d7e0d2891b817d8c458fde",
++             "$argon2id$v=19$m=65536,t=2,p=1$c29tZXNhbHQ"
++             "$C4TWUs9rDEvq7w3+J4umqA32aWKB1+DSiRuBfYxFj94", Argon2_id);
++    hashtest(version, 2, 16, 1, "password", "diffsalt",
++             "bdf32b05ccc42eb15d58fd19b1f856b113da1e9a5874fdcc544308565aa8141c",
++             "$argon2id$v=19$m=65536,t=2,p=1$ZGlmZnNhbHQ"
++             "$vfMrBczELrFdWP0ZsfhWsRPaHppYdP3MVEMIVlqoFBw", Argon2_id);
++
++    /* Common error state tests */
++
++    printf("\n");
++    printf("Common error state tests\n");
++
++    ret = argon2_hash(2, 1, 1, "password", strlen("password"),
++                      "diffsalt", strlen("diffsalt"),
++                      out, OUT_LEN, NULL, 0, Argon2_id, version);
++    assert(ret == ARGON2_MEMORY_TOO_LITTLE);
++    printf("Fail on invalid memory: PASS\n");
++
++    ret = argon2_hash(2, 1 << 12, 1, NULL, strlen("password"),
++                      "diffsalt", strlen("diffsalt"),
++                      out, OUT_LEN, NULL, 0, Argon2_id, version);
++    assert(ret == ARGON2_PWD_PTR_MISMATCH);
++    printf("Fail on invalid null pointer: PASS\n");
++
++    ret = argon2_hash(2, 1 << 12, 1, "password", strlen("password"), "s", 1,
++                      out, OUT_LEN, NULL, 0, Argon2_id, version);
++    assert(ret == ARGON2_SALT_TOO_SHORT);
++    printf("Fail on salt too short: PASS\n");
++
++    return 0;
++}
+diff --git a/C/argon2/LICENSE b/C/argon2/LICENSE
+new file mode 100644
+index 00000000..fa611f7a
+--- /dev/null
++++ b/C/argon2/LICENSE
+@@ -0,0 +1,314 @@
++Argon2 reference source code package - reference C implementations
++
++Copyright 2015
++Daniel Dinu, Dmitry Khovratovich, Jean-Philippe Aumasson, and Samuel Neves
++
++You may use this work under the terms of a Creative Commons CC0 1.0 
++License/Waiver or the Apache Public License 2.0, at your option. The terms of
++these licenses can be found at:
++
++- CC0 1.0 Universal : http://creativecommons.org/publicdomain/zero/1.0
++- Apache 2.0        : http://www.apache.org/licenses/LICENSE-2.0
++
++The terms of the licenses are reproduced below.
++
++--------------------------------------------------------------------------------
++
++Creative Commons Legal Code
++
++CC0 1.0 Universal
++
++    CREATIVE COMMONS CORPORATION IS NOT A LAW FIRM AND DOES NOT PROVIDE
++    LEGAL SERVICES. DISTRIBUTION OF THIS DOCUMENT DOES NOT CREATE AN
++    ATTORNEY-CLIENT RELATIONSHIP. CREATIVE COMMONS PROVIDES THIS
++    INFORMATION ON AN "AS-IS" BASIS. CREATIVE COMMONS MAKES NO WARRANTIES
++    REGARDING THE USE OF THIS DOCUMENT OR THE INFORMATION OR WORKS
++    PROVIDED HEREUNDER, AND DISCLAIMS LIABILITY FOR DAMAGES RESULTING FROM
++    THE USE OF THIS DOCUMENT OR THE INFORMATION OR WORKS PROVIDED
++    HEREUNDER.
++
++Statement of Purpose
++
++The laws of most jurisdictions throughout the world automatically confer
++exclusive Copyright and Related Rights (defined below) upon the creator
++and subsequent owner(s) (each and all, an "owner") of an original work of
++authorship and/or a database (each, a "Work").
++
++Certain owners wish to permanently relinquish those rights to a Work for
++the purpose of contributing to a commons of creative, cultural and
++scientific works ("Commons") that the public can reliably and without fear
++of later claims of infringement build upon, modify, incorporate in other
++works, reuse and redistribute as freely as possible in any form whatsoever
++and for any purposes, including without limitation commercial purposes.
++These owners may contribute to the Commons to promote the ideal of a free
++culture and the further production of creative, cultural and scientific
++works, or to gain reputation or greater distribution for their Work in
++part through the use and efforts of others.
++
++For these and/or other purposes and motivations, and without any
++expectation of additional consideration or compensation, the person
++associating CC0 with a Work (the "Affirmer"), to the extent that he or she
++is an owner of Copyright and Related Rights in the Work, voluntarily
++elects to apply CC0 to the Work and publicly distribute the Work under its
++terms, with knowledge of his or her Copyright and Related Rights in the
++Work and the meaning and intended legal effect of CC0 on those rights.
++
++1. Copyright and Related Rights. A Work made available under CC0 may be
++protected by copyright and related or neighboring rights ("Copyright and
++Related Rights"). Copyright and Related Rights include, but are not
++limited to, the following:
++
++  i. the right to reproduce, adapt, distribute, perform, display,
++     communicate, and translate a Work;
++ ii. moral rights retained by the original author(s) and/or performer(s);
++iii. publicity and privacy rights pertaining to a person's image or
++     likeness depicted in a Work;
++ iv. rights protecting against unfair competition in regards to a Work,
++     subject to the limitations in paragraph 4(a), below;
++  v. rights protecting the extraction, dissemination, use and reuse of data
++     in a Work;
++ vi. database rights (such as those arising under Directive 96/9/EC of the
++     European Parliament and of the Council of 11 March 1996 on the legal
++     protection of databases, and under any national implementation
++     thereof, including any amended or successor version of such
++     directive); and
++vii. other similar, equivalent or corresponding rights throughout the
++     world based on applicable law or treaty, and any national
++     implementations thereof.
++
++2. Waiver. To the greatest extent permitted by, but not in contravention
++of, applicable law, Affirmer hereby overtly, fully, permanently,
++irrevocably and unconditionally waives, abandons, and surrenders all of
++Affirmer's Copyright and Related Rights and associated claims and causes
++of action, whether now known or unknown (including existing as well as
++future claims and causes of action), in the Work (i) in all territories
++worldwide, (ii) for the maximum duration provided by applicable law or
++treaty (including future time extensions), (iii) in any current or future
++medium and for any number of copies, and (iv) for any purpose whatsoever,
++including without limitation commercial, advertising or promotional
++purposes (the "Waiver"). Affirmer makes the Waiver for the benefit of each
++member of the public at large and to the detriment of Affirmer's heirs and
++successors, fully intending that such Waiver shall not be subject to
++revocation, rescission, cancellation, termination, or any other legal or
++equitable action to disrupt the quiet enjoyment of the Work by the public
++as contemplated by Affirmer's express Statement of Purpose.
++
++3. Public License Fallback. Should any part of the Waiver for any reason
++be judged legally invalid or ineffective under applicable law, then the
++Waiver shall be preserved to the maximum extent permitted taking into
++account Affirmer's express Statement of Purpose. In addition, to the
++extent the Waiver is so judged Affirmer hereby grants to each affected
++person a royalty-free, non transferable, non sublicensable, non exclusive,
++irrevocable and unconditional license to exercise Affirmer's Copyright and
++Related Rights in the Work (i) in all territories worldwide, (ii) for the
++maximum duration provided by applicable law or treaty (including future
++time extensions), (iii) in any current or future medium and for any number
++of copies, and (iv) for any purpose whatsoever, including without
++limitation commercial, advertising or promotional purposes (the
++"License"). The License shall be deemed effective as of the date CC0 was
++applied by Affirmer to the Work. Should any part of the License for any
++reason be judged legally invalid or ineffective under applicable law, such
++partial invalidity or ineffectiveness shall not invalidate the remainder
++of the License, and in such case Affirmer hereby affirms that he or she
++will not (i) exercise any of his or her remaining Copyright and Related
++Rights in the Work or (ii) assert any associated claims and causes of
++action with respect to the Work, in either case contrary to Affirmer's
++express Statement of Purpose.
++
++4. Limitations and Disclaimers.
++
++ a. No trademark or patent rights held by Affirmer are waived, abandoned,
++    surrendered, licensed or otherwise affected by this document.
++ b. Affirmer offers the Work as-is and makes no representations or
++    warranties of any kind concerning the Work, express, implied,
++    statutory or otherwise, including without limitation warranties of
++    title, merchantability, fitness for a particular purpose, non
++    infringement, or the absence of latent or other defects, accuracy, or
++    the present or absence of errors, whether or not discoverable, all to
++    the greatest extent permissible under applicable law.
++ c. Affirmer disclaims responsibility for clearing rights of other persons
++    that may apply to the Work or any use thereof, including without
++    limitation any person's Copyright and Related Rights in the Work.
++    Further, Affirmer disclaims responsibility for obtaining any necessary
++    consents, permissions or other rights required for any use of the
++    Work.
++ d. Affirmer understands and acknowledges that Creative Commons is not a
++    party to this document and has no duty or obligation with respect to
++    this CC0 or use of the Work.
++
++--------------------------------------------------------------------------------
++
++                                 Apache License
++                           Version 2.0, January 2004
++                        http://www.apache.org/licenses/
++
++   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
++
++   1. Definitions.
++
++      "License" shall mean the terms and conditions for use, reproduction,
++      and distribution as defined by Sections 1 through 9 of this document.
++
++      "Licensor" shall mean the copyright owner or entity authorized by
++      the copyright owner that is granting the License.
++
++      "Legal Entity" shall mean the union of the acting entity and all
++      other entities that control, are controlled by, or are under common
++      control with that entity. For the purposes of this definition,
++      "control" means (i) the power, direct or indirect, to cause the
++      direction or management of such entity, whether by contract or
++      otherwise, or (ii) ownership of fifty percent (50%) or more of the
++      outstanding shares, or (iii) beneficial ownership of such entity.
++
++      "You" (or "Your") shall mean an individual or Legal Entity
++      exercising permissions granted by this License.
++
++      "Source" form shall mean the preferred form for making modifications,
++      including but not limited to software source code, documentation
++      source, and configuration files.
++
++      "Object" form shall mean any form resulting from mechanical
++      transformation or translation of a Source form, including but
++      not limited to compiled object code, generated documentation,
++      and conversions to other media types.
++
++      "Work" shall mean the work of authorship, whether in Source or
++      Object form, made available under the License, as indicated by a
++      copyright notice that is included in or attached to the work
++      (an example is provided in the Appendix below).
++
++      "Derivative Works" shall mean any work, whether in Source or Object
++      form, that is based on (or derived from) the Work and for which the
++      editorial revisions, annotations, elaborations, or other modifications
++      represent, as a whole, an original work of authorship. For the purposes
++      of this License, Derivative Works shall not include works that remain
++      separable from, or merely link (or bind by name) to the interfaces of,
++      the Work and Derivative Works thereof.
++
++      "Contribution" shall mean any work of authorship, including
++      the original version of the Work and any modifications or additions
++      to that Work or Derivative Works thereof, that is intentionally
++      submitted to Licensor for inclusion in the Work by the copyright owner
++      or by an individual or Legal Entity authorized to submit on behalf of
++      the copyright owner. For the purposes of this definition, "submitted"
++      means any form of electronic, verbal, or written communication sent
++      to the Licensor or its representatives, including but not limited to
++      communication on electronic mailing lists, source code control systems,
++      and issue tracking systems that are managed by, or on behalf of, the
++      Licensor for the purpose of discussing and improving the Work, but
++      excluding communication that is conspicuously marked or otherwise
++      designated in writing by the copyright owner as "Not a Contribution."
++
++      "Contributor" shall mean Licensor and any individual or Legal Entity
++      on behalf of whom a Contribution has been received by Licensor and
++      subsequently incorporated within the Work.
++
++   2. Grant of Copyright License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      copyright license to reproduce, prepare Derivative Works of,
++      publicly display, publicly perform, sublicense, and distribute the
++      Work and such Derivative Works in Source or Object form.
++
++   3. Grant of Patent License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      (except as stated in this section) patent license to make, have made,
++      use, offer to sell, sell, import, and otherwise transfer the Work,
++      where such license applies only to those patent claims licensable
++      by such Contributor that are necessarily infringed by their
++      Contribution(s) alone or by combination of their Contribution(s)
++      with the Work to which such Contribution(s) was submitted. If You
++      institute patent litigation against any entity (including a
++      cross-claim or counterclaim in a lawsuit) alleging that the Work
++      or a Contribution incorporated within the Work constitutes direct
++      or contributory patent infringement, then any patent licenses
++      granted to You under this License for that Work shall terminate
++      as of the date such litigation is filed.
++
++   4. Redistribution. You may reproduce and distribute copies of the
++      Work or Derivative Works thereof in any medium, with or without
++      modifications, and in Source or Object form, provided that You
++      meet the following conditions:
++
++      (a) You must give any other recipients of the Work or
++          Derivative Works a copy of this License; and
++
++      (b) You must cause any modified files to carry prominent notices
++          stating that You changed the files; and
++
++      (c) You must retain, in the Source form of any Derivative Works
++          that You distribute, all copyright, patent, trademark, and
++          attribution notices from the Source form of the Work,
++          excluding those notices that do not pertain to any part of
++          the Derivative Works; and
++
++      (d) If the Work includes a "NOTICE" text file as part of its
++          distribution, then any Derivative Works that You distribute must
++          include a readable copy of the attribution notices contained
++          within such NOTICE file, excluding those notices that do not
++          pertain to any part of the Derivative Works, in at least one
++          of the following places: within a NOTICE text file distributed
++          as part of the Derivative Works; within the Source form or
++          documentation, if provided along with the Derivative Works; or,
++          within a display generated by the Derivative Works, if and
++          wherever such third-party notices normally appear. The contents
++          of the NOTICE file are for informational purposes only and
++          do not modify the License. You may add Your own attribution
++          notices within Derivative Works that You distribute, alongside
++          or as an addendum to the NOTICE text from the Work, provided
++          that such additional attribution notices cannot be construed
++          as modifying the License.
++
++      You may add Your own copyright statement to Your modifications and
++      may provide additional or different license terms and conditions
++      for use, reproduction, or distribution of Your modifications, or
++      for any such Derivative Works as a whole, provided Your use,
++      reproduction, and distribution of the Work otherwise complies with
++      the conditions stated in this License.
++
++   5. Submission of Contributions. Unless You explicitly state otherwise,
++      any Contribution intentionally submitted for inclusion in the Work
++      by You to the Licensor shall be under the terms and conditions of
++      this License, without any additional terms or conditions.
++      Notwithstanding the above, nothing herein shall supersede or modify
++      the terms of any separate license agreement you may have executed
++      with Licensor regarding such Contributions.
++
++   6. Trademarks. This License does not grant permission to use the trade
++      names, trademarks, service marks, or product names of the Licensor,
++      except as required for reasonable and customary use in describing the
++      origin of the Work and reproducing the content of the NOTICE file.
++
++   7. Disclaimer of Warranty. Unless required by applicable law or
++      agreed to in writing, Licensor provides the Work (and each
++      Contributor provides its Contributions) on an "AS IS" BASIS,
++      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
++      implied, including, without limitation, any warranties or conditions
++      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
++      PARTICULAR PURPOSE. You are solely responsible for determining the
++      appropriateness of using or redistributing the Work and assume any
++      risks associated with Your exercise of permissions under this License.
++
++   8. Limitation of Liability. In no event and under no legal theory,
++      whether in tort (including negligence), contract, or otherwise,
++      unless required by applicable law (such as deliberate and grossly
++      negligent acts) or agreed to in writing, shall any Contributor be
++      liable to You for damages, including any direct, indirect, special,
++      incidental, or consequential damages of any character arising as a
++      result of this License or out of the use or inability to use the
++      Work (including but not limited to damages for loss of goodwill,
++      work stoppage, computer failure or malfunction, or any and all
++      other commercial damages or losses), even if such Contributor
++      has been advised of the possibility of such damages.
++
++   9. Accepting Warranty or Additional Liability. While redistributing
++      the Work or Derivative Works thereof, You may choose to offer,
++      and charge a fee for, acceptance of support, warranty, indemnity,
++      or other liability obligations and/or rights consistent with this
++      License. However, in accepting such obligations, You may act only
++      on Your own behalf and on Your sole responsibility, not on behalf
++      of any other Contributor, and only if You agree to indemnify,
++      defend, and hold each Contributor harmless for any liability
++      incurred by, or claims asserted against, such Contributor by reason
++      of your accepting any such warranty or additional liability.
+diff --git a/C/argon2/argon2.c b/C/argon2/argon2.c
+new file mode 100644
+index 00000000..795b429e
+--- /dev/null
++++ b/C/argon2/argon2.c
+@@ -0,0 +1,452 @@
++/*
++ * Argon2 reference source code package - reference C implementations
++ *
++ * Copyright 2015
++ * Daniel Dinu, Dmitry Khovratovich, Jean-Philippe Aumasson, and Samuel Neves
++ *
++ * You may use this work under the terms of a Creative Commons CC0 1.0
++ * License/Waiver or the Apache Public License 2.0, at your option. The terms of
++ * these licenses can be found at:
++ *
++ * - CC0 1.0 Universal : http://creativecommons.org/publicdomain/zero/1.0
++ * - Apache 2.0        : http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * You should have received a copy of both of these licenses along with this
++ * software. If not, they may be obtained at the above URLs.
++ */
++
++#include <string.h>
++#include <stdlib.h>
++#include <stdio.h>
++
++#include "argon2.h"
++#include "encoding.h"
++#include "core.h"
++
++const char *argon2_type2string(argon2_type type, int uppercase) {
++    switch (type) {
++        case Argon2_d:
++            return uppercase ? "Argon2d" : "argon2d";
++        case Argon2_i:
++            return uppercase ? "Argon2i" : "argon2i";
++        case Argon2_id:
++            return uppercase ? "Argon2id" : "argon2id";
++    }
++
++    return NULL;
++}
++
++int argon2_ctx(argon2_context *context, argon2_type type) {
++    /* 1. Validate all inputs */
++    int result = validate_inputs(context);
++    uint32_t memory_blocks, segment_length;
++    argon2_instance_t instance;
++
++    if (ARGON2_OK != result) {
++        return result;
++    }
++
++    if (Argon2_d != type && Argon2_i != type && Argon2_id != type) {
++        return ARGON2_INCORRECT_TYPE;
++    }
++
++    /* 2. Align memory size */
++    /* Minimum memory_blocks = 8L blocks, where L is the number of lanes */
++    memory_blocks = context->m_cost;
++
++    if (memory_blocks < 2 * ARGON2_SYNC_POINTS * context->lanes) {
++        memory_blocks = 2 * ARGON2_SYNC_POINTS * context->lanes;
++    }
++
++    segment_length = memory_blocks / (context->lanes * ARGON2_SYNC_POINTS);
++    /* Ensure that all segments have equal length */
++    memory_blocks = segment_length * (context->lanes * ARGON2_SYNC_POINTS);
++
++    instance.version = context->version;
++    instance.memory = NULL;
++    instance.passes = context->t_cost;
++    instance.memory_blocks = memory_blocks;
++    instance.segment_length = segment_length;
++    instance.lane_length = segment_length * ARGON2_SYNC_POINTS;
++    instance.lanes = context->lanes;
++    instance.threads = context->threads;
++    instance.type = type;
++
++    if (instance.threads > instance.lanes) {
++        instance.threads = instance.lanes;
++    }
++
++    /* 3. Initialization: Hashing inputs, allocating memory, filling first
++     * blocks
++     */
++    result = initialize(&instance, context);
++
++    if (ARGON2_OK != result) {
++        return result;
++    }
++
++    /* 4. Filling memory */
++    result = fill_memory_blocks(&instance);
++
++    if (ARGON2_OK != result) {
++        return result;
++    }
++    /* 5. Finalization */
++    finalize(context, &instance);
++
++    return ARGON2_OK;
++}
++
++int argon2_hash(const uint32_t t_cost, const uint32_t m_cost,
++                const uint32_t parallelism, const void *pwd,
++                const size_t pwdlen, const void *salt, const size_t saltlen,
++                void *hash, const size_t hashlen, char *encoded,
++                const size_t encodedlen, argon2_type type,
++                const uint32_t version){
++
++    argon2_context context;
++    int result;
++    uint8_t *out;
++
++    if (pwdlen > ARGON2_MAX_PWD_LENGTH) {
++        return ARGON2_PWD_TOO_LONG;
++    }
++
++    if (saltlen > ARGON2_MAX_SALT_LENGTH) {
++        return ARGON2_SALT_TOO_LONG;
++    }
++
++    if (hashlen > ARGON2_MAX_OUTLEN) {
++        return ARGON2_OUTPUT_TOO_LONG;
++    }
++
++    if (hashlen < ARGON2_MIN_OUTLEN) {
++        return ARGON2_OUTPUT_TOO_SHORT;
++    }
++
++    out = malloc(hashlen);
++    if (!out) {
++        return ARGON2_MEMORY_ALLOCATION_ERROR;
++    }
++
++    context.out = (uint8_t *)out;
++    context.outlen = (uint32_t)hashlen;
++    context.pwd = CONST_CAST(uint8_t *)pwd;
++    context.pwdlen = (uint32_t)pwdlen;
++    context.salt = CONST_CAST(uint8_t *)salt;
++    context.saltlen = (uint32_t)saltlen;
++    context.secret = NULL;
++    context.secretlen = 0;
++    context.ad = NULL;
++    context.adlen = 0;
++    context.t_cost = t_cost;
++    context.m_cost = m_cost;
++    context.lanes = parallelism;
++    context.threads = parallelism;
++    context.allocate_cbk = NULL;
++    context.free_cbk = NULL;
++    context.flags = ARGON2_DEFAULT_FLAGS;
++    context.version = version;
++
++    result = argon2_ctx(&context, type);
++
++    if (result != ARGON2_OK) {
++        clear_internal_memory(out, hashlen);
++        free(out);
++        return result;
++    }
++
++    /* if raw hash requested, write it */
++    if (hash) {
++        memcpy(hash, out, hashlen);
++    }
++
++    /* if encoding requested, write it */
++    if (encoded && encodedlen) {
++        if (encode_string(encoded, encodedlen, &context, type) != ARGON2_OK) {
++            clear_internal_memory(out, hashlen); /* wipe buffers if error */
++            clear_internal_memory(encoded, encodedlen);
++            free(out);
++            return ARGON2_ENCODING_FAIL;
++        }
++    }
++    clear_internal_memory(out, hashlen);
++    free(out);
++
++    return ARGON2_OK;
++}
++
++int argon2i_hash_encoded(const uint32_t t_cost, const uint32_t m_cost,
++                         const uint32_t parallelism, const void *pwd,
++                         const size_t pwdlen, const void *salt,
++                         const size_t saltlen, const size_t hashlen,
++                         char *encoded, const size_t encodedlen) {
++
++    return argon2_hash(t_cost, m_cost, parallelism, pwd, pwdlen, salt, saltlen,
++                       NULL, hashlen, encoded, encodedlen, Argon2_i,
++                       ARGON2_VERSION_NUMBER);
++}
++
++int argon2i_hash_raw(const uint32_t t_cost, const uint32_t m_cost,
++                     const uint32_t parallelism, const void *pwd,
++                     const size_t pwdlen, const void *salt,
++                     const size_t saltlen, void *hash, const size_t hashlen) {
++
++    return argon2_hash(t_cost, m_cost, parallelism, pwd, pwdlen, salt, saltlen,
++                       hash, hashlen, NULL, 0, Argon2_i, ARGON2_VERSION_NUMBER);
++}
++
++int argon2d_hash_encoded(const uint32_t t_cost, const uint32_t m_cost,
++                         const uint32_t parallelism, const void *pwd,
++                         const size_t pwdlen, const void *salt,
++                         const size_t saltlen, const size_t hashlen,
++                         char *encoded, const size_t encodedlen) {
++
++    return argon2_hash(t_cost, m_cost, parallelism, pwd, pwdlen, salt, saltlen,
++                       NULL, hashlen, encoded, encodedlen, Argon2_d,
++                       ARGON2_VERSION_NUMBER);
++}
++
++int argon2d_hash_raw(const uint32_t t_cost, const uint32_t m_cost,
++                     const uint32_t parallelism, const void *pwd,
++                     const size_t pwdlen, const void *salt,
++                     const size_t saltlen, void *hash, const size_t hashlen) {
++
++    return argon2_hash(t_cost, m_cost, parallelism, pwd, pwdlen, salt, saltlen,
++                       hash, hashlen, NULL, 0, Argon2_d, ARGON2_VERSION_NUMBER);
++}
++
++int argon2id_hash_encoded(const uint32_t t_cost, const uint32_t m_cost,
++                          const uint32_t parallelism, const void *pwd,
++                          const size_t pwdlen, const void *salt,
++                          const size_t saltlen, const size_t hashlen,
++                          char *encoded, const size_t encodedlen) {
++
++    return argon2_hash(t_cost, m_cost, parallelism, pwd, pwdlen, salt, saltlen,
++                       NULL, hashlen, encoded, encodedlen, Argon2_id,
++                       ARGON2_VERSION_NUMBER);
++}
++
++int argon2id_hash_raw(const uint32_t t_cost, const uint32_t m_cost,
++                      const uint32_t parallelism, const void *pwd,
++                      const size_t pwdlen, const void *salt,
++                      const size_t saltlen, void *hash, const size_t hashlen) {
++    return argon2_hash(t_cost, m_cost, parallelism, pwd, pwdlen, salt, saltlen,
++                       hash, hashlen, NULL, 0, Argon2_id,
++                       ARGON2_VERSION_NUMBER);
++}
++
++static int argon2_compare(const uint8_t *b1, const uint8_t *b2, size_t len) {
++    size_t i;
++    uint8_t d = 0U;
++
++    for (i = 0U; i < len; i++) {
++        d |= b1[i] ^ b2[i];
++    }
++    return (int)((1 & ((d - 1) >> 8)) - 1);
++}
++
++int argon2_verify(const char *encoded, const void *pwd, const size_t pwdlen,
++                  argon2_type type) {
++
++    argon2_context ctx;
++    uint8_t *desired_result = NULL;
++
++    int ret = ARGON2_OK;
++
++    size_t encoded_len;
++    uint32_t max_field_len;
++
++    if (pwdlen > ARGON2_MAX_PWD_LENGTH) {
++        return ARGON2_PWD_TOO_LONG;
++    }
++
++    if (encoded == NULL) {
++        return ARGON2_DECODING_FAIL;
++    }
++
++    encoded_len = strlen(encoded);
++    if (encoded_len > UINT32_MAX) {
++        return ARGON2_DECODING_FAIL;
++    }
++
++    /* No field can be longer than the encoded length */
++    max_field_len = (uint32_t)encoded_len;
++
++    ctx.saltlen = max_field_len;
++    ctx.outlen = max_field_len;
++
++    ctx.salt = malloc(ctx.saltlen);
++    ctx.out = malloc(ctx.outlen);
++    if (!ctx.salt || !ctx.out) {
++        ret = ARGON2_MEMORY_ALLOCATION_ERROR;
++        goto fail;
++    }
++
++    ctx.pwd = (uint8_t *)pwd;
++    ctx.pwdlen = (uint32_t)pwdlen;
++
++    ret = decode_string(&ctx, encoded, type);
++    if (ret != ARGON2_OK) {
++        goto fail;
++    }
++
++    /* Set aside the desired result, and get a new buffer. */
++    desired_result = ctx.out;
++    ctx.out = malloc(ctx.outlen);
++    if (!ctx.out) {
++        ret = ARGON2_MEMORY_ALLOCATION_ERROR;
++        goto fail;
++    }
++
++    ret = argon2_verify_ctx(&ctx, (char *)desired_result, type);
++    if (ret != ARGON2_OK) {
++        goto fail;
++    }
++
++fail:
++    free(ctx.salt);
++    free(ctx.out);
++    free(desired_result);
++
++    return ret;
++}
++
++int argon2i_verify(const char *encoded, const void *pwd, const size_t pwdlen) {
++
++    return argon2_verify(encoded, pwd, pwdlen, Argon2_i);
++}
++
++int argon2d_verify(const char *encoded, const void *pwd, const size_t pwdlen) {
++
++    return argon2_verify(encoded, pwd, pwdlen, Argon2_d);
++}
++
++int argon2id_verify(const char *encoded, const void *pwd, const size_t pwdlen) {
++
++    return argon2_verify(encoded, pwd, pwdlen, Argon2_id);
++}
++
++int argon2d_ctx(argon2_context *context) {
++    return argon2_ctx(context, Argon2_d);
++}
++
++int argon2i_ctx(argon2_context *context) {
++    return argon2_ctx(context, Argon2_i);
++}
++
++int argon2id_ctx(argon2_context *context) {
++    return argon2_ctx(context, Argon2_id);
++}
++
++int argon2_verify_ctx(argon2_context *context, const char *hash,
++                      argon2_type type) {
++    int ret = argon2_ctx(context, type);
++    if (ret != ARGON2_OK) {
++        return ret;
++    }
++
++    if (argon2_compare((uint8_t *)hash, context->out, context->outlen)) {
++        return ARGON2_VERIFY_MISMATCH;
++    }
++
++    return ARGON2_OK;
++}
++
++int argon2d_verify_ctx(argon2_context *context, const char *hash) {
++    return argon2_verify_ctx(context, hash, Argon2_d);
++}
++
++int argon2i_verify_ctx(argon2_context *context, const char *hash) {
++    return argon2_verify_ctx(context, hash, Argon2_i);
++}
++
++int argon2id_verify_ctx(argon2_context *context, const char *hash) {
++    return argon2_verify_ctx(context, hash, Argon2_id);
++}
++
++const char *argon2_error_message(int error_code) {
++    switch (error_code) {
++    case ARGON2_OK:
++        return "OK";
++    case ARGON2_OUTPUT_PTR_NULL:
++        return "Output pointer is NULL";
++    case ARGON2_OUTPUT_TOO_SHORT:
++        return "Output is too short";
++    case ARGON2_OUTPUT_TOO_LONG:
++        return "Output is too long";
++    case ARGON2_PWD_TOO_SHORT:
++        return "Password is too short";
++    case ARGON2_PWD_TOO_LONG:
++        return "Password is too long";
++    case ARGON2_SALT_TOO_SHORT:
++        return "Salt is too short";
++    case ARGON2_SALT_TOO_LONG:
++        return "Salt is too long";
++    case ARGON2_AD_TOO_SHORT:
++        return "Associated data is too short";
++    case ARGON2_AD_TOO_LONG:
++        return "Associated data is too long";
++    case ARGON2_SECRET_TOO_SHORT:
++        return "Secret is too short";
++    case ARGON2_SECRET_TOO_LONG:
++        return "Secret is too long";
++    case ARGON2_TIME_TOO_SMALL:
++        return "Time cost is too small";
++    case ARGON2_TIME_TOO_LARGE:
++        return "Time cost is too large";
++    case ARGON2_MEMORY_TOO_LITTLE:
++        return "Memory cost is too small";
++    case ARGON2_MEMORY_TOO_MUCH:
++        return "Memory cost is too large";
++    case ARGON2_LANES_TOO_FEW:
++        return "Too few lanes";
++    case ARGON2_LANES_TOO_MANY:
++        return "Too many lanes";
++    case ARGON2_PWD_PTR_MISMATCH:
++        return "Password pointer is NULL, but password length is not 0";
++    case ARGON2_SALT_PTR_MISMATCH:
++        return "Salt pointer is NULL, but salt length is not 0";
++    case ARGON2_SECRET_PTR_MISMATCH:
++        return "Secret pointer is NULL, but secret length is not 0";
++    case ARGON2_AD_PTR_MISMATCH:
++        return "Associated data pointer is NULL, but ad length is not 0";
++    case ARGON2_MEMORY_ALLOCATION_ERROR:
++        return "Memory allocation error";
++    case ARGON2_FREE_MEMORY_CBK_NULL:
++        return "The free memory callback is NULL";
++    case ARGON2_ALLOCATE_MEMORY_CBK_NULL:
++        return "The allocate memory callback is NULL";
++    case ARGON2_INCORRECT_PARAMETER:
++        return "Argon2_Context context is NULL";
++    case ARGON2_INCORRECT_TYPE:
++        return "There is no such version of Argon2";
++    case ARGON2_OUT_PTR_MISMATCH:
++        return "Output pointer mismatch";
++    case ARGON2_THREADS_TOO_FEW:
++        return "Not enough threads";
++    case ARGON2_THREADS_TOO_MANY:
++        return "Too many threads";
++    case ARGON2_MISSING_ARGS:
++        return "Missing arguments";
++    case ARGON2_ENCODING_FAIL:
++        return "Encoding failed";
++    case ARGON2_DECODING_FAIL:
++        return "Decoding failed";
++    case ARGON2_THREAD_FAIL:
++        return "Threading failure";
++    case ARGON2_DECODING_LENGTH_FAIL:
++        return "Some of encoded parameters are too long or too short";
++    case ARGON2_VERIFY_MISMATCH:
++        return "The password does not match the supplied hash";
++    default:
++        return "Unknown error code";
++    }
++}
++
++size_t argon2_encodedlen(uint32_t t_cost, uint32_t m_cost, uint32_t parallelism,
++                         uint32_t saltlen, uint32_t hashlen, argon2_type type) {
++  return strlen("$$v=$m=,t=,p=$$") + strlen(argon2_type2string(type, 0)) +
++         numlen(t_cost) + numlen(m_cost) + numlen(parallelism) +
++         b64len(saltlen) + b64len(hashlen) + numlen(ARGON2_VERSION_NUMBER) + 1;
++}
+diff --git a/C/argon2/argon2.h b/C/argon2/argon2.h
+new file mode 100644
+index 00000000..fc8682c2
+--- /dev/null
++++ b/C/argon2/argon2.h
+@@ -0,0 +1,437 @@
++/*
++ * Argon2 reference source code package - reference C implementations
++ *
++ * Copyright 2015
++ * Daniel Dinu, Dmitry Khovratovich, Jean-Philippe Aumasson, and Samuel Neves
++ *
++ * You may use this work under the terms of a Creative Commons CC0 1.0
++ * License/Waiver or the Apache Public License 2.0, at your option. The terms of
++ * these licenses can be found at:
++ *
++ * - CC0 1.0 Universal : http://creativecommons.org/publicdomain/zero/1.0
++ * - Apache 2.0        : http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * You should have received a copy of both of these licenses along with this
++ * software. If not, they may be obtained at the above URLs.
++ */
++
++#ifndef ARGON2_H
++#define ARGON2_H
++
++#include <stdint.h>
++#include <stddef.h>
++#include <limits.h>
++
++#if defined(__cplusplus)
++extern "C" {
++#endif
++
++/* Symbols visibility control */
++#ifdef A2_VISCTL
++#define ARGON2_PUBLIC __attribute__((visibility("default")))
++#define ARGON2_LOCAL __attribute__ ((visibility ("hidden")))
++#elif _MSC_VER
++#define ARGON2_PUBLIC __declspec(dllexport)
++#define ARGON2_LOCAL
++#else
++#define ARGON2_PUBLIC
++#define ARGON2_LOCAL
++#endif
++
++/*
++ * Argon2 input parameter restrictions
++ */
++
++/* Minimum and maximum number of lanes (degree of parallelism) */
++#define ARGON2_MIN_LANES UINT32_C(1)
++#define ARGON2_MAX_LANES UINT32_C(0xFFFFFF)
++
++/* Minimum and maximum number of threads */
++#define ARGON2_MIN_THREADS UINT32_C(1)
++#define ARGON2_MAX_THREADS UINT32_C(0xFFFFFF)
++
++/* Number of synchronization points between lanes per pass */
++#define ARGON2_SYNC_POINTS UINT32_C(4)
++
++/* Minimum and maximum digest size in bytes */
++#define ARGON2_MIN_OUTLEN UINT32_C(4)
++#define ARGON2_MAX_OUTLEN UINT32_C(0xFFFFFFFF)
++
++/* Minimum and maximum number of memory blocks (each of BLOCK_SIZE bytes) */
++#define ARGON2_MIN_MEMORY (2 * ARGON2_SYNC_POINTS) /* 2 blocks per slice */
++
++#define ARGON2_MIN(a, b) ((a) < (b) ? (a) : (b))
++/* Max memory size is addressing-space/2, topping at 2^32 blocks (4 TB) */
++#define ARGON2_MAX_MEMORY_BITS                                                 \
++    ARGON2_MIN(UINT32_C(32), (sizeof(void *) * CHAR_BIT - 10 - 1))
++#define ARGON2_MAX_MEMORY                                                      \
++    ARGON2_MIN(UINT32_C(0xFFFFFFFF), UINT64_C(1) << ARGON2_MAX_MEMORY_BITS)
++
++/* Minimum and maximum number of passes */
++#define ARGON2_MIN_TIME UINT32_C(1)
++#define ARGON2_MAX_TIME UINT32_C(0xFFFFFFFF)
++
++/* Minimum and maximum password length in bytes */
++#define ARGON2_MIN_PWD_LENGTH UINT32_C(0)
++#define ARGON2_MAX_PWD_LENGTH UINT32_C(0xFFFFFFFF)
++
++/* Minimum and maximum associated data length in bytes */
++#define ARGON2_MIN_AD_LENGTH UINT32_C(0)
++#define ARGON2_MAX_AD_LENGTH UINT32_C(0xFFFFFFFF)
++
++/* Minimum and maximum salt length in bytes */
++#define ARGON2_MIN_SALT_LENGTH UINT32_C(8)
++#define ARGON2_MAX_SALT_LENGTH UINT32_C(0xFFFFFFFF)
++
++/* Minimum and maximum key length in bytes */
++#define ARGON2_MIN_SECRET UINT32_C(0)
++#define ARGON2_MAX_SECRET UINT32_C(0xFFFFFFFF)
++
++/* Flags to determine which fields are securely wiped (default = no wipe). */
++#define ARGON2_DEFAULT_FLAGS UINT32_C(0)
++#define ARGON2_FLAG_CLEAR_PASSWORD (UINT32_C(1) << 0)
++#define ARGON2_FLAG_CLEAR_SECRET (UINT32_C(1) << 1)
++
++/* Global flag to determine if we are wiping internal memory buffers. This flag
++ * is defined in core.c and defaults to 1 (wipe internal memory). */
++extern int FLAG_clear_internal_memory;
++
++/* Error codes */
++typedef enum Argon2_ErrorCodes {
++    ARGON2_OK = 0,
++
++    ARGON2_OUTPUT_PTR_NULL = -1,
++
++    ARGON2_OUTPUT_TOO_SHORT = -2,
++    ARGON2_OUTPUT_TOO_LONG = -3,
++
++    ARGON2_PWD_TOO_SHORT = -4,
++    ARGON2_PWD_TOO_LONG = -5,
++
++    ARGON2_SALT_TOO_SHORT = -6,
++    ARGON2_SALT_TOO_LONG = -7,
++
++    ARGON2_AD_TOO_SHORT = -8,
++    ARGON2_AD_TOO_LONG = -9,
++
++    ARGON2_SECRET_TOO_SHORT = -10,
++    ARGON2_SECRET_TOO_LONG = -11,
++
++    ARGON2_TIME_TOO_SMALL = -12,
++    ARGON2_TIME_TOO_LARGE = -13,
++
++    ARGON2_MEMORY_TOO_LITTLE = -14,
++    ARGON2_MEMORY_TOO_MUCH = -15,
++
++    ARGON2_LANES_TOO_FEW = -16,
++    ARGON2_LANES_TOO_MANY = -17,
++
++    ARGON2_PWD_PTR_MISMATCH = -18,    /* NULL ptr with non-zero length */
++    ARGON2_SALT_PTR_MISMATCH = -19,   /* NULL ptr with non-zero length */
++    ARGON2_SECRET_PTR_MISMATCH = -20, /* NULL ptr with non-zero length */
++    ARGON2_AD_PTR_MISMATCH = -21,     /* NULL ptr with non-zero length */
++
++    ARGON2_MEMORY_ALLOCATION_ERROR = -22,
++
++    ARGON2_FREE_MEMORY_CBK_NULL = -23,
++    ARGON2_ALLOCATE_MEMORY_CBK_NULL = -24,
++
++    ARGON2_INCORRECT_PARAMETER = -25,
++    ARGON2_INCORRECT_TYPE = -26,
++
++    ARGON2_OUT_PTR_MISMATCH = -27,
++
++    ARGON2_THREADS_TOO_FEW = -28,
++    ARGON2_THREADS_TOO_MANY = -29,
++
++    ARGON2_MISSING_ARGS = -30,
++
++    ARGON2_ENCODING_FAIL = -31,
++
++    ARGON2_DECODING_FAIL = -32,
++
++    ARGON2_THREAD_FAIL = -33,
++
++    ARGON2_DECODING_LENGTH_FAIL = -34,
++
++    ARGON2_VERIFY_MISMATCH = -35
++} argon2_error_codes;
++
++/* Memory allocator types --- for external allocation */
++typedef int (*allocate_fptr)(uint8_t **memory, size_t bytes_to_allocate);
++typedef void (*deallocate_fptr)(uint8_t *memory, size_t bytes_to_allocate);
++
++/* Argon2 external data structures */
++
++/*
++ *****
++ * Context: structure to hold Argon2 inputs:
++ *  output array and its length,
++ *  password and its length,
++ *  salt and its length,
++ *  secret and its length,
++ *  associated data and its length,
++ *  number of passes, amount of used memory (in KBytes, can be rounded up a bit)
++ *  number of parallel threads that will be run.
++ * All the parameters above affect the output hash value.
++ * Additionally, two function pointers can be provided to allocate and
++ * deallocate the memory (if NULL, memory will be allocated internally).
++ * Also, three flags indicate whether to erase password, secret as soon as they
++ * are pre-hashed (and thus not needed anymore), and the entire memory
++ *****
++ * Simplest situation: you have output array out[8], password is stored in
++ * pwd[32], salt is stored in salt[16], you do not have keys nor associated
++ * data. You need to spend 1 GB of RAM and you run 5 passes of Argon2d with
++ * 4 parallel lanes.
++ * You want to erase the password, but you're OK with last pass not being
++ * erased. You want to use the default memory allocator.
++ * Then you initialize:
++ Argon2_Context(out,8,pwd,32,salt,16,NULL,0,NULL,0,5,1<<20,4,4,NULL,NULL,true,false,false,false)
++ */
++typedef struct Argon2_Context {
++    uint8_t *out;    /* output array */
++    uint32_t outlen; /* digest length */
++
++    uint8_t *pwd;    /* password array */
++    uint32_t pwdlen; /* password length */
++
++    uint8_t *salt;    /* salt array */
++    uint32_t saltlen; /* salt length */
++
++    uint8_t *secret;    /* key array */
++    uint32_t secretlen; /* key length */
++
++    uint8_t *ad;    /* associated data array */
++    uint32_t adlen; /* associated data length */
++
++    uint32_t t_cost;  /* number of passes */
++    uint32_t m_cost;  /* amount of memory requested (KB) */
++    uint32_t lanes;   /* number of lanes */
++    uint32_t threads; /* maximum number of threads */
++
++    uint32_t version; /* version number */
++
++    allocate_fptr allocate_cbk; /* pointer to memory allocator */
++    deallocate_fptr free_cbk;   /* pointer to memory deallocator */
++
++    uint32_t flags; /* array of bool options */
++} argon2_context;
++
++/* Argon2 primitive type */
++typedef enum Argon2_type {
++  Argon2_d = 0,
++  Argon2_i = 1,
++  Argon2_id = 2
++} argon2_type;
++
++/* Version of the algorithm */
++typedef enum Argon2_version {
++    ARGON2_VERSION_10 = 0x10,
++    ARGON2_VERSION_13 = 0x13,
++    ARGON2_VERSION_NUMBER = ARGON2_VERSION_13
++} argon2_version;
++
++/*
++ * Function that gives the string representation of an argon2_type.
++ * @param type The argon2_type that we want the string for
++ * @param uppercase Whether the string should have the first letter uppercase
++ * @return NULL if invalid type, otherwise the string representation.
++ */
++ARGON2_PUBLIC const char *argon2_type2string(argon2_type type, int uppercase);
++
++/*
++ * Function that performs memory-hard hashing with certain degree of parallelism
++ * @param  context  Pointer to the Argon2 internal structure
++ * @return Error code if smth is wrong, ARGON2_OK otherwise
++ */
++ARGON2_PUBLIC int argon2_ctx(argon2_context *context, argon2_type type);
++
++/**
++ * Hashes a password with Argon2i, producing an encoded hash
++ * @param t_cost Number of iterations
++ * @param m_cost Sets memory usage to m_cost kibibytes
++ * @param parallelism Number of threads and compute lanes
++ * @param pwd Pointer to password
++ * @param pwdlen Password size in bytes
++ * @param salt Pointer to salt
++ * @param saltlen Salt size in bytes
++ * @param hashlen Desired length of the hash in bytes
++ * @param encoded Buffer where to write the encoded hash
++ * @param encodedlen Size of the buffer (thus max size of the encoded hash)
++ * @pre   Different parallelism levels will give different results
++ * @pre   Returns ARGON2_OK if successful
++ */
++ARGON2_PUBLIC int argon2i_hash_encoded(const uint32_t t_cost,
++                                       const uint32_t m_cost,
++                                       const uint32_t parallelism,
++                                       const void *pwd, const size_t pwdlen,
++                                       const void *salt, const size_t saltlen,
++                                       const size_t hashlen, char *encoded,
++                                       const size_t encodedlen);
++
++/**
++ * Hashes a password with Argon2i, producing a raw hash at @hash
++ * @param t_cost Number of iterations
++ * @param m_cost Sets memory usage to m_cost kibibytes
++ * @param parallelism Number of threads and compute lanes
++ * @param pwd Pointer to password
++ * @param pwdlen Password size in bytes
++ * @param salt Pointer to salt
++ * @param saltlen Salt size in bytes
++ * @param hash Buffer where to write the raw hash - updated by the function
++ * @param hashlen Desired length of the hash in bytes
++ * @pre   Different parallelism levels will give different results
++ * @pre   Returns ARGON2_OK if successful
++ */
++ARGON2_PUBLIC int argon2i_hash_raw(const uint32_t t_cost, const uint32_t m_cost,
++                                   const uint32_t parallelism, const void *pwd,
++                                   const size_t pwdlen, const void *salt,
++                                   const size_t saltlen, void *hash,
++                                   const size_t hashlen);
++
++ARGON2_PUBLIC int argon2d_hash_encoded(const uint32_t t_cost,
++                                       const uint32_t m_cost,
++                                       const uint32_t parallelism,
++                                       const void *pwd, const size_t pwdlen,
++                                       const void *salt, const size_t saltlen,
++                                       const size_t hashlen, char *encoded,
++                                       const size_t encodedlen);
++
++ARGON2_PUBLIC int argon2d_hash_raw(const uint32_t t_cost, const uint32_t m_cost,
++                                   const uint32_t parallelism, const void *pwd,
++                                   const size_t pwdlen, const void *salt,
++                                   const size_t saltlen, void *hash,
++                                   const size_t hashlen);
++
++ARGON2_PUBLIC int argon2id_hash_encoded(const uint32_t t_cost,
++                                        const uint32_t m_cost,
++                                        const uint32_t parallelism,
++                                        const void *pwd, const size_t pwdlen,
++                                        const void *salt, const size_t saltlen,
++                                        const size_t hashlen, char *encoded,
++                                        const size_t encodedlen);
++
++ARGON2_PUBLIC int argon2id_hash_raw(const uint32_t t_cost,
++                                    const uint32_t m_cost,
++                                    const uint32_t parallelism, const void *pwd,
++                                    const size_t pwdlen, const void *salt,
++                                    const size_t saltlen, void *hash,
++                                    const size_t hashlen);
++
++/* generic function underlying the above ones */
++ARGON2_PUBLIC int argon2_hash(const uint32_t t_cost, const uint32_t m_cost,
++                              const uint32_t parallelism, const void *pwd,
++                              const size_t pwdlen, const void *salt,
++                              const size_t saltlen, void *hash,
++                              const size_t hashlen, char *encoded,
++                              const size_t encodedlen, argon2_type type,
++                              const uint32_t version);
++
++/**
++ * Verifies a password against an encoded string
++ * Encoded string is restricted as in validate_inputs()
++ * @param encoded String encoding parameters, salt, hash
++ * @param pwd Pointer to password
++ * @pre   Returns ARGON2_OK if successful
++ */
++ARGON2_PUBLIC int argon2i_verify(const char *encoded, const void *pwd,
++                                 const size_t pwdlen);
++
++ARGON2_PUBLIC int argon2d_verify(const char *encoded, const void *pwd,
++                                 const size_t pwdlen);
++
++ARGON2_PUBLIC int argon2id_verify(const char *encoded, const void *pwd,
++                                  const size_t pwdlen);
++
++/* generic function underlying the above ones */
++ARGON2_PUBLIC int argon2_verify(const char *encoded, const void *pwd,
++                                const size_t pwdlen, argon2_type type);
++
++/**
++ * Argon2d: Version of Argon2 that picks memory blocks depending
++ * on the password and salt. Only for side-channel-free
++ * environment!!
++ *****
++ * @param  context  Pointer to current Argon2 context
++ * @return  Zero if successful, a non zero error code otherwise
++ */
++ARGON2_PUBLIC int argon2d_ctx(argon2_context *context);
++
++/**
++ * Argon2i: Version of Argon2 that picks memory blocks
++ * independent on the password and salt. Good for side-channels,
++ * but worse w.r.t. tradeoff attacks if only one pass is used.
++ *****
++ * @param  context  Pointer to current Argon2 context
++ * @return  Zero if successful, a non zero error code otherwise
++ */
++ARGON2_PUBLIC int argon2i_ctx(argon2_context *context);
++
++/**
++ * Argon2id: Version of Argon2 where the first half-pass over memory is
++ * password-independent, the rest are password-dependent (on the password and
++ * salt). OK against side channels (they reduce to 1/2-pass Argon2i), and
++ * better with w.r.t. tradeoff attacks (similar to Argon2d).
++ *****
++ * @param  context  Pointer to current Argon2 context
++ * @return  Zero if successful, a non zero error code otherwise
++ */
++ARGON2_PUBLIC int argon2id_ctx(argon2_context *context);
++
++/**
++ * Verify if a given password is correct for Argon2d hashing
++ * @param  context  Pointer to current Argon2 context
++ * @param  hash  The password hash to verify. The length of the hash is
++ * specified by the context outlen member
++ * @return  Zero if successful, a non zero error code otherwise
++ */
++ARGON2_PUBLIC int argon2d_verify_ctx(argon2_context *context, const char *hash);
++
++/**
++ * Verify if a given password is correct for Argon2i hashing
++ * @param  context  Pointer to current Argon2 context
++ * @param  hash  The password hash to verify. The length of the hash is
++ * specified by the context outlen member
++ * @return  Zero if successful, a non zero error code otherwise
++ */
++ARGON2_PUBLIC int argon2i_verify_ctx(argon2_context *context, const char *hash);
++
++/**
++ * Verify if a given password is correct for Argon2id hashing
++ * @param  context  Pointer to current Argon2 context
++ * @param  hash  The password hash to verify. The length of the hash is
++ * specified by the context outlen member
++ * @return  Zero if successful, a non zero error code otherwise
++ */
++ARGON2_PUBLIC int argon2id_verify_ctx(argon2_context *context,
++                                      const char *hash);
++
++/* generic function underlying the above ones */
++ARGON2_PUBLIC int argon2_verify_ctx(argon2_context *context, const char *hash,
++                                    argon2_type type);
++
++/**
++ * Get the associated error message for given error code
++ * @return  The error message associated with the given error code
++ */
++ARGON2_PUBLIC const char *argon2_error_message(int error_code);
++
++/**
++ * Returns the encoded hash length for the given input parameters
++ * @param t_cost  Number of iterations
++ * @param m_cost  Memory usage in kibibytes
++ * @param parallelism  Number of threads; used to compute lanes
++ * @param saltlen  Salt size in bytes
++ * @param hashlen  Hash size in bytes
++ * @param type The argon2_type that we want the encoded length for
++ * @return  The encoded hash length in bytes
++ */
++ARGON2_PUBLIC size_t argon2_encodedlen(uint32_t t_cost, uint32_t m_cost,
++                                       uint32_t parallelism, uint32_t saltlen,
++                                       uint32_t hashlen, argon2_type type);
++
++#if defined(__cplusplus)
++}
++#endif
++
++#endif
+diff --git a/C/argon2/blake2/blake2-impl.h b/C/argon2/blake2/blake2-impl.h
+new file mode 100644
+index 00000000..241f0beb
+--- /dev/null
++++ b/C/argon2/blake2/blake2-impl.h
+@@ -0,0 +1,156 @@
++/*
++ * Argon2 reference source code package - reference C implementations
++ *
++ * Copyright 2015
++ * Daniel Dinu, Dmitry Khovratovich, Jean-Philippe Aumasson, and Samuel Neves
++ *
++ * You may use this work under the terms of a Creative Commons CC0 1.0
++ * License/Waiver or the Apache Public License 2.0, at your option. The terms of
++ * these licenses can be found at:
++ *
++ * - CC0 1.0 Universal : http://creativecommons.org/publicdomain/zero/1.0
++ * - Apache 2.0        : http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * You should have received a copy of both of these licenses along with this
++ * software. If not, they may be obtained at the above URLs.
++ */
++
++#ifndef PORTABLE_BLAKE2_IMPL_H
++#define PORTABLE_BLAKE2_IMPL_H
++
++#include <stdint.h>
++#include <string.h>
++
++#if defined(_MSC_VER)
++#define BLAKE2_INLINE __inline
++#elif defined(__GNUC__) || defined(__clang__)
++#define BLAKE2_INLINE __inline__
++#else
++#define BLAKE2_INLINE
++#endif
++
++/* Argon2 Team - Begin Code */
++/*
++   Not an exhaustive list, but should cover the majority of modern platforms
++   Additionally, the code will always be correct---this is only a performance
++   tweak.
++*/
++#if (defined(__BYTE_ORDER__) &&                                                \
++     (__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__)) ||                           \
++    defined(__LITTLE_ENDIAN__) || defined(__ARMEL__) || defined(__MIPSEL__) || \
++    defined(__AARCH64EL__) || defined(__amd64__) || defined(__i386__) ||       \
++    defined(_M_IX86) || defined(_M_X64) || defined(_M_AMD64) ||                \
++    defined(_M_ARM)
++#define NATIVE_LITTLE_ENDIAN
++#endif
++/* Argon2 Team - End Code */
++
++static BLAKE2_INLINE uint32_t load32(const void *src) {
++#if defined(NATIVE_LITTLE_ENDIAN)
++    uint32_t w;
++    memcpy(&w, src, sizeof w);
++    return w;
++#else
++    const uint8_t *p = (const uint8_t *)src;
++    uint32_t w = *p++;
++    w |= (uint32_t)(*p++) << 8;
++    w |= (uint32_t)(*p++) << 16;
++    w |= (uint32_t)(*p++) << 24;
++    return w;
++#endif
++}
++
++static BLAKE2_INLINE uint64_t load64(const void *src) {
++#if defined(NATIVE_LITTLE_ENDIAN)
++    uint64_t w;
++    memcpy(&w, src, sizeof w);
++    return w;
++#else
++    const uint8_t *p = (const uint8_t *)src;
++    uint64_t w = *p++;
++    w |= (uint64_t)(*p++) << 8;
++    w |= (uint64_t)(*p++) << 16;
++    w |= (uint64_t)(*p++) << 24;
++    w |= (uint64_t)(*p++) << 32;
++    w |= (uint64_t)(*p++) << 40;
++    w |= (uint64_t)(*p++) << 48;
++    w |= (uint64_t)(*p++) << 56;
++    return w;
++#endif
++}
++
++static BLAKE2_INLINE void store32(void *dst, uint32_t w) {
++#if defined(NATIVE_LITTLE_ENDIAN)
++    memcpy(dst, &w, sizeof w);
++#else
++    uint8_t *p = (uint8_t *)dst;
++    *p++ = (uint8_t)w;
++    w >>= 8;
++    *p++ = (uint8_t)w;
++    w >>= 8;
++    *p++ = (uint8_t)w;
++    w >>= 8;
++    *p++ = (uint8_t)w;
++#endif
++}
++
++static BLAKE2_INLINE void store64(void *dst, uint64_t w) {
++#if defined(NATIVE_LITTLE_ENDIAN)
++    memcpy(dst, &w, sizeof w);
++#else
++    uint8_t *p = (uint8_t *)dst;
++    *p++ = (uint8_t)w;
++    w >>= 8;
++    *p++ = (uint8_t)w;
++    w >>= 8;
++    *p++ = (uint8_t)w;
++    w >>= 8;
++    *p++ = (uint8_t)w;
++    w >>= 8;
++    *p++ = (uint8_t)w;
++    w >>= 8;
++    *p++ = (uint8_t)w;
++    w >>= 8;
++    *p++ = (uint8_t)w;
++    w >>= 8;
++    *p++ = (uint8_t)w;
++#endif
++}
++
++static BLAKE2_INLINE uint64_t load48(const void *src) {
++    const uint8_t *p = (const uint8_t *)src;
++    uint64_t w = *p++;
++    w |= (uint64_t)(*p++) << 8;
++    w |= (uint64_t)(*p++) << 16;
++    w |= (uint64_t)(*p++) << 24;
++    w |= (uint64_t)(*p++) << 32;
++    w |= (uint64_t)(*p++) << 40;
++    return w;
++}
++
++static BLAKE2_INLINE void store48(void *dst, uint64_t w) {
++    uint8_t *p = (uint8_t *)dst;
++    *p++ = (uint8_t)w;
++    w >>= 8;
++    *p++ = (uint8_t)w;
++    w >>= 8;
++    *p++ = (uint8_t)w;
++    w >>= 8;
++    *p++ = (uint8_t)w;
++    w >>= 8;
++    *p++ = (uint8_t)w;
++    w >>= 8;
++    *p++ = (uint8_t)w;
++}
++
++static BLAKE2_INLINE uint32_t rotr32(const uint32_t w, const unsigned c) {
++    return (w >> c) | (w << (32 - c));
++}
++
++static BLAKE2_INLINE uint64_t rotr64(const uint64_t w, const unsigned c) {
++    return (w >> c) | (w << (64 - c));
++}
++
++void clear_internal_memory(void *v, size_t n);
++
++#endif
+diff --git a/C/argon2/blake2/blake2.h b/C/argon2/blake2/blake2.h
+new file mode 100644
+index 00000000..57276a77
+--- /dev/null
++++ b/C/argon2/blake2/blake2.h
+@@ -0,0 +1,89 @@
++/*
++ * Argon2 reference source code package - reference C implementations
++ *
++ * Copyright 2015
++ * Daniel Dinu, Dmitry Khovratovich, Jean-Philippe Aumasson, and Samuel Neves
++ *
++ * You may use this work under the terms of a Creative Commons CC0 1.0
++ * License/Waiver or the Apache Public License 2.0, at your option. The terms of
++ * these licenses can be found at:
++ *
++ * - CC0 1.0 Universal : http://creativecommons.org/publicdomain/zero/1.0
++ * - Apache 2.0        : http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * You should have received a copy of both of these licenses along with this
++ * software. If not, they may be obtained at the above URLs.
++ */
++
++#ifndef PORTABLE_BLAKE2_H
++#define PORTABLE_BLAKE2_H
++
++#include <argon2.h>
++
++#if defined(__cplusplus)
++extern "C" {
++#endif
++
++enum blake2b_constant {
++    BLAKE2B_BLOCKBYTES = 128,
++    BLAKE2B_OUTBYTES = 64,
++    BLAKE2B_KEYBYTES = 64,
++    BLAKE2B_SALTBYTES = 16,
++    BLAKE2B_PERSONALBYTES = 16
++};
++
++#pragma pack(push, 1)
++typedef struct __blake2b_param {
++    uint8_t digest_length;                   /* 1 */
++    uint8_t key_length;                      /* 2 */
++    uint8_t fanout;                          /* 3 */
++    uint8_t depth;                           /* 4 */
++    uint32_t leaf_length;                    /* 8 */
++    uint64_t node_offset;                    /* 16 */
++    uint8_t node_depth;                      /* 17 */
++    uint8_t inner_length;                    /* 18 */
++    uint8_t reserved[14];                    /* 32 */
++    uint8_t salt[BLAKE2B_SALTBYTES];         /* 48 */
++    uint8_t personal[BLAKE2B_PERSONALBYTES]; /* 64 */
++} blake2b_param;
++#pragma pack(pop)
++
++typedef struct __blake2b_state {
++    uint64_t h[8];
++    uint64_t t[2];
++    uint64_t f[2];
++    uint8_t buf[BLAKE2B_BLOCKBYTES];
++    unsigned buflen;
++    unsigned outlen;
++    uint8_t last_node;
++} blake2b_state;
++
++/* Ensure param structs have not been wrongly padded */
++/* Poor man's static_assert */
++enum {
++    blake2_size_check_0 = 1 / !!(CHAR_BIT == 8),
++    blake2_size_check_2 =
++        1 / !!(sizeof(blake2b_param) == sizeof(uint64_t) * CHAR_BIT)
++};
++
++/* Streaming API */
++ARGON2_LOCAL int blake2b_init(blake2b_state *S, size_t outlen);
++ARGON2_LOCAL int blake2b_init_key(blake2b_state *S, size_t outlen, const void *key,
++                     size_t keylen);
++ARGON2_LOCAL int blake2b_init_param(blake2b_state *S, const blake2b_param *P);
++ARGON2_LOCAL int blake2b_update(blake2b_state *S, const void *in, size_t inlen);
++ARGON2_LOCAL int blake2b_final(blake2b_state *S, void *out, size_t outlen);
++
++/* Simple API */
++ARGON2_LOCAL int blake2b(void *out, size_t outlen, const void *in, size_t inlen,
++                         const void *key, size_t keylen);
++
++/* Argon2 Team - Begin Code */
++ARGON2_LOCAL int blake2b_long(void *out, size_t outlen, const void *in, size_t inlen);
++/* Argon2 Team - End Code */
++
++#if defined(__cplusplus)
++}
++#endif
++
++#endif
+diff --git a/C/argon2/blake2/blake2b.c b/C/argon2/blake2/blake2b.c
+new file mode 100644
+index 00000000..ca05df59
+--- /dev/null
++++ b/C/argon2/blake2/blake2b.c
+@@ -0,0 +1,390 @@
++/*
++ * Argon2 reference source code package - reference C implementations
++ *
++ * Copyright 2015
++ * Daniel Dinu, Dmitry Khovratovich, Jean-Philippe Aumasson, and Samuel Neves
++ *
++ * You may use this work under the terms of a Creative Commons CC0 1.0
++ * License/Waiver or the Apache Public License 2.0, at your option. The terms of
++ * these licenses can be found at:
++ *
++ * - CC0 1.0 Universal : http://creativecommons.org/publicdomain/zero/1.0
++ * - Apache 2.0        : http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * You should have received a copy of both of these licenses along with this
++ * software. If not, they may be obtained at the above URLs.
++ */
++
++#include <stdint.h>
++#include <string.h>
++#include <stdio.h>
++
++#include "blake2.h"
++#include "blake2-impl.h"
++
++static const uint64_t blake2b_IV[8] = {
++    UINT64_C(0x6a09e667f3bcc908), UINT64_C(0xbb67ae8584caa73b),
++    UINT64_C(0x3c6ef372fe94f82b), UINT64_C(0xa54ff53a5f1d36f1),
++    UINT64_C(0x510e527fade682d1), UINT64_C(0x9b05688c2b3e6c1f),
++    UINT64_C(0x1f83d9abfb41bd6b), UINT64_C(0x5be0cd19137e2179)};
++
++static const unsigned int blake2b_sigma[12][16] = {
++    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
++    {14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3},
++    {11, 8, 12, 0, 5, 2, 15, 13, 10, 14, 3, 6, 7, 1, 9, 4},
++    {7, 9, 3, 1, 13, 12, 11, 14, 2, 6, 5, 10, 4, 0, 15, 8},
++    {9, 0, 5, 7, 2, 4, 10, 15, 14, 1, 11, 12, 6, 8, 3, 13},
++    {2, 12, 6, 10, 0, 11, 8, 3, 4, 13, 7, 5, 15, 14, 1, 9},
++    {12, 5, 1, 15, 14, 13, 4, 10, 0, 7, 6, 3, 9, 2, 8, 11},
++    {13, 11, 7, 14, 12, 1, 3, 9, 5, 0, 15, 4, 8, 6, 2, 10},
++    {6, 15, 14, 9, 11, 3, 0, 8, 12, 2, 13, 7, 1, 4, 10, 5},
++    {10, 2, 8, 4, 7, 6, 1, 5, 15, 11, 9, 14, 3, 12, 13, 0},
++    {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15},
++    {14, 10, 4, 8, 9, 15, 13, 6, 1, 12, 0, 2, 11, 7, 5, 3},
++};
++
++static BLAKE2_INLINE void blake2b_set_lastnode(blake2b_state *S) {
++    S->f[1] = (uint64_t)-1;
++}
++
++static BLAKE2_INLINE void blake2b_set_lastblock(blake2b_state *S) {
++    if (S->last_node) {
++        blake2b_set_lastnode(S);
++    }
++    S->f[0] = (uint64_t)-1;
++}
++
++static BLAKE2_INLINE void blake2b_increment_counter(blake2b_state *S,
++                                                    uint64_t inc) {
++    S->t[0] += inc;
++    S->t[1] += (S->t[0] < inc);
++}
++
++static BLAKE2_INLINE void blake2b_invalidate_state(blake2b_state *S) {
++    clear_internal_memory(S, sizeof(*S));      /* wipe */
++    blake2b_set_lastblock(S); /* invalidate for further use */
++}
++
++static BLAKE2_INLINE void blake2b_init0(blake2b_state *S) {
++    memset(S, 0, sizeof(*S));
++    memcpy(S->h, blake2b_IV, sizeof(S->h));
++}
++
++int blake2b_init_param(blake2b_state *S, const blake2b_param *P) {
++    const unsigned char *p = (const unsigned char *)P;
++    unsigned int i;
++
++    if (NULL == P || NULL == S) {
++        return -1;
++    }
++
++    blake2b_init0(S);
++    /* IV XOR Parameter Block */
++    for (i = 0; i < 8; ++i) {
++        S->h[i] ^= load64(&p[i * sizeof(S->h[i])]);
++    }
++    S->outlen = P->digest_length;
++    return 0;
++}
++
++/* Sequential blake2b initialization */
++int blake2b_init(blake2b_state *S, size_t outlen) {
++    blake2b_param P;
++
++    if (S == NULL) {
++        return -1;
++    }
++
++    if ((outlen == 0) || (outlen > BLAKE2B_OUTBYTES)) {
++        blake2b_invalidate_state(S);
++        return -1;
++    }
++
++    /* Setup Parameter Block for unkeyed BLAKE2 */
++    P.digest_length = (uint8_t)outlen;
++    P.key_length = 0;
++    P.fanout = 1;
++    P.depth = 1;
++    P.leaf_length = 0;
++    P.node_offset = 0;
++    P.node_depth = 0;
++    P.inner_length = 0;
++    memset(P.reserved, 0, sizeof(P.reserved));
++    memset(P.salt, 0, sizeof(P.salt));
++    memset(P.personal, 0, sizeof(P.personal));
++
++    return blake2b_init_param(S, &P);
++}
++
++int blake2b_init_key(blake2b_state *S, size_t outlen, const void *key,
++                     size_t keylen) {
++    blake2b_param P;
++
++    if (S == NULL) {
++        return -1;
++    }
++
++    if ((outlen == 0) || (outlen > BLAKE2B_OUTBYTES)) {
++        blake2b_invalidate_state(S);
++        return -1;
++    }
++
++    if ((key == 0) || (keylen == 0) || (keylen > BLAKE2B_KEYBYTES)) {
++        blake2b_invalidate_state(S);
++        return -1;
++    }
++
++    /* Setup Parameter Block for keyed BLAKE2 */
++    P.digest_length = (uint8_t)outlen;
++    P.key_length = (uint8_t)keylen;
++    P.fanout = 1;
++    P.depth = 1;
++    P.leaf_length = 0;
++    P.node_offset = 0;
++    P.node_depth = 0;
++    P.inner_length = 0;
++    memset(P.reserved, 0, sizeof(P.reserved));
++    memset(P.salt, 0, sizeof(P.salt));
++    memset(P.personal, 0, sizeof(P.personal));
++
++    if (blake2b_init_param(S, &P) < 0) {
++        blake2b_invalidate_state(S);
++        return -1;
++    }
++
++    {
++        uint8_t block[BLAKE2B_BLOCKBYTES];
++        memset(block, 0, BLAKE2B_BLOCKBYTES);
++        memcpy(block, key, keylen);
++        blake2b_update(S, block, BLAKE2B_BLOCKBYTES);
++        /* Burn the key from stack */
++        clear_internal_memory(block, BLAKE2B_BLOCKBYTES);
++    }
++    return 0;
++}
++
++static void blake2b_compress(blake2b_state *S, const uint8_t *block) {
++    uint64_t m[16];
++    uint64_t v[16];
++    unsigned int i, r;
++
++    for (i = 0; i < 16; ++i) {
++        m[i] = load64(block + i * sizeof(m[i]));
++    }
++
++    for (i = 0; i < 8; ++i) {
++        v[i] = S->h[i];
++    }
++
++    v[8] = blake2b_IV[0];
++    v[9] = blake2b_IV[1];
++    v[10] = blake2b_IV[2];
++    v[11] = blake2b_IV[3];
++    v[12] = blake2b_IV[4] ^ S->t[0];
++    v[13] = blake2b_IV[5] ^ S->t[1];
++    v[14] = blake2b_IV[6] ^ S->f[0];
++    v[15] = blake2b_IV[7] ^ S->f[1];
++
++#define G(r, i, a, b, c, d)                                                    \
++    do {                                                                       \
++        a = a + b + m[blake2b_sigma[r][2 * i + 0]];                            \
++        d = rotr64(d ^ a, 32);                                                 \
++        c = c + d;                                                             \
++        b = rotr64(b ^ c, 24);                                                 \
++        a = a + b + m[blake2b_sigma[r][2 * i + 1]];                            \
++        d = rotr64(d ^ a, 16);                                                 \
++        c = c + d;                                                             \
++        b = rotr64(b ^ c, 63);                                                 \
++    } while ((void)0, 0)
++
++#define ROUND(r)                                                               \
++    do {                                                                       \
++        G(r, 0, v[0], v[4], v[8], v[12]);                                      \
++        G(r, 1, v[1], v[5], v[9], v[13]);                                      \
++        G(r, 2, v[2], v[6], v[10], v[14]);                                     \
++        G(r, 3, v[3], v[7], v[11], v[15]);                                     \
++        G(r, 4, v[0], v[5], v[10], v[15]);                                     \
++        G(r, 5, v[1], v[6], v[11], v[12]);                                     \
++        G(r, 6, v[2], v[7], v[8], v[13]);                                      \
++        G(r, 7, v[3], v[4], v[9], v[14]);                                      \
++    } while ((void)0, 0)
++
++    for (r = 0; r < 12; ++r) {
++        ROUND(r);
++    }
++
++    for (i = 0; i < 8; ++i) {
++        S->h[i] = S->h[i] ^ v[i] ^ v[i + 8];
++    }
++
++#undef G
++#undef ROUND
++}
++
++int blake2b_update(blake2b_state *S, const void *in, size_t inlen) {
++    const uint8_t *pin = (const uint8_t *)in;
++
++    if (inlen == 0) {
++        return 0;
++    }
++
++    /* Sanity check */
++    if (S == NULL || in == NULL) {
++        return -1;
++    }
++
++    /* Is this a reused state? */
++    if (S->f[0] != 0) {
++        return -1;
++    }
++
++    if (S->buflen + inlen > BLAKE2B_BLOCKBYTES) {
++        /* Complete current block */
++        size_t left = S->buflen;
++        size_t fill = BLAKE2B_BLOCKBYTES - left;
++        memcpy(&S->buf[left], pin, fill);
++        blake2b_increment_counter(S, BLAKE2B_BLOCKBYTES);
++        blake2b_compress(S, S->buf);
++        S->buflen = 0;
++        inlen -= fill;
++        pin += fill;
++        /* Avoid buffer copies when possible */
++        while (inlen > BLAKE2B_BLOCKBYTES) {
++            blake2b_increment_counter(S, BLAKE2B_BLOCKBYTES);
++            blake2b_compress(S, pin);
++            inlen -= BLAKE2B_BLOCKBYTES;
++            pin += BLAKE2B_BLOCKBYTES;
++        }
++    }
++    memcpy(&S->buf[S->buflen], pin, inlen);
++    S->buflen += (unsigned int)inlen;
++    return 0;
++}
++
++int blake2b_final(blake2b_state *S, void *out, size_t outlen) {
++    uint8_t buffer[BLAKE2B_OUTBYTES] = {0};
++    unsigned int i;
++
++    /* Sanity checks */
++    if (S == NULL || out == NULL || outlen < S->outlen) {
++        return -1;
++    }
++
++    /* Is this a reused state? */
++    if (S->f[0] != 0) {
++        return -1;
++    }
++
++    blake2b_increment_counter(S, S->buflen);
++    blake2b_set_lastblock(S);
++    memset(&S->buf[S->buflen], 0, BLAKE2B_BLOCKBYTES - S->buflen); /* Padding */
++    blake2b_compress(S, S->buf);
++
++    for (i = 0; i < 8; ++i) { /* Output full hash to temp buffer */
++        store64(buffer + sizeof(S->h[i]) * i, S->h[i]);
++    }
++
++    memcpy(out, buffer, S->outlen);
++    clear_internal_memory(buffer, sizeof(buffer));
++    clear_internal_memory(S->buf, sizeof(S->buf));
++    clear_internal_memory(S->h, sizeof(S->h));
++    return 0;
++}
++
++int blake2b(void *out, size_t outlen, const void *in, size_t inlen,
++            const void *key, size_t keylen) {
++    blake2b_state S;
++    int ret = -1;
++
++    /* Verify parameters */
++    if (NULL == in && inlen > 0) {
++        goto fail;
++    }
++
++    if (NULL == out || outlen == 0 || outlen > BLAKE2B_OUTBYTES) {
++        goto fail;
++    }
++
++    if ((NULL == key && keylen > 0) || keylen > BLAKE2B_KEYBYTES) {
++        goto fail;
++    }
++
++    if (keylen > 0) {
++        if (blake2b_init_key(&S, outlen, key, keylen) < 0) {
++            goto fail;
++        }
++    } else {
++        if (blake2b_init(&S, outlen) < 0) {
++            goto fail;
++        }
++    }
++
++    if (blake2b_update(&S, in, inlen) < 0) {
++        goto fail;
++    }
++    ret = blake2b_final(&S, out, outlen);
++
++fail:
++    clear_internal_memory(&S, sizeof(S));
++    return ret;
++}
++
++/* Argon2 Team - Begin Code */
++int blake2b_long(void *pout, size_t outlen, const void *in, size_t inlen) {
++    uint8_t *out = (uint8_t *)pout;
++    blake2b_state blake_state;
++    uint8_t outlen_bytes[sizeof(uint32_t)] = {0};
++    int ret = -1;
++
++    if (outlen > UINT32_MAX) {
++        goto fail;
++    }
++
++    /* Ensure little-endian byte order! */
++    store32(outlen_bytes, (uint32_t)outlen);
++
++#define TRY(statement)                                                         \
++    do {                                                                       \
++        ret = statement;                                                       \
++        if (ret < 0) {                                                         \
++            goto fail;                                                         \
++        }                                                                      \
++    } while ((void)0, 0)
++
++    if (outlen <= BLAKE2B_OUTBYTES) {
++        TRY(blake2b_init(&blake_state, outlen));
++        TRY(blake2b_update(&blake_state, outlen_bytes, sizeof(outlen_bytes)));
++        TRY(blake2b_update(&blake_state, in, inlen));
++        TRY(blake2b_final(&blake_state, out, outlen));
++    } else {
++        uint32_t toproduce;
++        uint8_t out_buffer[BLAKE2B_OUTBYTES];
++        uint8_t in_buffer[BLAKE2B_OUTBYTES];
++        TRY(blake2b_init(&blake_state, BLAKE2B_OUTBYTES));
++        TRY(blake2b_update(&blake_state, outlen_bytes, sizeof(outlen_bytes)));
++        TRY(blake2b_update(&blake_state, in, inlen));
++        TRY(blake2b_final(&blake_state, out_buffer, BLAKE2B_OUTBYTES));
++        memcpy(out, out_buffer, BLAKE2B_OUTBYTES / 2);
++        out += BLAKE2B_OUTBYTES / 2;
++        toproduce = (uint32_t)outlen - BLAKE2B_OUTBYTES / 2;
++
++        while (toproduce > BLAKE2B_OUTBYTES) {
++            memcpy(in_buffer, out_buffer, BLAKE2B_OUTBYTES);
++            TRY(blake2b(out_buffer, BLAKE2B_OUTBYTES, in_buffer,
++                        BLAKE2B_OUTBYTES, NULL, 0));
++            memcpy(out, out_buffer, BLAKE2B_OUTBYTES / 2);
++            out += BLAKE2B_OUTBYTES / 2;
++            toproduce -= BLAKE2B_OUTBYTES / 2;
++        }
++
++        memcpy(in_buffer, out_buffer, BLAKE2B_OUTBYTES);
++        TRY(blake2b(out_buffer, toproduce, in_buffer, BLAKE2B_OUTBYTES, NULL,
++                    0));
++        memcpy(out, out_buffer, toproduce);
++    }
++fail:
++    clear_internal_memory(&blake_state, sizeof(blake_state));
++    return ret;
++#undef TRY
++}
++/* Argon2 Team - End Code */
+diff --git a/C/argon2/blake2/blamka-round-opt.h b/C/argon2/blake2/blamka-round-opt.h
+new file mode 100644
+index 00000000..2c8942e3
+--- /dev/null
++++ b/C/argon2/blake2/blamka-round-opt.h
+@@ -0,0 +1,471 @@
++/*
++ * Argon2 reference source code package - reference C implementations
++ *
++ * Copyright 2015
++ * Daniel Dinu, Dmitry Khovratovich, Jean-Philippe Aumasson, and Samuel Neves
++ *
++ * You may use this work under the terms of a Creative Commons CC0 1.0
++ * License/Waiver or the Apache Public License 2.0, at your option. The terms of
++ * these licenses can be found at:
++ *
++ * - CC0 1.0 Universal : http://creativecommons.org/publicdomain/zero/1.0
++ * - Apache 2.0        : http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * You should have received a copy of both of these licenses along with this
++ * software. If not, they may be obtained at the above URLs.
++ */
++
++#ifndef BLAKE_ROUND_MKA_OPT_H
++#define BLAKE_ROUND_MKA_OPT_H
++
++#include "blake2-impl.h"
++
++#include <emmintrin.h>
++#if defined(__SSSE3__)
++#include <tmmintrin.h> /* for _mm_shuffle_epi8 and _mm_alignr_epi8 */
++#endif
++
++#if defined(__XOP__) && (defined(__GNUC__) || defined(__clang__))
++#include <x86intrin.h>
++#endif
++
++#if !defined(__AVX512F__)
++#if !defined(__AVX2__)
++#if !defined(__XOP__)
++#if defined(__SSSE3__)
++#define r16                                                                    \
++    (_mm_setr_epi8(2, 3, 4, 5, 6, 7, 0, 1, 10, 11, 12, 13, 14, 15, 8, 9))
++#define r24                                                                    \
++    (_mm_setr_epi8(3, 4, 5, 6, 7, 0, 1, 2, 11, 12, 13, 14, 15, 8, 9, 10))
++#define _mm_roti_epi64(x, c)                                                   \
++    (-(c) == 32)                                                               \
++        ? _mm_shuffle_epi32((x), _MM_SHUFFLE(2, 3, 0, 1))                      \
++        : (-(c) == 24)                                                         \
++              ? _mm_shuffle_epi8((x), r24)                                     \
++              : (-(c) == 16)                                                   \
++                    ? _mm_shuffle_epi8((x), r16)                               \
++                    : (-(c) == 63)                                             \
++                          ? _mm_xor_si128(_mm_srli_epi64((x), -(c)),           \
++                                          _mm_add_epi64((x), (x)))             \
++                          : _mm_xor_si128(_mm_srli_epi64((x), -(c)),           \
++                                          _mm_slli_epi64((x), 64 - (-(c))))
++#else /* defined(__SSE2__) */
++#define _mm_roti_epi64(r, c)                                                   \
++    _mm_xor_si128(_mm_srli_epi64((r), -(c)), _mm_slli_epi64((r), 64 - (-(c))))
++#endif
++#else
++#endif
++
++static BLAKE2_INLINE __m128i fBlaMka(__m128i x, __m128i y) {
++    const __m128i z = _mm_mul_epu32(x, y);
++    return _mm_add_epi64(_mm_add_epi64(x, y), _mm_add_epi64(z, z));
++}
++
++#define G1(A0, B0, C0, D0, A1, B1, C1, D1)                                     \
++    do {                                                                       \
++        A0 = fBlaMka(A0, B0);                                                  \
++        A1 = fBlaMka(A1, B1);                                                  \
++                                                                               \
++        D0 = _mm_xor_si128(D0, A0);                                            \
++        D1 = _mm_xor_si128(D1, A1);                                            \
++                                                                               \
++        D0 = _mm_roti_epi64(D0, -32);                                          \
++        D1 = _mm_roti_epi64(D1, -32);                                          \
++                                                                               \
++        C0 = fBlaMka(C0, D0);                                                  \
++        C1 = fBlaMka(C1, D1);                                                  \
++                                                                               \
++        B0 = _mm_xor_si128(B0, C0);                                            \
++        B1 = _mm_xor_si128(B1, C1);                                            \
++                                                                               \
++        B0 = _mm_roti_epi64(B0, -24);                                          \
++        B1 = _mm_roti_epi64(B1, -24);                                          \
++    } while ((void)0, 0)
++
++#define G2(A0, B0, C0, D0, A1, B1, C1, D1)                                     \
++    do {                                                                       \
++        A0 = fBlaMka(A0, B0);                                                  \
++        A1 = fBlaMka(A1, B1);                                                  \
++                                                                               \
++        D0 = _mm_xor_si128(D0, A0);                                            \
++        D1 = _mm_xor_si128(D1, A1);                                            \
++                                                                               \
++        D0 = _mm_roti_epi64(D0, -16);                                          \
++        D1 = _mm_roti_epi64(D1, -16);                                          \
++                                                                               \
++        C0 = fBlaMka(C0, D0);                                                  \
++        C1 = fBlaMka(C1, D1);                                                  \
++                                                                               \
++        B0 = _mm_xor_si128(B0, C0);                                            \
++        B1 = _mm_xor_si128(B1, C1);                                            \
++                                                                               \
++        B0 = _mm_roti_epi64(B0, -63);                                          \
++        B1 = _mm_roti_epi64(B1, -63);                                          \
++    } while ((void)0, 0)
++
++#if defined(__SSSE3__)
++#define DIAGONALIZE(A0, B0, C0, D0, A1, B1, C1, D1)                            \
++    do {                                                                       \
++        __m128i t0 = _mm_alignr_epi8(B1, B0, 8);                               \
++        __m128i t1 = _mm_alignr_epi8(B0, B1, 8);                               \
++        B0 = t0;                                                               \
++        B1 = t1;                                                               \
++                                                                               \
++        t0 = C0;                                                               \
++        C0 = C1;                                                               \
++        C1 = t0;                                                               \
++                                                                               \
++        t0 = _mm_alignr_epi8(D1, D0, 8);                                       \
++        t1 = _mm_alignr_epi8(D0, D1, 8);                                       \
++        D0 = t1;                                                               \
++        D1 = t0;                                                               \
++    } while ((void)0, 0)
++
++#define UNDIAGONALIZE(A0, B0, C0, D0, A1, B1, C1, D1)                          \
++    do {                                                                       \
++        __m128i t0 = _mm_alignr_epi8(B0, B1, 8);                               \
++        __m128i t1 = _mm_alignr_epi8(B1, B0, 8);                               \
++        B0 = t0;                                                               \
++        B1 = t1;                                                               \
++                                                                               \
++        t0 = C0;                                                               \
++        C0 = C1;                                                               \
++        C1 = t0;                                                               \
++                                                                               \
++        t0 = _mm_alignr_epi8(D0, D1, 8);                                       \
++        t1 = _mm_alignr_epi8(D1, D0, 8);                                       \
++        D0 = t1;                                                               \
++        D1 = t0;                                                               \
++    } while ((void)0, 0)
++#else /* SSE2 */
++#define DIAGONALIZE(A0, B0, C0, D0, A1, B1, C1, D1)                            \
++    do {                                                                       \
++        __m128i t0 = D0;                                                       \
++        __m128i t1 = B0;                                                       \
++        D0 = C0;                                                               \
++        C0 = C1;                                                               \
++        C1 = D0;                                                               \
++        D0 = _mm_unpackhi_epi64(D1, _mm_unpacklo_epi64(t0, t0));               \
++        D1 = _mm_unpackhi_epi64(t0, _mm_unpacklo_epi64(D1, D1));               \
++        B0 = _mm_unpackhi_epi64(B0, _mm_unpacklo_epi64(B1, B1));               \
++        B1 = _mm_unpackhi_epi64(B1, _mm_unpacklo_epi64(t1, t1));               \
++    } while ((void)0, 0)
++
++#define UNDIAGONALIZE(A0, B0, C0, D0, A1, B1, C1, D1)                          \
++    do {                                                                       \
++        __m128i t0, t1;                                                        \
++        t0 = C0;                                                               \
++        C0 = C1;                                                               \
++        C1 = t0;                                                               \
++        t0 = B0;                                                               \
++        t1 = D0;                                                               \
++        B0 = _mm_unpackhi_epi64(B1, _mm_unpacklo_epi64(B0, B0));               \
++        B1 = _mm_unpackhi_epi64(t0, _mm_unpacklo_epi64(B1, B1));               \
++        D0 = _mm_unpackhi_epi64(D0, _mm_unpacklo_epi64(D1, D1));               \
++        D1 = _mm_unpackhi_epi64(D1, _mm_unpacklo_epi64(t1, t1));               \
++    } while ((void)0, 0)
++#endif
++
++#define BLAKE2_ROUND(A0, A1, B0, B1, C0, C1, D0, D1)                           \
++    do {                                                                       \
++        G1(A0, B0, C0, D0, A1, B1, C1, D1);                                    \
++        G2(A0, B0, C0, D0, A1, B1, C1, D1);                                    \
++                                                                               \
++        DIAGONALIZE(A0, B0, C0, D0, A1, B1, C1, D1);                           \
++                                                                               \
++        G1(A0, B0, C0, D0, A1, B1, C1, D1);                                    \
++        G2(A0, B0, C0, D0, A1, B1, C1, D1);                                    \
++                                                                               \
++        UNDIAGONALIZE(A0, B0, C0, D0, A1, B1, C1, D1);                         \
++    } while ((void)0, 0)
++#else /* __AVX2__ */
++
++#include <immintrin.h>
++
++#define rotr32(x)   _mm256_shuffle_epi32(x, _MM_SHUFFLE(2, 3, 0, 1))
++#define rotr24(x)   _mm256_shuffle_epi8(x, _mm256_setr_epi8(3, 4, 5, 6, 7, 0, 1, 2, 11, 12, 13, 14, 15, 8, 9, 10, 3, 4, 5, 6, 7, 0, 1, 2, 11, 12, 13, 14, 15, 8, 9, 10))
++#define rotr16(x)   _mm256_shuffle_epi8(x, _mm256_setr_epi8(2, 3, 4, 5, 6, 7, 0, 1, 10, 11, 12, 13, 14, 15, 8, 9, 2, 3, 4, 5, 6, 7, 0, 1, 10, 11, 12, 13, 14, 15, 8, 9))
++#define rotr63(x)   _mm256_xor_si256(_mm256_srli_epi64((x), 63), _mm256_add_epi64((x), (x)))
++
++#define G1_AVX2(A0, A1, B0, B1, C0, C1, D0, D1) \
++    do { \
++        __m256i ml = _mm256_mul_epu32(A0, B0); \
++        ml = _mm256_add_epi64(ml, ml); \
++        A0 = _mm256_add_epi64(A0, _mm256_add_epi64(B0, ml)); \
++        D0 = _mm256_xor_si256(D0, A0); \
++        D0 = rotr32(D0); \
++        \
++        ml = _mm256_mul_epu32(C0, D0); \
++        ml = _mm256_add_epi64(ml, ml); \
++        C0 = _mm256_add_epi64(C0, _mm256_add_epi64(D0, ml)); \
++        \
++        B0 = _mm256_xor_si256(B0, C0); \
++        B0 = rotr24(B0); \
++        \
++        ml = _mm256_mul_epu32(A1, B1); \
++        ml = _mm256_add_epi64(ml, ml); \
++        A1 = _mm256_add_epi64(A1, _mm256_add_epi64(B1, ml)); \
++        D1 = _mm256_xor_si256(D1, A1); \
++        D1 = rotr32(D1); \
++        \
++        ml = _mm256_mul_epu32(C1, D1); \
++        ml = _mm256_add_epi64(ml, ml); \
++        C1 = _mm256_add_epi64(C1, _mm256_add_epi64(D1, ml)); \
++        \
++        B1 = _mm256_xor_si256(B1, C1); \
++        B1 = rotr24(B1); \
++    } while((void)0, 0);
++
++#define G2_AVX2(A0, A1, B0, B1, C0, C1, D0, D1) \
++    do { \
++        __m256i ml = _mm256_mul_epu32(A0, B0); \
++        ml = _mm256_add_epi64(ml, ml); \
++        A0 = _mm256_add_epi64(A0, _mm256_add_epi64(B0, ml)); \
++        D0 = _mm256_xor_si256(D0, A0); \
++        D0 = rotr16(D0); \
++        \
++        ml = _mm256_mul_epu32(C0, D0); \
++        ml = _mm256_add_epi64(ml, ml); \
++        C0 = _mm256_add_epi64(C0, _mm256_add_epi64(D0, ml)); \
++        B0 = _mm256_xor_si256(B0, C0); \
++        B0 = rotr63(B0); \
++        \
++        ml = _mm256_mul_epu32(A1, B1); \
++        ml = _mm256_add_epi64(ml, ml); \
++        A1 = _mm256_add_epi64(A1, _mm256_add_epi64(B1, ml)); \
++        D1 = _mm256_xor_si256(D1, A1); \
++        D1 = rotr16(D1); \
++        \
++        ml = _mm256_mul_epu32(C1, D1); \
++        ml = _mm256_add_epi64(ml, ml); \
++        C1 = _mm256_add_epi64(C1, _mm256_add_epi64(D1, ml)); \
++        B1 = _mm256_xor_si256(B1, C1); \
++        B1 = rotr63(B1); \
++    } while((void)0, 0);
++
++#define DIAGONALIZE_1(A0, B0, C0, D0, A1, B1, C1, D1) \
++    do { \
++        B0 = _mm256_permute4x64_epi64(B0, _MM_SHUFFLE(0, 3, 2, 1)); \
++        C0 = _mm256_permute4x64_epi64(C0, _MM_SHUFFLE(1, 0, 3, 2)); \
++        D0 = _mm256_permute4x64_epi64(D0, _MM_SHUFFLE(2, 1, 0, 3)); \
++        \
++        B1 = _mm256_permute4x64_epi64(B1, _MM_SHUFFLE(0, 3, 2, 1)); \
++        C1 = _mm256_permute4x64_epi64(C1, _MM_SHUFFLE(1, 0, 3, 2)); \
++        D1 = _mm256_permute4x64_epi64(D1, _MM_SHUFFLE(2, 1, 0, 3)); \
++    } while((void)0, 0);
++
++#define DIAGONALIZE_2(A0, A1, B0, B1, C0, C1, D0, D1) \
++    do { \
++        __m256i tmp1 = _mm256_blend_epi32(B0, B1, 0xCC); \
++        __m256i tmp2 = _mm256_blend_epi32(B0, B1, 0x33); \
++        B1 = _mm256_permute4x64_epi64(tmp1, _MM_SHUFFLE(2,3,0,1)); \
++        B0 = _mm256_permute4x64_epi64(tmp2, _MM_SHUFFLE(2,3,0,1)); \
++        \
++        tmp1 = C0; \
++        C0 = C1; \
++        C1 = tmp1; \
++        \
++        tmp1 = _mm256_blend_epi32(D0, D1, 0xCC); \
++        tmp2 = _mm256_blend_epi32(D0, D1, 0x33); \
++        D0 = _mm256_permute4x64_epi64(tmp1, _MM_SHUFFLE(2,3,0,1)); \
++        D1 = _mm256_permute4x64_epi64(tmp2, _MM_SHUFFLE(2,3,0,1)); \
++    } while(0);
++
++#define UNDIAGONALIZE_1(A0, B0, C0, D0, A1, B1, C1, D1) \
++    do { \
++        B0 = _mm256_permute4x64_epi64(B0, _MM_SHUFFLE(2, 1, 0, 3)); \
++        C0 = _mm256_permute4x64_epi64(C0, _MM_SHUFFLE(1, 0, 3, 2)); \
++        D0 = _mm256_permute4x64_epi64(D0, _MM_SHUFFLE(0, 3, 2, 1)); \
++        \
++        B1 = _mm256_permute4x64_epi64(B1, _MM_SHUFFLE(2, 1, 0, 3)); \
++        C1 = _mm256_permute4x64_epi64(C1, _MM_SHUFFLE(1, 0, 3, 2)); \
++        D1 = _mm256_permute4x64_epi64(D1, _MM_SHUFFLE(0, 3, 2, 1)); \
++    } while((void)0, 0);
++
++#define UNDIAGONALIZE_2(A0, A1, B0, B1, C0, C1, D0, D1) \
++    do { \
++        __m256i tmp1 = _mm256_blend_epi32(B0, B1, 0xCC); \
++        __m256i tmp2 = _mm256_blend_epi32(B0, B1, 0x33); \
++        B0 = _mm256_permute4x64_epi64(tmp1, _MM_SHUFFLE(2,3,0,1)); \
++        B1 = _mm256_permute4x64_epi64(tmp2, _MM_SHUFFLE(2,3,0,1)); \
++        \
++        tmp1 = C0; \
++        C0 = C1; \
++        C1 = tmp1; \
++        \
++        tmp1 = _mm256_blend_epi32(D0, D1, 0x33); \
++        tmp2 = _mm256_blend_epi32(D0, D1, 0xCC); \
++        D0 = _mm256_permute4x64_epi64(tmp1, _MM_SHUFFLE(2,3,0,1)); \
++        D1 = _mm256_permute4x64_epi64(tmp2, _MM_SHUFFLE(2,3,0,1)); \
++    } while((void)0, 0);
++
++#define BLAKE2_ROUND_1(A0, A1, B0, B1, C0, C1, D0, D1) \
++    do{ \
++        G1_AVX2(A0, A1, B0, B1, C0, C1, D0, D1) \
++        G2_AVX2(A0, A1, B0, B1, C0, C1, D0, D1) \
++        \
++        DIAGONALIZE_1(A0, B0, C0, D0, A1, B1, C1, D1) \
++        \
++        G1_AVX2(A0, A1, B0, B1, C0, C1, D0, D1) \
++        G2_AVX2(A0, A1, B0, B1, C0, C1, D0, D1) \
++        \
++        UNDIAGONALIZE_1(A0, B0, C0, D0, A1, B1, C1, D1) \
++    } while((void)0, 0);
++
++#define BLAKE2_ROUND_2(A0, A1, B0, B1, C0, C1, D0, D1) \
++    do{ \
++        G1_AVX2(A0, A1, B0, B1, C0, C1, D0, D1) \
++        G2_AVX2(A0, A1, B0, B1, C0, C1, D0, D1) \
++        \
++        DIAGONALIZE_2(A0, A1, B0, B1, C0, C1, D0, D1) \
++        \
++        G1_AVX2(A0, A1, B0, B1, C0, C1, D0, D1) \
++        G2_AVX2(A0, A1, B0, B1, C0, C1, D0, D1) \
++        \
++        UNDIAGONALIZE_2(A0, A1, B0, B1, C0, C1, D0, D1) \
++    } while((void)0, 0);
++
++#endif /* __AVX2__ */
++
++#else /* __AVX512F__ */
++
++#include <immintrin.h>
++
++#define ror64(x, n) _mm512_ror_epi64((x), (n))
++
++static __m512i muladd(__m512i x, __m512i y)
++{
++    __m512i z = _mm512_mul_epu32(x, y);
++    return _mm512_add_epi64(_mm512_add_epi64(x, y), _mm512_add_epi64(z, z));
++}
++
++#define G1(A0, B0, C0, D0, A1, B1, C1, D1) \
++    do { \
++        A0 = muladd(A0, B0); \
++        A1 = muladd(A1, B1); \
++\
++        D0 = _mm512_xor_si512(D0, A0); \
++        D1 = _mm512_xor_si512(D1, A1); \
++\
++        D0 = ror64(D0, 32); \
++        D1 = ror64(D1, 32); \
++\
++        C0 = muladd(C0, D0); \
++        C1 = muladd(C1, D1); \
++\
++        B0 = _mm512_xor_si512(B0, C0); \
++        B1 = _mm512_xor_si512(B1, C1); \
++\
++        B0 = ror64(B0, 24); \
++        B1 = ror64(B1, 24); \
++    } while ((void)0, 0)
++
++#define G2(A0, B0, C0, D0, A1, B1, C1, D1) \
++    do { \
++        A0 = muladd(A0, B0); \
++        A1 = muladd(A1, B1); \
++\
++        D0 = _mm512_xor_si512(D0, A0); \
++        D1 = _mm512_xor_si512(D1, A1); \
++\
++        D0 = ror64(D0, 16); \
++        D1 = ror64(D1, 16); \
++\
++        C0 = muladd(C0, D0); \
++        C1 = muladd(C1, D1); \
++\
++        B0 = _mm512_xor_si512(B0, C0); \
++        B1 = _mm512_xor_si512(B1, C1); \
++\
++        B0 = ror64(B0, 63); \
++        B1 = ror64(B1, 63); \
++    } while ((void)0, 0)
++
++#define DIAGONALIZE(A0, B0, C0, D0, A1, B1, C1, D1) \
++    do { \
++        B0 = _mm512_permutex_epi64(B0, _MM_SHUFFLE(0, 3, 2, 1)); \
++        B1 = _mm512_permutex_epi64(B1, _MM_SHUFFLE(0, 3, 2, 1)); \
++\
++        C0 = _mm512_permutex_epi64(C0, _MM_SHUFFLE(1, 0, 3, 2)); \
++        C1 = _mm512_permutex_epi64(C1, _MM_SHUFFLE(1, 0, 3, 2)); \
++\
++        D0 = _mm512_permutex_epi64(D0, _MM_SHUFFLE(2, 1, 0, 3)); \
++        D1 = _mm512_permutex_epi64(D1, _MM_SHUFFLE(2, 1, 0, 3)); \
++    } while ((void)0, 0)
++
++#define UNDIAGONALIZE(A0, B0, C0, D0, A1, B1, C1, D1) \
++    do { \
++        B0 = _mm512_permutex_epi64(B0, _MM_SHUFFLE(2, 1, 0, 3)); \
++        B1 = _mm512_permutex_epi64(B1, _MM_SHUFFLE(2, 1, 0, 3)); \
++\
++        C0 = _mm512_permutex_epi64(C0, _MM_SHUFFLE(1, 0, 3, 2)); \
++        C1 = _mm512_permutex_epi64(C1, _MM_SHUFFLE(1, 0, 3, 2)); \
++\
++        D0 = _mm512_permutex_epi64(D0, _MM_SHUFFLE(0, 3, 2, 1)); \
++        D1 = _mm512_permutex_epi64(D1, _MM_SHUFFLE(0, 3, 2, 1)); \
++    } while ((void)0, 0)
++
++#define BLAKE2_ROUND(A0, B0, C0, D0, A1, B1, C1, D1) \
++    do { \
++        G1(A0, B0, C0, D0, A1, B1, C1, D1); \
++        G2(A0, B0, C0, D0, A1, B1, C1, D1); \
++\
++        DIAGONALIZE(A0, B0, C0, D0, A1, B1, C1, D1); \
++\
++        G1(A0, B0, C0, D0, A1, B1, C1, D1); \
++        G2(A0, B0, C0, D0, A1, B1, C1, D1); \
++\
++        UNDIAGONALIZE(A0, B0, C0, D0, A1, B1, C1, D1); \
++    } while ((void)0, 0)
++
++#define SWAP_HALVES(A0, A1) \
++    do { \
++        __m512i t0, t1; \
++        t0 = _mm512_shuffle_i64x2(A0, A1, _MM_SHUFFLE(1, 0, 1, 0)); \
++        t1 = _mm512_shuffle_i64x2(A0, A1, _MM_SHUFFLE(3, 2, 3, 2)); \
++        A0 = t0; \
++        A1 = t1; \
++    } while((void)0, 0)
++
++#define SWAP_QUARTERS(A0, A1) \
++    do { \
++        SWAP_HALVES(A0, A1); \
++        A0 = _mm512_permutexvar_epi64(_mm512_setr_epi64(0, 1, 4, 5, 2, 3, 6, 7), A0); \
++        A1 = _mm512_permutexvar_epi64(_mm512_setr_epi64(0, 1, 4, 5, 2, 3, 6, 7), A1); \
++    } while((void)0, 0)
++
++#define UNSWAP_QUARTERS(A0, A1) \
++    do { \
++        A0 = _mm512_permutexvar_epi64(_mm512_setr_epi64(0, 1, 4, 5, 2, 3, 6, 7), A0); \
++        A1 = _mm512_permutexvar_epi64(_mm512_setr_epi64(0, 1, 4, 5, 2, 3, 6, 7), A1); \
++        SWAP_HALVES(A0, A1); \
++    } while((void)0, 0)
++
++#define BLAKE2_ROUND_1(A0, C0, B0, D0, A1, C1, B1, D1) \
++    do { \
++        SWAP_HALVES(A0, B0); \
++        SWAP_HALVES(C0, D0); \
++        SWAP_HALVES(A1, B1); \
++        SWAP_HALVES(C1, D1); \
++        BLAKE2_ROUND(A0, B0, C0, D0, A1, B1, C1, D1); \
++        SWAP_HALVES(A0, B0); \
++        SWAP_HALVES(C0, D0); \
++        SWAP_HALVES(A1, B1); \
++        SWAP_HALVES(C1, D1); \
++    } while ((void)0, 0)
++
++#define BLAKE2_ROUND_2(A0, A1, B0, B1, C0, C1, D0, D1) \
++    do { \
++        SWAP_QUARTERS(A0, A1); \
++        SWAP_QUARTERS(B0, B1); \
++        SWAP_QUARTERS(C0, C1); \
++        SWAP_QUARTERS(D0, D1); \
++        BLAKE2_ROUND(A0, B0, C0, D0, A1, B1, C1, D1); \
++        UNSWAP_QUARTERS(A0, A1); \
++        UNSWAP_QUARTERS(B0, B1); \
++        UNSWAP_QUARTERS(C0, C1); \
++        UNSWAP_QUARTERS(D0, D1); \
++    } while ((void)0, 0)
++
++#endif /* __AVX512F__ */
++#endif /* BLAKE_ROUND_MKA_OPT_H */
+diff --git a/C/argon2/blake2/blamka-round-ref.h b/C/argon2/blake2/blamka-round-ref.h
+new file mode 100644
+index 00000000..b8f2cf47
+--- /dev/null
++++ b/C/argon2/blake2/blamka-round-ref.h
+@@ -0,0 +1,56 @@
++/*
++ * Argon2 reference source code package - reference C implementations
++ *
++ * Copyright 2015
++ * Daniel Dinu, Dmitry Khovratovich, Jean-Philippe Aumasson, and Samuel Neves
++ *
++ * You may use this work under the terms of a Creative Commons CC0 1.0
++ * License/Waiver or the Apache Public License 2.0, at your option. The terms of
++ * these licenses can be found at:
++ *
++ * - CC0 1.0 Universal : http://creativecommons.org/publicdomain/zero/1.0
++ * - Apache 2.0        : http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * You should have received a copy of both of these licenses along with this
++ * software. If not, they may be obtained at the above URLs.
++ */
++
++#ifndef BLAKE_ROUND_MKA_H
++#define BLAKE_ROUND_MKA_H
++
++#include "blake2.h"
++#include "blake2-impl.h"
++
++/* designed by the Lyra PHC team */
++static BLAKE2_INLINE uint64_t fBlaMka(uint64_t x, uint64_t y) {
++    const uint64_t m = UINT64_C(0xFFFFFFFF);
++    const uint64_t xy = (x & m) * (y & m);
++    return x + y + 2 * xy;
++}
++
++#define G(a, b, c, d)                                                          \
++    do {                                                                       \
++        a = fBlaMka(a, b);                                                     \
++        d = rotr64(d ^ a, 32);                                                 \
++        c = fBlaMka(c, d);                                                     \
++        b = rotr64(b ^ c, 24);                                                 \
++        a = fBlaMka(a, b);                                                     \
++        d = rotr64(d ^ a, 16);                                                 \
++        c = fBlaMka(c, d);                                                     \
++        b = rotr64(b ^ c, 63);                                                 \
++    } while ((void)0, 0)
++
++#define BLAKE2_ROUND_NOMSG(v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11,   \
++                           v12, v13, v14, v15)                                 \
++    do {                                                                       \
++        G(v0, v4, v8, v12);                                                    \
++        G(v1, v5, v9, v13);                                                    \
++        G(v2, v6, v10, v14);                                                   \
++        G(v3, v7, v11, v15);                                                   \
++        G(v0, v5, v10, v15);                                                   \
++        G(v1, v6, v11, v12);                                                   \
++        G(v2, v7, v8, v13);                                                    \
++        G(v3, v4, v9, v14);                                                    \
++    } while ((void)0, 0)
++
++#endif
+diff --git a/C/argon2/core.c b/C/argon2/core.c
+new file mode 100644
+index 00000000..65f05376
+--- /dev/null
++++ b/C/argon2/core.c
+@@ -0,0 +1,648 @@
++/*
++ * Argon2 reference source code package - reference C implementations
++ *
++ * Copyright 2015
++ * Daniel Dinu, Dmitry Khovratovich, Jean-Philippe Aumasson, and Samuel Neves
++ *
++ * You may use this work under the terms of a Creative Commons CC0 1.0
++ * License/Waiver or the Apache Public License 2.0, at your option. The terms of
++ * these licenses can be found at:
++ *
++ * - CC0 1.0 Universal : http://creativecommons.org/publicdomain/zero/1.0
++ * - Apache 2.0        : http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * You should have received a copy of both of these licenses along with this
++ * software. If not, they may be obtained at the above URLs.
++ */
++
++/*For memory wiping*/
++#ifdef _MSC_VER
++#include <windows.h>
++#include <winbase.h> /* For SecureZeroMemory */
++#endif
++#if defined __STDC_LIB_EXT1__
++#define __STDC_WANT_LIB_EXT1__ 1
++#endif
++#define VC_GE_2005(version) (version >= 1400)
++
++/* for explicit_bzero() on glibc */
++#define _DEFAULT_SOURCE
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include "core.h"
++#include "thread.h"
++#include "blake2/blake2.h"
++#include "blake2/blake2-impl.h"
++
++#ifdef GENKAT
++#include "genkat.h"
++#endif
++
++#if defined(__clang__)
++#if __has_attribute(optnone)
++#define NOT_OPTIMIZED __attribute__((optnone))
++#endif
++#elif defined(__GNUC__)
++#define GCC_VERSION                                                            \
++    (__GNUC__ * 10000 + __GNUC_MINOR__ * 100 + __GNUC_PATCHLEVEL__)
++#if GCC_VERSION >= 40400
++#define NOT_OPTIMIZED __attribute__((optimize("O0")))
++#endif
++#endif
++#ifndef NOT_OPTIMIZED
++#define NOT_OPTIMIZED
++#endif
++
++/***************Instance and Position constructors**********/
++void init_block_value(block *b, uint8_t in) { memset(b->v, in, sizeof(b->v)); }
++
++void copy_block(block *dst, const block *src) {
++    memcpy(dst->v, src->v, sizeof(uint64_t) * ARGON2_QWORDS_IN_BLOCK);
++}
++
++void xor_block(block *dst, const block *src) {
++    int i;
++    for (i = 0; i < ARGON2_QWORDS_IN_BLOCK; ++i) {
++        dst->v[i] ^= src->v[i];
++    }
++}
++
++static void load_block(block *dst, const void *input) {
++    unsigned i;
++    for (i = 0; i < ARGON2_QWORDS_IN_BLOCK; ++i) {
++        dst->v[i] = load64((const uint8_t *)input + i * sizeof(dst->v[i]));
++    }
++}
++
++static void store_block(void *output, const block *src) {
++    unsigned i;
++    for (i = 0; i < ARGON2_QWORDS_IN_BLOCK; ++i) {
++        store64((uint8_t *)output + i * sizeof(src->v[i]), src->v[i]);
++    }
++}
++
++/***************Memory functions*****************/
++
++int allocate_memory(const argon2_context *context, uint8_t **memory,
++                    size_t num, size_t size) {
++    size_t memory_size = num*size;
++    if (memory == NULL) {
++        return ARGON2_MEMORY_ALLOCATION_ERROR;
++    }
++
++    /* 1. Check for multiplication overflow */
++    if (size != 0 && memory_size / size != num) {
++        return ARGON2_MEMORY_ALLOCATION_ERROR;
++    }
++
++    /* 2. Try to allocate with appropriate allocator */
++    if (context->allocate_cbk) {
++        (context->allocate_cbk)(memory, memory_size);
++    } else {
++        *memory = malloc(memory_size);
++    }
++
++    if (*memory == NULL) {
++        return ARGON2_MEMORY_ALLOCATION_ERROR;
++    }
++
++    return ARGON2_OK;
++}
++
++void free_memory(const argon2_context *context, uint8_t *memory,
++                 size_t num, size_t size) {
++    size_t memory_size = num*size;
++    clear_internal_memory(memory, memory_size);
++    if (context->free_cbk) {
++        (context->free_cbk)(memory, memory_size);
++    } else {
++        free(memory);
++    }
++}
++
++#if defined(__OpenBSD__)
++#define HAVE_EXPLICIT_BZERO 1
++#elif defined(__GLIBC__) && defined(__GLIBC_PREREQ)
++#if __GLIBC_PREREQ(2,25)
++#define HAVE_EXPLICIT_BZERO 1
++#endif
++#endif
++
++void NOT_OPTIMIZED secure_wipe_memory(void *v, size_t n) {
++#if defined(_MSC_VER) && VC_GE_2005(_MSC_VER)
++    SecureZeroMemory(v, n);
++#elif defined memset_s
++    memset_s(v, n, 0, n);
++#elif defined(HAVE_EXPLICIT_BZERO)
++    explicit_bzero(v, n);
++#else
++    static void *(*const volatile memset_sec)(void *, int, size_t) = &memset;
++    memset_sec(v, 0, n);
++#endif
++}
++
++/* Memory clear flag defaults to true. */
++int FLAG_clear_internal_memory = 1;
++void clear_internal_memory(void *v, size_t n) {
++  if (FLAG_clear_internal_memory && v) {
++    secure_wipe_memory(v, n);
++  }
++}
++
++void finalize(const argon2_context *context, argon2_instance_t *instance) {
++    if (context != NULL && instance != NULL) {
++        block blockhash;
++        uint32_t l;
++
++        copy_block(&blockhash, instance->memory + instance->lane_length - 1);
++
++        /* XOR the last blocks */
++        for (l = 1; l < instance->lanes; ++l) {
++            uint32_t last_block_in_lane =
++                l * instance->lane_length + (instance->lane_length - 1);
++            xor_block(&blockhash, instance->memory + last_block_in_lane);
++        }
++
++        /* Hash the result */
++        {
++            uint8_t blockhash_bytes[ARGON2_BLOCK_SIZE];
++            store_block(blockhash_bytes, &blockhash);
++            blake2b_long(context->out, context->outlen, blockhash_bytes,
++                         ARGON2_BLOCK_SIZE);
++            /* clear blockhash and blockhash_bytes */
++            clear_internal_memory(blockhash.v, ARGON2_BLOCK_SIZE);
++            clear_internal_memory(blockhash_bytes, ARGON2_BLOCK_SIZE);
++        }
++
++#ifdef GENKAT
++        print_tag(context->out, context->outlen);
++#endif
++
++        free_memory(context, (uint8_t *)instance->memory,
++                    instance->memory_blocks, sizeof(block));
++    }
++}
++
++uint32_t index_alpha(const argon2_instance_t *instance,
++                     const argon2_position_t *position, uint32_t pseudo_rand,
++                     int same_lane) {
++    /*
++     * Pass 0:
++     *      This lane : all already finished segments plus already constructed
++     * blocks in this segment
++     *      Other lanes : all already finished segments
++     * Pass 1+:
++     *      This lane : (SYNC_POINTS - 1) last segments plus already constructed
++     * blocks in this segment
++     *      Other lanes : (SYNC_POINTS - 1) last segments
++     */
++    uint32_t reference_area_size;
++    uint64_t relative_position;
++    uint32_t start_position, absolute_position;
++
++    if (0 == position->pass) {
++        /* First pass */
++        if (0 == position->slice) {
++            /* First slice */
++            reference_area_size =
++                position->index - 1; /* all but the previous */
++        } else {
++            if (same_lane) {
++                /* The same lane => add current segment */
++                reference_area_size =
++                    position->slice * instance->segment_length +
++                    position->index - 1;
++            } else {
++                reference_area_size =
++                    position->slice * instance->segment_length +
++                    ((position->index == 0) ? (-1) : 0);
++            }
++        }
++    } else {
++        /* Second pass */
++        if (same_lane) {
++            reference_area_size = instance->lane_length -
++                                  instance->segment_length + position->index -
++                                  1;
++        } else {
++            reference_area_size = instance->lane_length -
++                                  instance->segment_length +
++                                  ((position->index == 0) ? (-1) : 0);
++        }
++    }
++
++    /* 1.2.4. Mapping pseudo_rand to 0..<reference_area_size-1> and produce
++     * relative position */
++    relative_position = pseudo_rand;
++    relative_position = relative_position * relative_position >> 32;
++    relative_position = reference_area_size - 1 -
++                        (reference_area_size * relative_position >> 32);
++
++    /* 1.2.5 Computing starting position */
++    start_position = 0;
++
++    if (0 != position->pass) {
++        start_position = (position->slice == ARGON2_SYNC_POINTS - 1)
++                             ? 0
++                             : (position->slice + 1) * instance->segment_length;
++    }
++
++    /* 1.2.6. Computing absolute position */
++    absolute_position = (start_position + relative_position) %
++                        instance->lane_length; /* absolute position */
++    return absolute_position;
++}
++
++/* Single-threaded version for p=1 case */
++static int fill_memory_blocks_st(argon2_instance_t *instance) {
++    uint32_t r, s, l;
++
++    for (r = 0; r < instance->passes; ++r) {
++        for (s = 0; s < ARGON2_SYNC_POINTS; ++s) {
++            for (l = 0; l < instance->lanes; ++l) {
++                argon2_position_t position = {r, l, (uint8_t)s, 0};
++                fill_segment(instance, position);
++            }
++        }
++#ifdef GENKAT
++        internal_kat(instance, r); /* Print all memory blocks */
++#endif
++    }
++    return ARGON2_OK;
++}
++
++#if !defined(ARGON2_NO_THREADS)
++
++#ifdef _WIN32
++static unsigned __stdcall fill_segment_thr(void *thread_data)
++#else
++static void *fill_segment_thr(void *thread_data)
++#endif
++{
++    argon2_thread_data *my_data = thread_data;
++    fill_segment(my_data->instance_ptr, my_data->pos);
++    argon2_thread_exit();
++    return 0;
++}
++
++/* Multi-threaded version for p > 1 case */
++static int fill_memory_blocks_mt(argon2_instance_t *instance) {
++    uint32_t r, s;
++    argon2_thread_handle_t *thread = NULL;
++    argon2_thread_data *thr_data = NULL;
++    int rc = ARGON2_OK;
++
++    /* 1. Allocating space for threads */
++    thread = calloc(instance->lanes, sizeof(argon2_thread_handle_t));
++    if (thread == NULL) {
++        rc = ARGON2_MEMORY_ALLOCATION_ERROR;
++        goto fail;
++    }
++
++    thr_data = calloc(instance->lanes, sizeof(argon2_thread_data));
++    if (thr_data == NULL) {
++        rc = ARGON2_MEMORY_ALLOCATION_ERROR;
++        goto fail;
++    }
++
++    for (r = 0; r < instance->passes; ++r) {
++        for (s = 0; s < ARGON2_SYNC_POINTS; ++s) {
++            uint32_t l, ll;
++
++            /* 2. Calling threads */
++            for (l = 0; l < instance->lanes; ++l) {
++                argon2_position_t position;
++
++                /* 2.1 Join a thread if limit is exceeded */
++                if (l >= instance->threads) {
++                    if (argon2_thread_join(thread[l - instance->threads])) {
++                        rc = ARGON2_THREAD_FAIL;
++                        goto fail;
++                    }
++                }
++
++                /* 2.2 Create thread */
++                position.pass = r;
++                position.lane = l;
++                position.slice = (uint8_t)s;
++                position.index = 0;
++                thr_data[l].instance_ptr =
++                    instance; /* preparing the thread input */
++                memcpy(&(thr_data[l].pos), &position,
++                       sizeof(argon2_position_t));
++                if (argon2_thread_create(&thread[l], &fill_segment_thr,
++                                         (void *)&thr_data[l])) {
++                    /* Wait for already running threads */
++                    for (ll = 0; ll < l; ++ll)
++                        argon2_thread_join(thread[ll]);
++                    rc = ARGON2_THREAD_FAIL;
++                    goto fail;
++                }
++
++                /* fill_segment(instance, position); */
++                /*Non-thread equivalent of the lines above */
++            }
++
++            /* 3. Joining remaining threads */
++            for (l = instance->lanes - instance->threads; l < instance->lanes;
++                 ++l) {
++                if (argon2_thread_join(thread[l])) {
++                    rc = ARGON2_THREAD_FAIL;
++                    goto fail;
++                }
++            }
++        }
++
++#ifdef GENKAT
++        internal_kat(instance, r); /* Print all memory blocks */
++#endif
++    }
++
++fail:
++    if (thread != NULL) {
++        free(thread);
++    }
++    if (thr_data != NULL) {
++        free(thr_data);
++    }
++    return rc;
++}
++
++#endif /* ARGON2_NO_THREADS */
++
++int fill_memory_blocks(argon2_instance_t *instance) {
++	if (instance == NULL || instance->lanes == 0) {
++	    return ARGON2_INCORRECT_PARAMETER;
++    }
++#if defined(ARGON2_NO_THREADS)
++    return fill_memory_blocks_st(instance);
++#else
++    return instance->threads == 1 ?
++			fill_memory_blocks_st(instance) : fill_memory_blocks_mt(instance);
++#endif
++}
++
++int validate_inputs(const argon2_context *context) {
++    if (NULL == context) {
++        return ARGON2_INCORRECT_PARAMETER;
++    }
++
++    if (NULL == context->out) {
++        return ARGON2_OUTPUT_PTR_NULL;
++    }
++
++    /* Validate output length */
++    if (ARGON2_MIN_OUTLEN > context->outlen) {
++        return ARGON2_OUTPUT_TOO_SHORT;
++    }
++
++    if (ARGON2_MAX_OUTLEN < context->outlen) {
++        return ARGON2_OUTPUT_TOO_LONG;
++    }
++
++    /* Validate password (required param) */
++    if (NULL == context->pwd) {
++        if (0 != context->pwdlen) {
++            return ARGON2_PWD_PTR_MISMATCH;
++        }
++    }
++
++    if (ARGON2_MIN_PWD_LENGTH > context->pwdlen) {
++      return ARGON2_PWD_TOO_SHORT;
++    }
++
++    if (ARGON2_MAX_PWD_LENGTH < context->pwdlen) {
++        return ARGON2_PWD_TOO_LONG;
++    }
++
++    /* Validate salt (required param) */
++    if (NULL == context->salt) {
++        if (0 != context->saltlen) {
++            return ARGON2_SALT_PTR_MISMATCH;
++        }
++    }
++
++    if (ARGON2_MIN_SALT_LENGTH > context->saltlen) {
++        return ARGON2_SALT_TOO_SHORT;
++    }
++
++    if (ARGON2_MAX_SALT_LENGTH < context->saltlen) {
++        return ARGON2_SALT_TOO_LONG;
++    }
++
++    /* Validate secret (optional param) */
++    if (NULL == context->secret) {
++        if (0 != context->secretlen) {
++            return ARGON2_SECRET_PTR_MISMATCH;
++        }
++    } else {
++        if (ARGON2_MIN_SECRET > context->secretlen) {
++            return ARGON2_SECRET_TOO_SHORT;
++        }
++        if (ARGON2_MAX_SECRET < context->secretlen) {
++            return ARGON2_SECRET_TOO_LONG;
++        }
++    }
++
++    /* Validate associated data (optional param) */
++    if (NULL == context->ad) {
++        if (0 != context->adlen) {
++            return ARGON2_AD_PTR_MISMATCH;
++        }
++    } else {
++        if (ARGON2_MIN_AD_LENGTH > context->adlen) {
++            return ARGON2_AD_TOO_SHORT;
++        }
++        if (ARGON2_MAX_AD_LENGTH < context->adlen) {
++            return ARGON2_AD_TOO_LONG;
++        }
++    }
++
++    /* Validate memory cost */
++    if (ARGON2_MIN_MEMORY > context->m_cost) {
++        return ARGON2_MEMORY_TOO_LITTLE;
++    }
++
++    if (ARGON2_MAX_MEMORY < context->m_cost) {
++        return ARGON2_MEMORY_TOO_MUCH;
++    }
++
++    if (context->m_cost < 8 * context->lanes) {
++        return ARGON2_MEMORY_TOO_LITTLE;
++    }
++
++    /* Validate time cost */
++    if (ARGON2_MIN_TIME > context->t_cost) {
++        return ARGON2_TIME_TOO_SMALL;
++    }
++
++    if (ARGON2_MAX_TIME < context->t_cost) {
++        return ARGON2_TIME_TOO_LARGE;
++    }
++
++    /* Validate lanes */
++    if (ARGON2_MIN_LANES > context->lanes) {
++        return ARGON2_LANES_TOO_FEW;
++    }
++
++    if (ARGON2_MAX_LANES < context->lanes) {
++        return ARGON2_LANES_TOO_MANY;
++    }
++
++    /* Validate threads */
++    if (ARGON2_MIN_THREADS > context->threads) {
++        return ARGON2_THREADS_TOO_FEW;
++    }
++
++    if (ARGON2_MAX_THREADS < context->threads) {
++        return ARGON2_THREADS_TOO_MANY;
++    }
++
++    if (NULL != context->allocate_cbk && NULL == context->free_cbk) {
++        return ARGON2_FREE_MEMORY_CBK_NULL;
++    }
++
++    if (NULL == context->allocate_cbk && NULL != context->free_cbk) {
++        return ARGON2_ALLOCATE_MEMORY_CBK_NULL;
++    }
++
++    return ARGON2_OK;
++}
++
++void fill_first_blocks(uint8_t *blockhash, const argon2_instance_t *instance) {
++    uint32_t l;
++    /* Make the first and second block in each lane as G(H0||0||i) or
++       G(H0||1||i) */
++    uint8_t blockhash_bytes[ARGON2_BLOCK_SIZE];
++    for (l = 0; l < instance->lanes; ++l) {
++
++        store32(blockhash + ARGON2_PREHASH_DIGEST_LENGTH, 0);
++        store32(blockhash + ARGON2_PREHASH_DIGEST_LENGTH + 4, l);
++        blake2b_long(blockhash_bytes, ARGON2_BLOCK_SIZE, blockhash,
++                     ARGON2_PREHASH_SEED_LENGTH);
++        load_block(&instance->memory[l * instance->lane_length + 0],
++                   blockhash_bytes);
++
++        store32(blockhash + ARGON2_PREHASH_DIGEST_LENGTH, 1);
++        blake2b_long(blockhash_bytes, ARGON2_BLOCK_SIZE, blockhash,
++                     ARGON2_PREHASH_SEED_LENGTH);
++        load_block(&instance->memory[l * instance->lane_length + 1],
++                   blockhash_bytes);
++    }
++    clear_internal_memory(blockhash_bytes, ARGON2_BLOCK_SIZE);
++}
++
++void initial_hash(uint8_t *blockhash, argon2_context *context,
++                  argon2_type type) {
++    blake2b_state BlakeHash;
++    uint8_t value[sizeof(uint32_t)];
++
++    if (NULL == context || NULL == blockhash) {
++        return;
++    }
++
++    blake2b_init(&BlakeHash, ARGON2_PREHASH_DIGEST_LENGTH);
++
++    store32(&value, context->lanes);
++    blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
++
++    store32(&value, context->outlen);
++    blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
++
++    store32(&value, context->m_cost);
++    blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
++
++    store32(&value, context->t_cost);
++    blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
++
++    store32(&value, context->version);
++    blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
++
++    store32(&value, (uint32_t)type);
++    blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
++
++    store32(&value, context->pwdlen);
++    blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
++
++    if (context->pwd != NULL) {
++        blake2b_update(&BlakeHash, (const uint8_t *)context->pwd,
++                       context->pwdlen);
++
++        if (context->flags & ARGON2_FLAG_CLEAR_PASSWORD) {
++            secure_wipe_memory(context->pwd, context->pwdlen);
++            context->pwdlen = 0;
++        }
++    }
++
++    store32(&value, context->saltlen);
++    blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
++
++    if (context->salt != NULL) {
++        blake2b_update(&BlakeHash, (const uint8_t *)context->salt,
++                       context->saltlen);
++    }
++
++    store32(&value, context->secretlen);
++    blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
++
++    if (context->secret != NULL) {
++        blake2b_update(&BlakeHash, (const uint8_t *)context->secret,
++                       context->secretlen);
++
++        if (context->flags & ARGON2_FLAG_CLEAR_SECRET) {
++            secure_wipe_memory(context->secret, context->secretlen);
++            context->secretlen = 0;
++        }
++    }
++
++    store32(&value, context->adlen);
++    blake2b_update(&BlakeHash, (const uint8_t *)&value, sizeof(value));
++
++    if (context->ad != NULL) {
++        blake2b_update(&BlakeHash, (const uint8_t *)context->ad,
++                       context->adlen);
++    }
++
++    blake2b_final(&BlakeHash, blockhash, ARGON2_PREHASH_DIGEST_LENGTH);
++}
++
++int initialize(argon2_instance_t *instance, argon2_context *context) {
++    uint8_t blockhash[ARGON2_PREHASH_SEED_LENGTH];
++    int result = ARGON2_OK;
++
++    if (instance == NULL || context == NULL)
++        return ARGON2_INCORRECT_PARAMETER;
++    instance->context_ptr = context;
++
++    /* 1. Memory allocation */
++    result = allocate_memory(context, (uint8_t **)&(instance->memory),
++                             instance->memory_blocks, sizeof(block));
++    if (result != ARGON2_OK) {
++        return result;
++    }
++
++    /* 2. Initial hashing */
++    /* H_0 + 8 extra bytes to produce the first blocks */
++    /* uint8_t blockhash[ARGON2_PREHASH_SEED_LENGTH]; */
++    /* Hashing all inputs */
++    initial_hash(blockhash, context, instance->type);
++    /* Zeroing 8 extra bytes */
++    clear_internal_memory(blockhash + ARGON2_PREHASH_DIGEST_LENGTH,
++                          ARGON2_PREHASH_SEED_LENGTH -
++                              ARGON2_PREHASH_DIGEST_LENGTH);
++
++#ifdef GENKAT
++    initial_kat(blockhash, context, instance->type);
++#endif
++
++    /* 3. Creating first blocks, we always have at least two blocks in a slice
++     */
++    fill_first_blocks(blockhash, instance);
++    /* Clearing the hash */
++    clear_internal_memory(blockhash, ARGON2_PREHASH_SEED_LENGTH);
++
++    return ARGON2_OK;
++}
+diff --git a/C/argon2/core.h b/C/argon2/core.h
+new file mode 100644
+index 00000000..78000ba9
+--- /dev/null
++++ b/C/argon2/core.h
+@@ -0,0 +1,228 @@
++/*
++ * Argon2 reference source code package - reference C implementations
++ *
++ * Copyright 2015
++ * Daniel Dinu, Dmitry Khovratovich, Jean-Philippe Aumasson, and Samuel Neves
++ *
++ * You may use this work under the terms of a Creative Commons CC0 1.0
++ * License/Waiver or the Apache Public License 2.0, at your option. The terms of
++ * these licenses can be found at:
++ *
++ * - CC0 1.0 Universal : http://creativecommons.org/publicdomain/zero/1.0
++ * - Apache 2.0        : http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * You should have received a copy of both of these licenses along with this
++ * software. If not, they may be obtained at the above URLs.
++ */
++
++#ifndef ARGON2_CORE_H
++#define ARGON2_CORE_H
++
++#include "argon2.h"
++
++#define CONST_CAST(x) (x)(uintptr_t)
++
++/**********************Argon2 internal constants*******************************/
++
++enum argon2_core_constants {
++    /* Memory block size in bytes */
++    ARGON2_BLOCK_SIZE = 1024,
++    ARGON2_QWORDS_IN_BLOCK = ARGON2_BLOCK_SIZE / 8,
++    ARGON2_OWORDS_IN_BLOCK = ARGON2_BLOCK_SIZE / 16,
++    ARGON2_HWORDS_IN_BLOCK = ARGON2_BLOCK_SIZE / 32,
++    ARGON2_512BIT_WORDS_IN_BLOCK = ARGON2_BLOCK_SIZE / 64,
++
++    /* Number of pseudo-random values generated by one call to Blake in Argon2i
++       to
++       generate reference block positions */
++    ARGON2_ADDRESSES_IN_BLOCK = 128,
++
++    /* Pre-hashing digest length and its extension*/
++    ARGON2_PREHASH_DIGEST_LENGTH = 64,
++    ARGON2_PREHASH_SEED_LENGTH = 72
++};
++
++/*************************Argon2 internal data types***********************/
++
++/*
++ * Structure for the (1KB) memory block implemented as 128 64-bit words.
++ * Memory blocks can be copied, XORed. Internal words can be accessed by [] (no
++ * bounds checking).
++ */
++typedef struct block_ { uint64_t v[ARGON2_QWORDS_IN_BLOCK]; } block;
++
++/*****************Functions that work with the block******************/
++
++/* Initialize each byte of the block with @in */
++void init_block_value(block *b, uint8_t in);
++
++/* Copy block @src to block @dst */
++void copy_block(block *dst, const block *src);
++
++/* XOR @src onto @dst bytewise */
++void xor_block(block *dst, const block *src);
++
++/*
++ * Argon2 instance: memory pointer, number of passes, amount of memory, type,
++ * and derived values.
++ * Used to evaluate the number and location of blocks to construct in each
++ * thread
++ */
++typedef struct Argon2_instance_t {
++    block *memory;          /* Memory pointer */
++    uint32_t version;
++    uint32_t passes;        /* Number of passes */
++    uint32_t memory_blocks; /* Number of blocks in memory */
++    uint32_t segment_length;
++    uint32_t lane_length;
++    uint32_t lanes;
++    uint32_t threads;
++    argon2_type type;
++    int print_internals; /* whether to print the memory blocks */
++    argon2_context *context_ptr; /* points back to original context */
++} argon2_instance_t;
++
++/*
++ * Argon2 position: where we construct the block right now. Used to distribute
++ * work between threads.
++ */
++typedef struct Argon2_position_t {
++    uint32_t pass;
++    uint32_t lane;
++    uint8_t slice;
++    uint32_t index;
++} argon2_position_t;
++
++/*Struct that holds the inputs for thread handling FillSegment*/
++typedef struct Argon2_thread_data {
++    argon2_instance_t *instance_ptr;
++    argon2_position_t pos;
++} argon2_thread_data;
++
++/*************************Argon2 core functions********************************/
++
++/* Allocates memory to the given pointer, uses the appropriate allocator as
++ * specified in the context. Total allocated memory is num*size.
++ * @param context argon2_context which specifies the allocator
++ * @param memory pointer to the pointer to the memory
++ * @param size the size in bytes for each element to be allocated
++ * @param num the number of elements to be allocated
++ * @return ARGON2_OK if @memory is a valid pointer and memory is allocated
++ */
++int allocate_memory(const argon2_context *context, uint8_t **memory,
++                    size_t num, size_t size);
++
++/*
++ * Frees memory at the given pointer, uses the appropriate deallocator as
++ * specified in the context. Also cleans the memory using clear_internal_memory.
++ * @param context argon2_context which specifies the deallocator
++ * @param memory pointer to buffer to be freed
++ * @param size the size in bytes for each element to be deallocated
++ * @param num the number of elements to be deallocated
++ */
++void free_memory(const argon2_context *context, uint8_t *memory,
++                 size_t num, size_t size);
++
++/* Function that securely cleans the memory. This ignores any flags set
++ * regarding clearing memory. Usually one just calls clear_internal_memory.
++ * @param mem Pointer to the memory
++ * @param s Memory size in bytes
++ */
++void secure_wipe_memory(void *v, size_t n);
++
++/* Function that securely clears the memory if FLAG_clear_internal_memory is
++ * set. If the flag isn't set, this function does nothing.
++ * @param mem Pointer to the memory
++ * @param s Memory size in bytes
++ */
++void clear_internal_memory(void *v, size_t n);
++
++/*
++ * Computes absolute position of reference block in the lane following a skewed
++ * distribution and using a pseudo-random value as input
++ * @param instance Pointer to the current instance
++ * @param position Pointer to the current position
++ * @param pseudo_rand 32-bit pseudo-random value used to determine the position
++ * @param same_lane Indicates if the block will be taken from the current lane.
++ * If so we can reference the current segment
++ * @pre All pointers must be valid
++ */
++uint32_t index_alpha(const argon2_instance_t *instance,
++                     const argon2_position_t *position, uint32_t pseudo_rand,
++                     int same_lane);
++
++/*
++ * Function that validates all inputs against predefined restrictions and return
++ * an error code
++ * @param context Pointer to current Argon2 context
++ * @return ARGON2_OK if everything is all right, otherwise one of error codes
++ * (all defined in <argon2.h>
++ */
++int validate_inputs(const argon2_context *context);
++
++/*
++ * Hashes all the inputs into @a blockhash[PREHASH_DIGEST_LENGTH], clears
++ * password and secret if needed
++ * @param  context  Pointer to the Argon2 internal structure containing memory
++ * pointer, and parameters for time and space requirements.
++ * @param  blockhash Buffer for pre-hashing digest
++ * @param  type Argon2 type
++ * @pre    @a blockhash must have at least @a PREHASH_DIGEST_LENGTH bytes
++ * allocated
++ */
++void initial_hash(uint8_t *blockhash, argon2_context *context,
++                  argon2_type type);
++
++/*
++ * Function creates first 2 blocks per lane
++ * @param instance Pointer to the current instance
++ * @param blockhash Pointer to the pre-hashing digest
++ * @pre blockhash must point to @a PREHASH_SEED_LENGTH allocated values
++ */
++void fill_first_blocks(uint8_t *blockhash, const argon2_instance_t *instance);
++
++/*
++ * Function allocates memory, hashes the inputs with Blake,  and creates first
++ * two blocks. Returns the pointer to the main memory with 2 blocks per lane
++ * initialized
++ * @param  context  Pointer to the Argon2 internal structure containing memory
++ * pointer, and parameters for time and space requirements.
++ * @param  instance Current Argon2 instance
++ * @return Zero if successful, -1 if memory failed to allocate. @context->state
++ * will be modified if successful.
++ */
++int initialize(argon2_instance_t *instance, argon2_context *context);
++
++/*
++ * XORing the last block of each lane, hashing it, making the tag. Deallocates
++ * the memory.
++ * @param context Pointer to current Argon2 context (use only the out parameters
++ * from it)
++ * @param instance Pointer to current instance of Argon2
++ * @pre instance->state must point to necessary amount of memory
++ * @pre context->out must point to outlen bytes of memory
++ * @pre if context->free_cbk is not NULL, it should point to a function that
++ * deallocates memory
++ */
++void finalize(const argon2_context *context, argon2_instance_t *instance);
++
++/*
++ * Function that fills the segment using previous segments also from other
++ * threads
++ * @param context current context
++ * @param instance Pointer to the current instance
++ * @param position Current position
++ * @pre all block pointers must be valid
++ */
++void fill_segment(const argon2_instance_t *instance,
++                  argon2_position_t position);
++
++/*
++ * Function that fills the entire memory t_cost times based on the first two
++ * blocks in each lane
++ * @param instance Pointer to the current instance
++ * @return ARGON2_OK if successful, @context->state
++ */
++int fill_memory_blocks(argon2_instance_t *instance);
++
++#endif
+diff --git a/C/argon2/encoding.c b/C/argon2/encoding.c
+new file mode 100644
+index 00000000..12cfda4d
+--- /dev/null
++++ b/C/argon2/encoding.c
+@@ -0,0 +1,463 @@
++/*
++ * Argon2 reference source code package - reference C implementations
++ *
++ * Copyright 2015
++ * Daniel Dinu, Dmitry Khovratovich, Jean-Philippe Aumasson, and Samuel Neves
++ *
++ * You may use this work under the terms of a Creative Commons CC0 1.0
++ * License/Waiver or the Apache Public License 2.0, at your option. The terms of
++ * these licenses can be found at:
++ *
++ * - CC0 1.0 Universal : http://creativecommons.org/publicdomain/zero/1.0
++ * - Apache 2.0        : http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * You should have received a copy of both of these licenses along with this
++ * software. If not, they may be obtained at the above URLs.
++ */
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <limits.h>
++#include "encoding.h"
++#include "core.h"
++
++/*
++ * Example code for a decoder and encoder of "hash strings", with Argon2
++ * parameters.
++ *
++ * This code comprises three sections:
++ *
++ *   -- The first section contains generic Base64 encoding and decoding
++ *   functions. It is conceptually applicable to any hash function
++ *   implementation that uses Base64 to encode and decode parameters,
++ *   salts and outputs. It could be made into a library, provided that
++ *   the relevant functions are made public (non-static) and be given
++ *   reasonable names to avoid collisions with other functions.
++ *
++ *   -- The second section is specific to Argon2. It encodes and decodes
++ *   the parameters, salts and outputs. It does not compute the hash
++ *   itself.
++ *
++ * The code was originally written by Thomas Pornin <pornin@bolet.org>,
++ * to whom comments and remarks may be sent. It is released under what
++ * should amount to Public Domain or its closest equivalent; the
++ * following mantra is supposed to incarnate that fact with all the
++ * proper legal rituals:
++ *
++ * ---------------------------------------------------------------------
++ * This file is provided under the terms of Creative Commons CC0 1.0
++ * Public Domain Dedication. To the extent possible under law, the
++ * author (Thomas Pornin) has waived all copyright and related or
++ * neighboring rights to this file. This work is published from: Canada.
++ * ---------------------------------------------------------------------
++ *
++ * Copyright (c) 2015 Thomas Pornin
++ */
++
++/* ==================================================================== */
++/*
++ * Common code; could be shared between different hash functions.
++ *
++ * Note: the Base64 functions below assume that uppercase letters (resp.
++ * lowercase letters) have consecutive numerical codes, that fit on 8
++ * bits. All modern systems use ASCII-compatible charsets, where these
++ * properties are true. If you are stuck with a dinosaur of a system
++ * that still defaults to EBCDIC then you already have much bigger
++ * interoperability issues to deal with.
++ */
++
++/*
++ * Some macros for constant-time comparisons. These work over values in
++ * the 0..255 range. Returned value is 0x00 on "false", 0xFF on "true".
++ */
++#define EQ(x, y) ((((0U - ((unsigned)(x) ^ (unsigned)(y))) >> 8) & 0xFF) ^ 0xFF)
++#define GT(x, y) ((((unsigned)(y) - (unsigned)(x)) >> 8) & 0xFF)
++#define GE(x, y) (GT(y, x) ^ 0xFF)
++#define LT(x, y) GT(y, x)
++#define LE(x, y) GE(y, x)
++
++/*
++ * Convert value x (0..63) to corresponding Base64 character.
++ */
++static int b64_byte_to_char(unsigned x) {
++    return (LT(x, 26) & (x + 'A')) |
++           (GE(x, 26) & LT(x, 52) & (x + ('a' - 26))) |
++           (GE(x, 52) & LT(x, 62) & (x + ('0' - 52))) | (EQ(x, 62) & '+') |
++           (EQ(x, 63) & '/');
++}
++
++/*
++ * Convert character c to the corresponding 6-bit value. If character c
++ * is not a Base64 character, then 0xFF (255) is returned.
++ */
++static unsigned b64_char_to_byte(int c) {
++    unsigned x;
++
++    x = (GE(c, 'A') & LE(c, 'Z') & (c - 'A')) |
++        (GE(c, 'a') & LE(c, 'z') & (c - ('a' - 26))) |
++        (GE(c, '0') & LE(c, '9') & (c - ('0' - 52))) | (EQ(c, '+') & 62) |
++        (EQ(c, '/') & 63);
++    return x | (EQ(x, 0) & (EQ(c, 'A') ^ 0xFF));
++}
++
++/*
++ * Convert some bytes to Base64. 'dst_len' is the length (in characters)
++ * of the output buffer 'dst'; if that buffer is not large enough to
++ * receive the result (including the terminating 0), then (size_t)-1
++ * is returned. Otherwise, the zero-terminated Base64 string is written
++ * in the buffer, and the output length (counted WITHOUT the terminating
++ * zero) is returned.
++ */
++static size_t to_base64(char *dst, size_t dst_len, const void *src,
++                        size_t src_len) {
++    size_t olen;
++    const unsigned char *buf;
++    unsigned acc, acc_len;
++
++    olen = (src_len / 3) << 2;
++    switch (src_len % 3) {
++    case 2:
++        olen++;
++    /* fall through */
++    case 1:
++        olen += 2;
++        break;
++    }
++    if (dst_len <= olen) {
++        return (size_t)-1;
++    }
++    acc = 0;
++    acc_len = 0;
++    buf = (const unsigned char *)src;
++    while (src_len-- > 0) {
++        acc = (acc << 8) + (*buf++);
++        acc_len += 8;
++        while (acc_len >= 6) {
++            acc_len -= 6;
++            *dst++ = (char)b64_byte_to_char((acc >> acc_len) & 0x3F);
++        }
++    }
++    if (acc_len > 0) {
++        *dst++ = (char)b64_byte_to_char((acc << (6 - acc_len)) & 0x3F);
++    }
++    *dst++ = 0;
++    return olen;
++}
++
++/*
++ * Decode Base64 chars into bytes. The '*dst_len' value must initially
++ * contain the length of the output buffer '*dst'; when the decoding
++ * ends, the actual number of decoded bytes is written back in
++ * '*dst_len'.
++ *
++ * Decoding stops when a non-Base64 character is encountered, or when
++ * the output buffer capacity is exceeded. If an error occurred (output
++ * buffer is too small, invalid last characters leading to unprocessed
++ * buffered bits), then NULL is returned; otherwise, the returned value
++ * points to the first non-Base64 character in the source stream, which
++ * may be the terminating zero.
++ */
++static const char *from_base64(void *dst, size_t *dst_len, const char *src) {
++    size_t len;
++    unsigned char *buf;
++    unsigned acc, acc_len;
++
++    buf = (unsigned char *)dst;
++    len = 0;
++    acc = 0;
++    acc_len = 0;
++    for (;;) {
++        unsigned d;
++
++        d = b64_char_to_byte(*src);
++        if (d == 0xFF) {
++            break;
++        }
++        src++;
++        acc = (acc << 6) + d;
++        acc_len += 6;
++        if (acc_len >= 8) {
++            acc_len -= 8;
++            if ((len++) >= *dst_len) {
++                return NULL;
++            }
++            *buf++ = (acc >> acc_len) & 0xFF;
++        }
++    }
++
++    /*
++     * If the input length is equal to 1 modulo 4 (which is
++     * invalid), then there will remain 6 unprocessed bits;
++     * otherwise, only 0, 2 or 4 bits are buffered. The buffered
++     * bits must also all be zero.
++     */
++    if (acc_len > 4 || (acc & (((unsigned)1 << acc_len) - 1)) != 0) {
++        return NULL;
++    }
++    *dst_len = len;
++    return src;
++}
++
++/*
++ * Decode decimal integer from 'str'; the value is written in '*v'.
++ * Returned value is a pointer to the next non-decimal character in the
++ * string. If there is no digit at all, or the value encoding is not
++ * minimal (extra leading zeros), or the value does not fit in an
++ * 'unsigned long', then NULL is returned.
++ */
++static const char *decode_decimal(const char *str, unsigned long *v) {
++    const char *orig;
++    unsigned long acc;
++
++    acc = 0;
++    for (orig = str;; str++) {
++        int c;
++
++        c = *str;
++        if (c < '0' || c > '9') {
++            break;
++        }
++        c -= '0';
++        if (acc > (ULONG_MAX / 10)) {
++            return NULL;
++        }
++        acc *= 10;
++        if ((unsigned long)c > (ULONG_MAX - acc)) {
++            return NULL;
++        }
++        acc += (unsigned long)c;
++    }
++    if (str == orig || (*orig == '0' && str != (orig + 1))) {
++        return NULL;
++    }
++    *v = acc;
++    return str;
++}
++
++/* ==================================================================== */
++/*
++ * Code specific to Argon2.
++ *
++ * The code below applies the following format:
++ *
++ *  $argon2<T>[$v=<num>]$m=<num>,t=<num>,p=<num>$<bin>$<bin>
++ *
++ * where <T> is either 'd', 'id', or 'i', <num> is a decimal integer (positive,
++ * fits in an 'unsigned long'), and <bin> is Base64-encoded data (no '=' padding
++ * characters, no newline or whitespace).
++ *
++ * The last two binary chunks (encoded in Base64) are, in that order,
++ * the salt and the output. Both are required. The binary salt length and the
++ * output length must be in the allowed ranges defined in argon2.h.
++ *
++ * The ctx struct must contain buffers large enough to hold the salt and pwd
++ * when it is fed into decode_string.
++ */
++
++int decode_string(argon2_context *ctx, const char *str, argon2_type type) {
++
++/* check for prefix */
++#define CC(prefix)                                                             \
++    do {                                                                       \
++        size_t cc_len = strlen(prefix);                                        \
++        if (strncmp(str, prefix, cc_len) != 0) {                               \
++            return ARGON2_DECODING_FAIL;                                       \
++        }                                                                      \
++        str += cc_len;                                                         \
++    } while ((void)0, 0)
++
++/* optional prefix checking with supplied code */
++#define CC_opt(prefix, code)                                                   \
++    do {                                                                       \
++        size_t cc_len = strlen(prefix);                                        \
++        if (strncmp(str, prefix, cc_len) == 0) {                               \
++            str += cc_len;                                                     \
++            { code; }                                                          \
++        }                                                                      \
++    } while ((void)0, 0)
++
++/* Decoding prefix into decimal */
++#define DECIMAL(x)                                                             \
++    do {                                                                       \
++        unsigned long dec_x;                                                   \
++        str = decode_decimal(str, &dec_x);                                     \
++        if (str == NULL) {                                                     \
++            return ARGON2_DECODING_FAIL;                                       \
++        }                                                                      \
++        (x) = dec_x;                                                           \
++    } while ((void)0, 0)
++
++
++/* Decoding prefix into uint32_t decimal */
++#define DECIMAL_U32(x)                                                         \
++    do {                                                                       \
++        unsigned long dec_x;                                                   \
++        str = decode_decimal(str, &dec_x);                                     \
++        if (str == NULL || dec_x > UINT32_MAX) {                               \
++            return ARGON2_DECODING_FAIL;                                       \
++        }                                                                      \
++        (x) = (uint32_t)dec_x;                                                 \
++    } while ((void)0, 0)
++
++
++/* Decoding base64 into a binary buffer */
++#define BIN(buf, max_len, len)                                                 \
++    do {                                                                       \
++        size_t bin_len = (max_len);                                            \
++        str = from_base64(buf, &bin_len, str);                                 \
++        if (str == NULL || bin_len > UINT32_MAX) {                             \
++            return ARGON2_DECODING_FAIL;                                       \
++        }                                                                      \
++        (len) = (uint32_t)bin_len;                                             \
++    } while ((void)0, 0)
++
++    size_t maxsaltlen = ctx->saltlen;
++    size_t maxoutlen = ctx->outlen;
++    int validation_result;
++    const char* type_string;
++
++    /* We should start with the argon2_type we are using */
++    type_string = argon2_type2string(type, 0);
++    if (!type_string) {
++        return ARGON2_INCORRECT_TYPE;
++    }
++
++    CC("$");
++    CC(type_string);
++
++    /* Reading the version number if the default is suppressed */
++    ctx->version = ARGON2_VERSION_10;
++    CC_opt("$v=", DECIMAL_U32(ctx->version));
++
++    CC("$m=");
++    DECIMAL_U32(ctx->m_cost);
++    CC(",t=");
++    DECIMAL_U32(ctx->t_cost);
++    CC(",p=");
++    DECIMAL_U32(ctx->lanes);
++    ctx->threads = ctx->lanes;
++
++    CC("$");
++    BIN(ctx->salt, maxsaltlen, ctx->saltlen);
++    CC("$");
++    BIN(ctx->out, maxoutlen, ctx->outlen);
++
++    /* The rest of the fields get the default values */
++    ctx->secret = NULL;
++    ctx->secretlen = 0;
++    ctx->ad = NULL;
++    ctx->adlen = 0;
++    ctx->allocate_cbk = NULL;
++    ctx->free_cbk = NULL;
++    ctx->flags = ARGON2_DEFAULT_FLAGS;
++
++    /* On return, must have valid context */
++    validation_result = validate_inputs(ctx);
++    if (validation_result != ARGON2_OK) {
++        return validation_result;
++    }
++
++    /* Can't have any additional characters */
++    if (*str == 0) {
++        return ARGON2_OK;
++    } else {
++        return ARGON2_DECODING_FAIL;
++    }
++#undef CC
++#undef CC_opt
++#undef DECIMAL
++#undef BIN
++}
++
++int encode_string(char *dst, size_t dst_len, argon2_context *ctx,
++                  argon2_type type) {
++#define SS(str)                                                                \
++    do {                                                                       \
++        size_t pp_len = strlen(str);                                           \
++        if (pp_len >= dst_len) {                                               \
++            return ARGON2_ENCODING_FAIL;                                       \
++        }                                                                      \
++        memcpy(dst, str, pp_len + 1);                                          \
++        dst += pp_len;                                                         \
++        dst_len -= pp_len;                                                     \
++    } while ((void)0, 0)
++
++#define SX(x)                                                                  \
++    do {                                                                       \
++        char tmp[30];                                                          \
++        sprintf(tmp, "%lu", (unsigned long)(x));                               \
++        SS(tmp);                                                               \
++    } while ((void)0, 0)
++
++#define SB(buf, len)                                                           \
++    do {                                                                       \
++        size_t sb_len = to_base64(dst, dst_len, buf, len);                     \
++        if (sb_len == (size_t)-1) {                                            \
++            return ARGON2_ENCODING_FAIL;                                       \
++        }                                                                      \
++        dst += sb_len;                                                         \
++        dst_len -= sb_len;                                                     \
++    } while ((void)0, 0)
++
++    const char* type_string = argon2_type2string(type, 0);
++    int validation_result = validate_inputs(ctx);
++
++    if (!type_string) {
++      return ARGON2_ENCODING_FAIL;
++    }
++
++    if (validation_result != ARGON2_OK) {
++      return validation_result;
++    }
++
++
++    SS("$");
++    SS(type_string);
++
++    SS("$v=");
++    SX(ctx->version);
++
++    SS("$m=");
++    SX(ctx->m_cost);
++    SS(",t=");
++    SX(ctx->t_cost);
++    SS(",p=");
++    SX(ctx->lanes);
++
++    SS("$");
++    SB(ctx->salt, ctx->saltlen);
++
++    SS("$");
++    SB(ctx->out, ctx->outlen);
++    return ARGON2_OK;
++
++#undef SS
++#undef SX
++#undef SB
++}
++
++size_t b64len(uint32_t len) {
++    size_t olen = ((size_t)len / 3) << 2;
++
++    switch (len % 3) {
++    case 2:
++        olen++;
++    /* fall through */
++    case 1:
++        olen += 2;
++        break;
++    }
++
++    return olen;
++}
++
++size_t numlen(uint32_t num) {
++    size_t len = 1;
++    while (num >= 10) {
++        ++len;
++        num = num / 10;
++    }
++    return len;
++}
++
+diff --git a/C/argon2/encoding.h b/C/argon2/encoding.h
+new file mode 100644
+index 00000000..7e83ec92
+--- /dev/null
++++ b/C/argon2/encoding.h
+@@ -0,0 +1,57 @@
++/*
++ * Argon2 reference source code package - reference C implementations
++ *
++ * Copyright 2015
++ * Daniel Dinu, Dmitry Khovratovich, Jean-Philippe Aumasson, and Samuel Neves
++ *
++ * You may use this work under the terms of a Creative Commons CC0 1.0
++ * License/Waiver or the Apache Public License 2.0, at your option. The terms of
++ * these licenses can be found at:
++ *
++ * - CC0 1.0 Universal : http://creativecommons.org/publicdomain/zero/1.0
++ * - Apache 2.0        : http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * You should have received a copy of both of these licenses along with this
++ * software. If not, they may be obtained at the above URLs.
++ */
++
++#ifndef ENCODING_H
++#define ENCODING_H
++#include "argon2.h"
++
++#define ARGON2_MAX_DECODED_LANES UINT32_C(255)
++#define ARGON2_MIN_DECODED_SALT_LEN UINT32_C(8)
++#define ARGON2_MIN_DECODED_OUT_LEN UINT32_C(12)
++
++/*
++* encode an Argon2 hash string into the provided buffer. 'dst_len'
++* contains the size, in characters, of the 'dst' buffer; if 'dst_len'
++* is less than the number of required characters (including the
++* terminating 0), then this function returns ARGON2_ENCODING_ERROR.
++*
++* on success, ARGON2_OK is returned.
++*/
++int encode_string(char *dst, size_t dst_len, argon2_context *ctx,
++                  argon2_type type);
++
++/*
++* Decodes an Argon2 hash string into the provided structure 'ctx'.
++* The only fields that must be set prior to this call are ctx.saltlen and
++* ctx.outlen (which must be the maximal salt and out length values that are
++* allowed), ctx.salt and ctx.out (which must be buffers of the specified
++* length), and ctx.pwd and ctx.pwdlen which must hold a valid password.
++*
++* Invalid input string causes an error. On success, the ctx is valid and all
++* fields have been initialized.
++*
++* Returned value is ARGON2_OK on success, other ARGON2_ codes on error.
++*/
++int decode_string(argon2_context *ctx, const char *str, argon2_type type);
++
++/* Returns the length of the encoded byte stream with length len */
++size_t b64len(uint32_t len);
++
++/* Returns the length of the encoded number num */
++size_t numlen(uint32_t num);
++
++#endif
+diff --git a/C/argon2/opt.c b/C/argon2/opt.c
+new file mode 100644
+index 00000000..f6c20528
+--- /dev/null
++++ b/C/argon2/opt.c
+@@ -0,0 +1,283 @@
++/*
++ * Argon2 reference source code package - reference C implementations
++ *
++ * Copyright 2015
++ * Daniel Dinu, Dmitry Khovratovich, Jean-Philippe Aumasson, and Samuel Neves
++ *
++ * You may use this work under the terms of a Creative Commons CC0 1.0
++ * License/Waiver or the Apache Public License 2.0, at your option. The terms of
++ * these licenses can be found at:
++ *
++ * - CC0 1.0 Universal : http://creativecommons.org/publicdomain/zero/1.0
++ * - Apache 2.0        : http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * You should have received a copy of both of these licenses along with this
++ * software. If not, they may be obtained at the above URLs.
++ */
++
++#include <stdint.h>
++#include <string.h>
++#include <stdlib.h>
++
++#include "argon2.h"
++#include "core.h"
++
++#include "blake2/blake2.h"
++#include "blake2/blamka-round-opt.h"
++
++/*
++ * Function fills a new memory block and optionally XORs the old block over the new one.
++ * Memory must be initialized.
++ * @param state Pointer to the just produced block. Content will be updated(!)
++ * @param ref_block Pointer to the reference block
++ * @param next_block Pointer to the block to be XORed over. May coincide with @ref_block
++ * @param with_xor Whether to XOR into the new block (1) or just overwrite (0)
++ * @pre all block pointers must be valid
++ */
++#if defined(__AVX512F__)
++static void fill_block(__m512i *state, const block *ref_block,
++                       block *next_block, int with_xor) {
++    __m512i block_XY[ARGON2_512BIT_WORDS_IN_BLOCK];
++    unsigned int i;
++
++    if (with_xor) {
++        for (i = 0; i < ARGON2_512BIT_WORDS_IN_BLOCK; i++) {
++            state[i] = _mm512_xor_si512(
++                state[i], _mm512_loadu_si512((const __m512i *)ref_block->v + i));
++            block_XY[i] = _mm512_xor_si512(
++                state[i], _mm512_loadu_si512((const __m512i *)next_block->v + i));
++        }
++    } else {
++        for (i = 0; i < ARGON2_512BIT_WORDS_IN_BLOCK; i++) {
++            block_XY[i] = state[i] = _mm512_xor_si512(
++                state[i], _mm512_loadu_si512((const __m512i *)ref_block->v + i));
++        }
++    }
++
++    for (i = 0; i < 2; ++i) {
++        BLAKE2_ROUND_1(
++            state[8 * i + 0], state[8 * i + 1], state[8 * i + 2], state[8 * i + 3],
++            state[8 * i + 4], state[8 * i + 5], state[8 * i + 6], state[8 * i + 7]);
++    }
++
++    for (i = 0; i < 2; ++i) {
++        BLAKE2_ROUND_2(
++            state[2 * 0 + i], state[2 * 1 + i], state[2 * 2 + i], state[2 * 3 + i],
++            state[2 * 4 + i], state[2 * 5 + i], state[2 * 6 + i], state[2 * 7 + i]);
++    }
++
++    for (i = 0; i < ARGON2_512BIT_WORDS_IN_BLOCK; i++) {
++        state[i] = _mm512_xor_si512(state[i], block_XY[i]);
++        _mm512_storeu_si512((__m512i *)next_block->v + i, state[i]);
++    }
++}
++#elif defined(__AVX2__)
++static void fill_block(__m256i *state, const block *ref_block,
++                       block *next_block, int with_xor) {
++    __m256i block_XY[ARGON2_HWORDS_IN_BLOCK];
++    unsigned int i;
++
++    if (with_xor) {
++        for (i = 0; i < ARGON2_HWORDS_IN_BLOCK; i++) {
++            state[i] = _mm256_xor_si256(
++                state[i], _mm256_loadu_si256((const __m256i *)ref_block->v + i));
++            block_XY[i] = _mm256_xor_si256(
++                state[i], _mm256_loadu_si256((const __m256i *)next_block->v + i));
++        }
++    } else {
++        for (i = 0; i < ARGON2_HWORDS_IN_BLOCK; i++) {
++            block_XY[i] = state[i] = _mm256_xor_si256(
++                state[i], _mm256_loadu_si256((const __m256i *)ref_block->v + i));
++        }
++    }
++
++    for (i = 0; i < 4; ++i) {
++        BLAKE2_ROUND_1(state[8 * i + 0], state[8 * i + 4], state[8 * i + 1], state[8 * i + 5],
++                       state[8 * i + 2], state[8 * i + 6], state[8 * i + 3], state[8 * i + 7]);
++    }
++
++    for (i = 0; i < 4; ++i) {
++        BLAKE2_ROUND_2(state[ 0 + i], state[ 4 + i], state[ 8 + i], state[12 + i],
++                       state[16 + i], state[20 + i], state[24 + i], state[28 + i]);
++    }
++
++    for (i = 0; i < ARGON2_HWORDS_IN_BLOCK; i++) {
++        state[i] = _mm256_xor_si256(state[i], block_XY[i]);
++        _mm256_storeu_si256((__m256i *)next_block->v + i, state[i]);
++    }
++}
++#else
++static void fill_block(__m128i *state, const block *ref_block,
++                       block *next_block, int with_xor) {
++    __m128i block_XY[ARGON2_OWORDS_IN_BLOCK];
++    unsigned int i;
++
++    if (with_xor) {
++        for (i = 0; i < ARGON2_OWORDS_IN_BLOCK; i++) {
++            state[i] = _mm_xor_si128(
++                state[i], _mm_loadu_si128((const __m128i *)ref_block->v + i));
++            block_XY[i] = _mm_xor_si128(
++                state[i], _mm_loadu_si128((const __m128i *)next_block->v + i));
++        }
++    } else {
++        for (i = 0; i < ARGON2_OWORDS_IN_BLOCK; i++) {
++            block_XY[i] = state[i] = _mm_xor_si128(
++                state[i], _mm_loadu_si128((const __m128i *)ref_block->v + i));
++        }
++    }
++
++    for (i = 0; i < 8; ++i) {
++        BLAKE2_ROUND(state[8 * i + 0], state[8 * i + 1], state[8 * i + 2],
++            state[8 * i + 3], state[8 * i + 4], state[8 * i + 5],
++            state[8 * i + 6], state[8 * i + 7]);
++    }
++
++    for (i = 0; i < 8; ++i) {
++        BLAKE2_ROUND(state[8 * 0 + i], state[8 * 1 + i], state[8 * 2 + i],
++            state[8 * 3 + i], state[8 * 4 + i], state[8 * 5 + i],
++            state[8 * 6 + i], state[8 * 7 + i]);
++    }
++
++    for (i = 0; i < ARGON2_OWORDS_IN_BLOCK; i++) {
++        state[i] = _mm_xor_si128(state[i], block_XY[i]);
++        _mm_storeu_si128((__m128i *)next_block->v + i, state[i]);
++    }
++}
++#endif
++
++static void next_addresses(block *address_block, block *input_block) {
++    /*Temporary zero-initialized blocks*/
++#if defined(__AVX512F__)
++    __m512i zero_block[ARGON2_512BIT_WORDS_IN_BLOCK];
++    __m512i zero2_block[ARGON2_512BIT_WORDS_IN_BLOCK];
++#elif defined(__AVX2__)
++    __m256i zero_block[ARGON2_HWORDS_IN_BLOCK];
++    __m256i zero2_block[ARGON2_HWORDS_IN_BLOCK];
++#else
++    __m128i zero_block[ARGON2_OWORDS_IN_BLOCK];
++    __m128i zero2_block[ARGON2_OWORDS_IN_BLOCK];
++#endif
++
++    memset(zero_block, 0, sizeof(zero_block));
++    memset(zero2_block, 0, sizeof(zero2_block));
++
++    /*Increasing index counter*/
++    input_block->v[6]++;
++
++    /*First iteration of G*/
++    fill_block(zero_block, input_block, address_block, 0);
++
++    /*Second iteration of G*/
++    fill_block(zero2_block, address_block, address_block, 0);
++}
++
++void fill_segment(const argon2_instance_t *instance,
++                  argon2_position_t position) {
++    block *ref_block = NULL, *curr_block = NULL;
++    block address_block, input_block;
++    uint64_t pseudo_rand, ref_index, ref_lane;
++    uint32_t prev_offset, curr_offset;
++    uint32_t starting_index, i;
++#if defined(__AVX512F__)
++    __m512i state[ARGON2_512BIT_WORDS_IN_BLOCK];
++#elif defined(__AVX2__)
++    __m256i state[ARGON2_HWORDS_IN_BLOCK];
++#else
++    __m128i state[ARGON2_OWORDS_IN_BLOCK];
++#endif
++    int data_independent_addressing;
++
++    if (instance == NULL) {
++        return;
++    }
++
++    data_independent_addressing =
++        (instance->type == Argon2_i) ||
++        (instance->type == Argon2_id && (position.pass == 0) &&
++         (position.slice < ARGON2_SYNC_POINTS / 2));
++
++    if (data_independent_addressing) {
++        init_block_value(&input_block, 0);
++
++        input_block.v[0] = position.pass;
++        input_block.v[1] = position.lane;
++        input_block.v[2] = position.slice;
++        input_block.v[3] = instance->memory_blocks;
++        input_block.v[4] = instance->passes;
++        input_block.v[5] = instance->type;
++    }
++
++    starting_index = 0;
++
++    if ((0 == position.pass) && (0 == position.slice)) {
++        starting_index = 2; /* we have already generated the first two blocks */
++
++        /* Don't forget to generate the first block of addresses: */
++        if (data_independent_addressing) {
++            next_addresses(&address_block, &input_block);
++        }
++    }
++
++    /* Offset of the current block */
++    curr_offset = position.lane * instance->lane_length +
++                  position.slice * instance->segment_length + starting_index;
++
++    if (0 == curr_offset % instance->lane_length) {
++        /* Last block in this lane */
++        prev_offset = curr_offset + instance->lane_length - 1;
++    } else {
++        /* Previous block */
++        prev_offset = curr_offset - 1;
++    }
++
++    memcpy(state, ((instance->memory + prev_offset)->v), ARGON2_BLOCK_SIZE);
++
++    for (i = starting_index; i < instance->segment_length;
++         ++i, ++curr_offset, ++prev_offset) {
++        /*1.1 Rotating prev_offset if needed */
++        if (curr_offset % instance->lane_length == 1) {
++            prev_offset = curr_offset - 1;
++        }
++
++        /* 1.2 Computing the index of the reference block */
++        /* 1.2.1 Taking pseudo-random value from the previous block */
++        if (data_independent_addressing) {
++            if (i % ARGON2_ADDRESSES_IN_BLOCK == 0) {
++                next_addresses(&address_block, &input_block);
++            }
++            pseudo_rand = address_block.v[i % ARGON2_ADDRESSES_IN_BLOCK];
++        } else {
++            pseudo_rand = instance->memory[prev_offset].v[0];
++        }
++
++        /* 1.2.2 Computing the lane of the reference block */
++        ref_lane = ((pseudo_rand >> 32)) % instance->lanes;
++
++        if ((position.pass == 0) && (position.slice == 0)) {
++            /* Can not reference other lanes yet */
++            ref_lane = position.lane;
++        }
++
++        /* 1.2.3 Computing the number of possible reference block within the
++         * lane.
++         */
++        position.index = i;
++        ref_index = index_alpha(instance, &position, pseudo_rand & 0xFFFFFFFF,
++                                ref_lane == position.lane);
++
++        /* 2 Creating a new block */
++        ref_block =
++            instance->memory + instance->lane_length * ref_lane + ref_index;
++        curr_block = instance->memory + curr_offset;
++        if (ARGON2_VERSION_10 == instance->version) {
++            /* version 1.2.1 and earlier: overwrite, not XOR */
++            fill_block(state, ref_block, curr_block, 0);
++        } else {
++            if(0 == position.pass) {
++                fill_block(state, ref_block, curr_block, 0);
++            } else {
++                fill_block(state, ref_block, curr_block, 1);
++            }
++        }
++    }
++}
+diff --git a/C/argon2/ref.c b/C/argon2/ref.c
+new file mode 100644
+index 00000000..ad1cf461
+--- /dev/null
++++ b/C/argon2/ref.c
+@@ -0,0 +1,194 @@
++/*
++ * Argon2 reference source code package - reference C implementations
++ *
++ * Copyright 2015
++ * Daniel Dinu, Dmitry Khovratovich, Jean-Philippe Aumasson, and Samuel Neves
++ *
++ * You may use this work under the terms of a Creative Commons CC0 1.0
++ * License/Waiver or the Apache Public License 2.0, at your option. The terms of
++ * these licenses can be found at:
++ *
++ * - CC0 1.0 Universal : http://creativecommons.org/publicdomain/zero/1.0
++ * - Apache 2.0        : http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * You should have received a copy of both of these licenses along with this
++ * software. If not, they may be obtained at the above URLs.
++ */
++
++#include <stdint.h>
++#include <string.h>
++#include <stdlib.h>
++
++#include "argon2.h"
++#include "core.h"
++
++#include "blake2/blamka-round-ref.h"
++#include "blake2/blake2-impl.h"
++#include "blake2/blake2.h"
++
++
++/*
++ * Function fills a new memory block and optionally XORs the old block over the new one.
++ * @next_block must be initialized.
++ * @param prev_block Pointer to the previous block
++ * @param ref_block Pointer to the reference block
++ * @param next_block Pointer to the block to be constructed
++ * @param with_xor Whether to XOR into the new block (1) or just overwrite (0)
++ * @pre all block pointers must be valid
++ */
++static void fill_block(const block *prev_block, const block *ref_block,
++                       block *next_block, int with_xor) {
++    block blockR, block_tmp;
++    unsigned i;
++
++    copy_block(&blockR, ref_block);
++    xor_block(&blockR, prev_block);
++    copy_block(&block_tmp, &blockR);
++    /* Now blockR = ref_block + prev_block and block_tmp = ref_block + prev_block */
++    if (with_xor) {
++        /* Saving the next block contents for XOR over: */
++        xor_block(&block_tmp, next_block);
++        /* Now blockR = ref_block + prev_block and
++           block_tmp = ref_block + prev_block + next_block */
++    }
++
++    /* Apply Blake2 on columns of 64-bit words: (0,1,...,15) , then
++       (16,17,..31)... finally (112,113,...127) */
++    for (i = 0; i < 8; ++i) {
++        BLAKE2_ROUND_NOMSG(
++            blockR.v[16 * i], blockR.v[16 * i + 1], blockR.v[16 * i + 2],
++            blockR.v[16 * i + 3], blockR.v[16 * i + 4], blockR.v[16 * i + 5],
++            blockR.v[16 * i + 6], blockR.v[16 * i + 7], blockR.v[16 * i + 8],
++            blockR.v[16 * i + 9], blockR.v[16 * i + 10], blockR.v[16 * i + 11],
++            blockR.v[16 * i + 12], blockR.v[16 * i + 13], blockR.v[16 * i + 14],
++            blockR.v[16 * i + 15]);
++    }
++
++    /* Apply Blake2 on rows of 64-bit words: (0,1,16,17,...112,113), then
++       (2,3,18,19,...,114,115).. finally (14,15,30,31,...,126,127) */
++    for (i = 0; i < 8; i++) {
++        BLAKE2_ROUND_NOMSG(
++            blockR.v[2 * i], blockR.v[2 * i + 1], blockR.v[2 * i + 16],
++            blockR.v[2 * i + 17], blockR.v[2 * i + 32], blockR.v[2 * i + 33],
++            blockR.v[2 * i + 48], blockR.v[2 * i + 49], blockR.v[2 * i + 64],
++            blockR.v[2 * i + 65], blockR.v[2 * i + 80], blockR.v[2 * i + 81],
++            blockR.v[2 * i + 96], blockR.v[2 * i + 97], blockR.v[2 * i + 112],
++            blockR.v[2 * i + 113]);
++    }
++
++    copy_block(next_block, &block_tmp);
++    xor_block(next_block, &blockR);
++}
++
++static void next_addresses(block *address_block, block *input_block,
++                           const block *zero_block) {
++    input_block->v[6]++;
++    fill_block(zero_block, input_block, address_block, 0);
++    fill_block(zero_block, address_block, address_block, 0);
++}
++
++void fill_segment(const argon2_instance_t *instance,
++                  argon2_position_t position) {
++    block *ref_block = NULL, *curr_block = NULL;
++    block address_block, input_block, zero_block;
++    uint64_t pseudo_rand, ref_index, ref_lane;
++    uint32_t prev_offset, curr_offset;
++    uint32_t starting_index;
++    uint32_t i;
++    int data_independent_addressing;
++
++    if (instance == NULL) {
++        return;
++    }
++
++    data_independent_addressing =
++        (instance->type == Argon2_i) ||
++        (instance->type == Argon2_id && (position.pass == 0) &&
++         (position.slice < ARGON2_SYNC_POINTS / 2));
++
++    if (data_independent_addressing) {
++        init_block_value(&zero_block, 0);
++        init_block_value(&input_block, 0);
++
++        input_block.v[0] = position.pass;
++        input_block.v[1] = position.lane;
++        input_block.v[2] = position.slice;
++        input_block.v[3] = instance->memory_blocks;
++        input_block.v[4] = instance->passes;
++        input_block.v[5] = instance->type;
++    }
++
++    starting_index = 0;
++
++    if ((0 == position.pass) && (0 == position.slice)) {
++        starting_index = 2; /* we have already generated the first two blocks */
++
++        /* Don't forget to generate the first block of addresses: */
++        if (data_independent_addressing) {
++            next_addresses(&address_block, &input_block, &zero_block);
++        }
++    }
++
++    /* Offset of the current block */
++    curr_offset = position.lane * instance->lane_length +
++                  position.slice * instance->segment_length + starting_index;
++
++    if (0 == curr_offset % instance->lane_length) {
++        /* Last block in this lane */
++        prev_offset = curr_offset + instance->lane_length - 1;
++    } else {
++        /* Previous block */
++        prev_offset = curr_offset - 1;
++    }
++
++    for (i = starting_index; i < instance->segment_length;
++         ++i, ++curr_offset, ++prev_offset) {
++        /*1.1 Rotating prev_offset if needed */
++        if (curr_offset % instance->lane_length == 1) {
++            prev_offset = curr_offset - 1;
++        }
++
++        /* 1.2 Computing the index of the reference block */
++        /* 1.2.1 Taking pseudo-random value from the previous block */
++        if (data_independent_addressing) {
++            if (i % ARGON2_ADDRESSES_IN_BLOCK == 0) {
++                next_addresses(&address_block, &input_block, &zero_block);
++            }
++            pseudo_rand = address_block.v[i % ARGON2_ADDRESSES_IN_BLOCK];
++        } else {
++            pseudo_rand = instance->memory[prev_offset].v[0];
++        }
++
++        /* 1.2.2 Computing the lane of the reference block */
++        ref_lane = ((pseudo_rand >> 32)) % instance->lanes;
++
++        if ((position.pass == 0) && (position.slice == 0)) {
++            /* Can not reference other lanes yet */
++            ref_lane = position.lane;
++        }
++
++        /* 1.2.3 Computing the number of possible reference block within the
++         * lane.
++         */
++        position.index = i;
++        ref_index = index_alpha(instance, &position, pseudo_rand & 0xFFFFFFFF,
++                                ref_lane == position.lane);
++
++        /* 2 Creating a new block */
++        ref_block =
++            instance->memory + instance->lane_length * ref_lane + ref_index;
++        curr_block = instance->memory + curr_offset;
++        if (ARGON2_VERSION_10 == instance->version) {
++            /* version 1.2.1 and earlier: overwrite, not XOR */
++            fill_block(instance->memory + prev_offset, ref_block, curr_block, 0);
++        } else {
++            if(0 == position.pass) {
++                fill_block(instance->memory + prev_offset, ref_block,
++                           curr_block, 0);
++            } else {
++                fill_block(instance->memory + prev_offset, ref_block,
++                           curr_block, 1);
++            }
++        }
++    }
++}
+diff --git a/C/argon2/thread.c b/C/argon2/thread.c
+new file mode 100644
+index 00000000..e099a00d
+--- /dev/null
++++ b/C/argon2/thread.c
+@@ -0,0 +1,57 @@
++/*
++ * Argon2 reference source code package - reference C implementations
++ *
++ * Copyright 2015
++ * Daniel Dinu, Dmitry Khovratovich, Jean-Philippe Aumasson, and Samuel Neves
++ *
++ * You may use this work under the terms of a Creative Commons CC0 1.0
++ * License/Waiver or the Apache Public License 2.0, at your option. The terms of
++ * these licenses can be found at:
++ *
++ * - CC0 1.0 Universal : http://creativecommons.org/publicdomain/zero/1.0
++ * - Apache 2.0        : http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * You should have received a copy of both of these licenses along with this
++ * software. If not, they may be obtained at the above URLs.
++ */
++
++#if !defined(ARGON2_NO_THREADS)
++
++#include "thread.h"
++#if defined(_WIN32)
++#include <windows.h>
++#endif
++
++int argon2_thread_create(argon2_thread_handle_t *handle,
++                         argon2_thread_func_t func, void *args) {
++    if (NULL == handle || func == NULL) {
++        return -1;
++    }
++#if defined(_WIN32)
++    *handle = _beginthreadex(NULL, 0, func, args, 0, NULL);
++    return *handle != 0 ? 0 : -1;
++#else
++    return pthread_create(handle, NULL, func, args);
++#endif
++}
++
++int argon2_thread_join(argon2_thread_handle_t handle) {
++#if defined(_WIN32)
++    if (WaitForSingleObject((HANDLE)handle, INFINITE) == WAIT_OBJECT_0) {
++        return CloseHandle((HANDLE)handle) != 0 ? 0 : -1;
++    }
++    return -1;
++#else
++    return pthread_join(handle, NULL);
++#endif
++}
++
++void argon2_thread_exit(void) {
++#if defined(_WIN32)
++    _endthreadex(0);
++#else
++    pthread_exit(NULL);
++#endif
++}
++
++#endif /* ARGON2_NO_THREADS */
+diff --git a/C/argon2/thread.h b/C/argon2/thread.h
+new file mode 100644
+index 00000000..49d88367
+--- /dev/null
++++ b/C/argon2/thread.h
+@@ -0,0 +1,67 @@
++/*
++ * Argon2 reference source code package - reference C implementations
++ *
++ * Copyright 2015
++ * Daniel Dinu, Dmitry Khovratovich, Jean-Philippe Aumasson, and Samuel Neves
++ *
++ * You may use this work under the terms of a Creative Commons CC0 1.0
++ * License/Waiver or the Apache Public License 2.0, at your option. The terms of
++ * these licenses can be found at:
++ *
++ * - CC0 1.0 Universal : http://creativecommons.org/publicdomain/zero/1.0
++ * - Apache 2.0        : http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * You should have received a copy of both of these licenses along with this
++ * software. If not, they may be obtained at the above URLs.
++ */
++
++#ifndef ARGON2_THREAD_H
++#define ARGON2_THREAD_H
++
++#if !defined(ARGON2_NO_THREADS)
++
++/*
++        Here we implement an abstraction layer for the simpĺe requirements
++        of the Argon2 code. We only require 3 primitives---thread creation,
++        joining, and termination---so full emulation of the pthreads API
++        is unwarranted. Currently we wrap pthreads and Win32 threads.
++
++        The API defines 2 types: the function pointer type,
++   argon2_thread_func_t,
++        and the type of the thread handle---argon2_thread_handle_t.
++*/
++#if defined(_WIN32)
++#include <process.h>
++typedef unsigned(__stdcall *argon2_thread_func_t)(void *);
++typedef uintptr_t argon2_thread_handle_t;
++#else
++#include <pthread.h>
++typedef void *(*argon2_thread_func_t)(void *);
++typedef pthread_t argon2_thread_handle_t;
++#endif
++
++/* Creates a thread
++ * @param handle pointer to a thread handle, which is the output of this
++ * function. Must not be NULL.
++ * @param func A function pointer for the thread's entry point. Must not be
++ * NULL.
++ * @param args Pointer that is passed as an argument to @func. May be NULL.
++ * @return 0 if @handle and @func are valid pointers and a thread is successfully
++ * created.
++ */
++int argon2_thread_create(argon2_thread_handle_t *handle,
++                         argon2_thread_func_t func, void *args);
++
++/* Waits for a thread to terminate
++ * @param handle Handle to a thread created with argon2_thread_create.
++ * @return 0 if @handle is a valid handle, and joining completed successfully.
++*/
++int argon2_thread_join(argon2_thread_handle_t handle);
++
++/* Terminate the current thread. Must be run inside a thread created by
++ * argon2_thread_create.
++*/
++void argon2_thread_exit(void);
++
++#endif /* ARGON2_NO_THREADS */
++#endif

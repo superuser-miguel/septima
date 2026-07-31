@@ -1,0 +1,890 @@
+From 73f45689986f79fe88b1b01f3613f8a79a53709a Mon Sep 17 00:00:00 2001
+From: magnus_python <miguelsensacion@gmail.com>
+Date: Fri, 31 Jul 2026 11:33:52 -0400
+Subject: [PATCH] =?UTF-8?q?7z:=20AES256GCM=20coder=20=E2=80=94=20AES-256-G?=
+ =?UTF-8?q?CM=20+=20Argon2id=20method=20(ID=2006=20F7=2011=2001)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Septima encryption expansion, patch 3/N: the coder and full 7z-format
+wiring. Selected with -mem=AES256GCM (default remains 7zAES); works
+with -mhe=on so encrypted headers use the same method.
+
+- Crypto/7zGcm.{h,cpp} + 7zGcmRegister.cpp: ICompressCoder pairing
+  Argon2id (RFC 9106, key from UTF-16LE password bytes + 16-byte random
+  salt) with AES-256-GCM (96-bit random IV per folder, pack stream =
+  ciphertext || 16-byte tag, constant-time tag compare on decode; tag
+  mismatch => S_FALSE i.e. wrong password / corrupted data).
+  Key cache mirrors 7zAes (global + per-coder, CS-locked) — load-
+  bearing, since each Argon2id derivation costs ~0.2 s / 256 MiB.
+  Defaults m=256 MiB t=3 p=4; decoder enforces ceilings (m <= 2 GiB,
+  t <= 64, p <= 64) so hostile headers cannot demand absurd resources.
+- 7zHeader.h: k_AES256GCM = 0x6F71101 (F7 11 xx vendor range under the
+  06 crypto type byte); documented in DOC/Methods-Extern.md with the
+  full coder-props layout.
+- 7zCompressionMode.h/7zEncode.cpp: CryptoMethod field replaces the
+  hardcoded k_AES at both insertion sites (content + header folders).
+- 7zHandlerOut.cpp: -mem= parsing for 7z (aes256|aes256cbc|aes256gcm).
+- 7zHandler.cpp/7zItem.h: encrypted-flag detection + method display
+  ("AES256GCM:256m:t3:p4" in l -slt).
+- makefiles: AesGcm.o, argon2 objects (portable ref.c fill path for
+  now; -Wno-type-limits for vendored argon2 under -Werror).
+
+Tested (Linux x64): create/list/extract round-trip (LZMA2+AES256GCM);
+wrong password rejected via tag; 1-byte ciphertext tamper rejected;
+-mhe=on list-without-password refused, extract OK; default archives
+still legacy 7zAES:19; stock 7zz 26.02 lists the archive and fails
+extraction gracefully ("Unsupported Method", no crash).
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ CPP/7zip/7zip_gcc.mak                   |  18 ++
+ CPP/7zip/Archive/7z/7zCompressionMode.h |   6 +-
+ CPP/7zip/Archive/7z/7zEncode.cpp        |   4 +-
+ CPP/7zip/Archive/7z/7zHandler.cpp       |  33 ++-
+ CPP/7zip/Archive/7z/7zHandler.h         |   1 +
+ CPP/7zip/Archive/7z/7zHandlerOut.cpp    |  19 ++
+ CPP/7zip/Archive/7z/7zHeader.h          |   4 +
+ CPP/7zip/Archive/7z/7zItem.h            |   3 +-
+ CPP/7zip/Bundles/Format7zF/Arc_gcc.mak  |   9 +
+ CPP/7zip/Crypto/7zGcm.cpp               | 344 ++++++++++++++++++++++++
+ CPP/7zip/Crypto/7zGcm.h                 | 146 ++++++++++
+ CPP/7zip/Crypto/7zGcmRegister.cpp       |  17 ++
+ DOC/Methods-Extern.md                   |  35 +++
+ 13 files changed, 634 insertions(+), 5 deletions(-)
+ create mode 100644 CPP/7zip/Crypto/7zGcm.cpp
+ create mode 100644 CPP/7zip/Crypto/7zGcm.h
+ create mode 100644 CPP/7zip/Crypto/7zGcmRegister.cpp
+
+diff --git a/CPP/7zip/7zip_gcc.mak b/CPP/7zip/7zip_gcc.mak
+index a2a76f2a..d5b68516 100644
+--- a/CPP/7zip/7zip_gcc.mak
++++ b/CPP/7zip/7zip_gcc.mak
+@@ -828,6 +828,10 @@ $O/7zAes.o: ../../Crypto/7zAes.cpp
+ 	$(CXX) $(CXXFLAGS) $<
+ $O/7zAesRegister.o: ../../Crypto/7zAesRegister.cpp
+ 	$(CXX) $(CXXFLAGS) $<
++$O/7zGcm.o: ../../Crypto/7zGcm.cpp
++	$(CXX) $(CXXFLAGS) $<
++$O/7zGcmRegister.o: ../../Crypto/7zGcmRegister.cpp
++	$(CXX) $(CXXFLAGS) $<
+ $O/HmacSha1.o: ../../Crypto/HmacSha1.cpp
+ 	$(CXX) $(CXXFLAGS) $<
+ $O/HmacSha256.o: ../../Crypto/HmacSha256.cpp
+@@ -1166,8 +1170,22 @@ $O/7zStream.o: ../../../../C/7zStream.c
+ 	$(CC) $(CFLAGS) $<
+ $O/Aes.o: ../../../../C/Aes.c
+ 	$(CC) $(CFLAGS) $<
++$O/AesGcm.o: ../../../../C/AesGcm.c
++	$(CC) $(CFLAGS) $<
+ $O/Alloc.o: ../../../../C/Alloc.c
+ 	$(CC) $(CFLAGS) $<
++$O/argon2.o: ../../../../C/argon2/argon2.c
++	$(CC) $(CFLAGS) -Wno-type-limits -I ../../../../C/argon2 $<
++$O/argon2blake2b.o: ../../../../C/argon2/blake2/blake2b.c
++	$(CC) $(CFLAGS) -Wno-type-limits -I ../../../../C/argon2 $<
++$O/argon2core.o: ../../../../C/argon2/core.c
++	$(CC) $(CFLAGS) -Wno-type-limits -I ../../../../C/argon2 $<
++$O/argon2enc.o: ../../../../C/argon2/encoding.c
++	$(CC) $(CFLAGS) -Wno-type-limits -I ../../../../C/argon2 $<
++$O/argon2ref.o: ../../../../C/argon2/ref.c
++	$(CC) $(CFLAGS) -Wno-type-limits -I ../../../../C/argon2 $<
++$O/argon2thread.o: ../../../../C/argon2/thread.c
++	$(CC) $(CFLAGS) -Wno-type-limits -I ../../../../C/argon2 $<
+ $O/Bcj2.o: ../../../../C/Bcj2.c
+ 	$(CC) $(CFLAGS) $<
+ $O/Bcj2Enc.o: ../../../../C/Bcj2Enc.c
+diff --git a/CPP/7zip/Archive/7z/7zCompressionMode.h b/CPP/7zip/Archive/7z/7zCompressionMode.h
+index ecfee7cf..a82a2f19 100644
+--- a/CPP/7zip/Archive/7z/7zCompressionMode.h
++++ b/CPP/7zip/Archive/7z/7zCompressionMode.h
+@@ -6,6 +6,8 @@
+ #include "../../Common/MethodId.h"
+ #include "../../Common/MethodProps.h"
+ 
++#include "7zHeader.h"
++
+ namespace NArchive {
+ namespace N7z {
+ 
+@@ -64,7 +66,8 @@ struct CCompressionMethodMode
+ 
+   UString Password; // _Wipe
+   UInt64 MemoryUsageLimit;
+- 
++  UInt64 CryptoMethod; // k_AES (default) or k_AES256GCM
++
+   bool IsEmpty() const { return (Methods.IsEmpty() && !PasswordIsDefined); }
+   CCompressionMethodMode():
+         DefaultMethod_was_Inserted(false)
+@@ -78,6 +81,7 @@ struct CCompressionMethodMode
+       , NumThreadGroups(0)
+       #endif
+       , MemoryUsageLimit((UInt64)1 << 30)
++      , CryptoMethod(k_AES)
+   {}
+ 
+ #ifdef Z7_CPP_IS_SUPPORTED_default
+diff --git a/CPP/7zip/Archive/7z/7zEncode.cpp b/CPP/7zip/Archive/7z/7zEncode.cpp
+index 71d1ddb7..c1763752 100644
+--- a/CPP/7zip/Archive/7z/7zEncode.cpp
++++ b/CPP/7zip/Archive/7z/7zEncode.cpp
+@@ -562,7 +562,7 @@ HRESULT CEncoder::EncoderConstr()
+       throw 1;
+ 
+     CMethodFull method;
+-    method.Id = k_AES;
++    method.Id = _options.CryptoMethod;
+     method.NumStreams = 1;
+     _options.Methods.Add(method);
+ 
+@@ -687,7 +687,7 @@ HRESULT CEncoder::EncoderConstr()
+     {
+       CMethodFull method;
+       method.NumStreams = 1;
+-      method.Id = k_AES;
++      method.Id = _options.CryptoMethod;
+       _options.Methods.Add(method);
+ 
+       NCoderMixer2::CCoderStreamsInfo cod;
+diff --git a/CPP/7zip/Archive/7z/7zHandler.cpp b/CPP/7zip/Archive/7z/7zHandler.cpp
+index 365ba2c7..98fffc69 100644
+--- a/CPP/7zip/Archive/7z/7zHandler.cpp
++++ b/CPP/7zip/Archive/7z/7zHandler.cpp
+@@ -307,7 +307,7 @@ bool CHandler::IsFolderEncrypted(CNum folderIndex) const
+     for (unsigned j = 0; j < idSize; j++)
+       id64 = ((id64 << 8) | longID[j]);
+     inByte.SkipDataNoCheck(idSize);
+-    if (id64 == k_AES)
++    if (id64 == k_AES || id64 == k_AES256GCM)
+       return true;
+     if ((mainByte & 0x20) != 0)
+       inByte.SkipDataNoCheck(inByte.ReadNum());
+@@ -706,6 +706,37 @@ HRESULT CHandler::ObtainBlockMethods(CNum folderIndex, PROPVARIANT *prop, CHandl
+           ConvertUInt32ToString(numCyclesPower, s);
+         }
+         break;
++      case k_AES256GCM:
++        if (info) continue;
++        name = "AES256GCM";
++        if (propsSize >= 16 && props[0] == 1 && props[1] == 1)
++        {
++          // Argon2id costs: <mem>m|k:t<passes>:p<lanes>
++          const UInt32 mem = GetUi32(props + 2);
++          char *dest = s;
++          if ((mem & 0x3FF) == 0)
++          {
++            ConvertUInt32ToString(mem >> 10, dest);
++            dest += MyStringLen(dest);
++            *dest++ = 'm';
++          }
++          else
++          {
++            ConvertUInt32ToString(mem, dest);
++            dest += MyStringLen(dest);
++            *dest++ = 'k';
++          }
++          *dest++ = ':';
++          *dest++ = 't';
++          ConvertUInt32ToString(GetUi32(props + 6), dest);
++          dest += MyStringLen(dest);
++          *dest++ = ':';
++          *dest++ = 'p';
++          ConvertUInt32ToString(GetUi32(props + 10), dest);
++          dest += MyStringLen(dest);
++          *dest = 0;
++        }
++        break;
+       }
+     }
+   
+diff --git a/CPP/7zip/Archive/7z/7zHandler.h b/CPP/7zip/Archive/7z/7zHandler.h
+index 818f5de0..39af1e06 100644
+--- a/CPP/7zip/Archive/7z/7zHandler.h
++++ b/CPP/7zip/Archive/7z/7zHandler.h
+@@ -47,6 +47,7 @@ public:
+   bool _compressHeaders;
+   bool _encryptHeadersSpecified;
+   bool _encryptHeaders;
++  UInt64 _cryptoMethod; // k_AES (default) or k_AES256GCM, set via -mem=
+   // bool _useParents; 9.26
+ 
+   CHandlerTimeOptions TimeOptions;
+diff --git a/CPP/7zip/Archive/7z/7zHandlerOut.cpp b/CPP/7zip/Archive/7z/7zHandlerOut.cpp
+index b4fd5967..ebbe56fc 100644
+--- a/CPP/7zip/Archive/7z/7zHandlerOut.cpp
++++ b/CPP/7zip/Archive/7z/7zHandlerOut.cpp
+@@ -765,6 +765,8 @@ Z7_COM7F_IMF(CHandler::UpdateItems(ISequentialOutStream *outStream, UInt32 numIt
+   }
+   #endif
+ 
++  methodMode.CryptoMethod = _cryptoMethod;
++
+   if (methodMode.PasswordIsDefined)
+   {
+     if (_encryptHeadersSpecified)
+@@ -778,6 +780,7 @@ Z7_COM7F_IMF(CHandler::UpdateItems(ISequentialOutStream *outStream, UInt32 numIt
+     {
+       headerMethod.PasswordIsDefined = methodMode.PasswordIsDefined;
+       headerMethod.Password = methodMode.Password;
++      headerMethod.CryptoMethod = _cryptoMethod;
+     }
+   }
+ 
+@@ -877,6 +880,7 @@ void COutHandler::InitProps7z()
+   _compressHeaders = true;
+   _encryptHeadersSpecified = false;
+   _encryptHeaders = false;
++  _cryptoMethod = k_AES;
+   // _useParents = false;
+   
+   TimeOptions.Init();
+@@ -1040,6 +1044,21 @@ HRESULT COutHandler::SetProperty(const wchar_t *nameSpec, const PROPVARIANT &val
+       _encryptHeadersSpecified = true;
+       return S_OK;
+     }
++
++    if (name.IsEqualTo("em"))
++    {
++      if (value.vt != VT_BSTR)
++        return E_INVALIDARG;
++      UString s = value.bstrVal;
++      s.MakeLower_Ascii();
++      if (s.IsEqualTo("aes256") || s.IsEqualTo("aes256cbc"))
++        _cryptoMethod = k_AES;
++      else if (s.IsEqualTo("aes256gcm"))
++        _cryptoMethod = k_AES256GCM;
++      else
++        return E_INVALIDARG;
++      return S_OK;
++    }
+     
+     {
+       bool processed;
+diff --git a/CPP/7zip/Archive/7z/7zHeader.h b/CPP/7zip/Archive/7z/7zHeader.h
+index b881b0e1..e949c541 100644
+--- a/CPP/7zip/Archive/7z/7zHeader.h
++++ b/CPP/7zip/Archive/7z/7zHeader.h
+@@ -131,6 +131,10 @@ const UInt32 k_LIZARD= 0x4F71106;
+ 
+ const UInt32 k_AES   = 0x6F10701;
+ 
++// AES-256-GCM + Argon2id (7-Zip ZS vendor extension, Septima patch series;
++// ID chosen in the crypto branch mirroring the ZS vendor range 0x4F711xx)
++const UInt32 k_AES256GCM = 0x6F71101;
++
+ // const UInt32 k_ZSTD = 0x4015D; // winzip zstd
+ // 0x4F71101, 7z-zstd
+ 
+diff --git a/CPP/7zip/Archive/7z/7zItem.h b/CPP/7zip/Archive/7z/7zItem.h
+index 06737c81..9cc1af30 100644
+--- a/CPP/7zip/Archive/7z/7zItem.h
++++ b/CPP/7zip/Archive/7z/7zItem.h
+@@ -83,7 +83,8 @@ public:
+   bool IsEncrypted() const
+   {
+     FOR_VECTOR(i, Coders)
+-      if (Coders[i].MethodID == k_AES)
++      if (Coders[i].MethodID == k_AES
++          || Coders[i].MethodID == k_AES256GCM)
+         return true;
+     return false;
+   }
+diff --git a/CPP/7zip/Bundles/Format7zF/Arc_gcc.mak b/CPP/7zip/Bundles/Format7zF/Arc_gcc.mak
+index 814a7978..36e45596 100644
+--- a/CPP/7zip/Bundles/Format7zF/Arc_gcc.mak
++++ b/CPP/7zip/Bundles/Format7zF/Arc_gcc.mak
+@@ -297,6 +297,8 @@ endif
+ CRYPTO_OBJS = \
+   $O/7zAes.o \
+   $O/7zAesRegister.o \
++  $O/7zGcm.o \
++  $O/7zGcmRegister.o \
+   $O/HmacSha1.o \
+   $O/HmacSha256.o \
+   $O/MyAes.o \
+@@ -322,8 +324,15 @@ C_OBJS = \
+   $O/7zCrcOpt.o \
+   $O/7zStream.o \
+   $O/Aes.o \
++  $O/AesGcm.o \
+   $O/AesOpt.o \
+   $O/Alloc.o \
++  $O/argon2.o \
++  $O/argon2blake2b.o \
++  $O/argon2core.o \
++  $O/argon2enc.o \
++  $O/argon2ref.o \
++  $O/argon2thread.o \
+   $O/Bcj2.o \
+   $O/Bcj2Enc.o \
+   $O/Blake2s.o \
+diff --git a/CPP/7zip/Crypto/7zGcm.cpp b/CPP/7zip/Crypto/7zGcm.cpp
+new file mode 100644
+index 00000000..6564bb57
+--- /dev/null
++++ b/CPP/7zip/Crypto/7zGcm.cpp
+@@ -0,0 +1,344 @@
++// 7zGcm.cpp -- AES-256-GCM + Argon2id coder for 7z archives
++// (Septima encryption expansion; standards-only: RFC 9106 + NIST SP 800-38D)
++//
++// Coder properties layout (written by CEncoder, all integers little-endian):
++//   Byte  0      props format version (1)
++//   Byte  1      KDF id (1 = Argon2id, version 0x13)
++//   Bytes 2..5   Argon2 m_cost, KiB (UInt32)
++//   Bytes 6..9   Argon2 t_cost / passes (UInt32)
++//   Bytes 10..13 Argon2 lanes (UInt32)
++//   Byte  14     salt size (encoder writes 16; decoder accepts 8..32)
++//   Byte  15     iv size   (encoder writes 12; decoder accepts 1..16)
++//   then salt, then iv
++// The pack stream is: ciphertext || 16-byte GCM tag.
++// The password bytes (UTF-16LE, as delivered by ICryptoSetPassword) are the
++// Argon2id password input; the derived 32-byte key is the AES-256-GCM key.
++
++#include "StdAfx.h"
++
++#include "../../../C/CpuArch.h"
++#include "../../../C/argon2/argon2.h"
++
++#include "../../Common/ComTry.h"
++#include "../../Common/MyBuffer2.h"
++
++#ifndef Z7_ST
++#include "../../Windows/Synchronization.h"
++#endif
++
++#include "../Common/StreamUtils.h"
++
++#include "7zGcm.h"
++
++#ifndef Z7_EXTRACT_ONLY
++#include "RandGen.h"
++#endif
++
++namespace NCrypto {
++namespace N7zGcm {
++
++bool CKeyInfo::IsEqualTo(const CKeyInfo &a) const
++{
++  if (Mem_KiB != a.Mem_KiB || Iters != a.Iters || Lanes != a.Lanes
++      || SaltSize != a.SaltSize)
++    return false;
++  for (unsigned i = 0; i < SaltSize; i++)
++    if (Salt[i] != a.Salt[i])
++      return false;
++  return (Password == a.Password);
++}
++
++HRESULT CKeyInfo::CalcKey()
++{
++  argon2_context c;
++  memset(&c, 0, sizeof(c));
++  c.out = Key;
++  c.outlen = kKeySize;
++  c.pwd = (uint8_t *)(Byte *)Password;
++  c.pwdlen = (uint32_t)Password.Size();
++  c.salt = Salt;
++  c.saltlen = (uint32_t)SaltSize;
++  c.t_cost = Iters;
++  c.m_cost = Mem_KiB;
++  c.lanes = Lanes;
++  c.threads = Lanes;
++  c.version = ARGON2_VERSION_13;
++  c.flags = ARGON2_DEFAULT_FLAGS;
++
++  int rc = argon2_ctx(&c, Argon2_id);
++  if (rc == ARGON2_THREAD_FAIL)
++  {
++    // same result is defined by lanes, not by thread count
++    c.threads = 1;
++    rc = argon2_ctx(&c, Argon2_id);
++  }
++  if (rc == ARGON2_OK)
++    return S_OK;
++  if (rc == ARGON2_MEMORY_ALLOCATION_ERROR)
++    return E_OUTOFMEMORY;
++  return E_FAIL;
++}
++
++bool CKeyInfoCache::GetKey(CKeyInfo &key)
++{
++  FOR_VECTOR (i, Keys)
++  {
++    const CKeyInfo &cached = Keys[i];
++    if (key.IsEqualTo(cached))
++    {
++      for (unsigned j = 0; j < kKeySize; j++)
++        key.Key[j] = cached.Key[j];
++      if (i != 0)
++        Keys.MoveToFront(i);
++      return true;
++    }
++  }
++  return false;
++}
++
++void CKeyInfoCache::FindAndAdd(const CKeyInfo &key)
++{
++  FOR_VECTOR (i, Keys)
++  {
++    const CKeyInfo &cached = Keys[i];
++    if (key.IsEqualTo(cached))
++    {
++      if (i != 0)
++        Keys.MoveToFront(i);
++      return;
++    }
++  }
++  Add(key);
++}
++
++void CKeyInfoCache::Add(const CKeyInfo &key)
++{
++  if (Keys.Size() >= Size)
++    Keys.DeleteBack();
++  Keys.Insert(0, key);
++}
++
++static CKeyInfoCache g_GlobalKeyCache(16);
++
++#ifndef Z7_ST
++  static NWindows::NSynchronization::CCriticalSection g_GlobalKeyCacheCriticalSection;
++  #define MT_LOCK NWindows::NSynchronization::CCriticalSectionLock lock(g_GlobalKeyCacheCriticalSection);
++#else
++  #define MT_LOCK
++#endif
++
++CBaseCoder::CBaseCoder():
++    _cachedKeys(4),
++    _ivSize(0)
++{
++  for (unsigned i = 0; i < sizeof(_iv); i++)
++    _iv[i] = 0;
++  memset(&_gcm, 0, sizeof(_gcm));
++}
++
++CBaseCoder::~CBaseCoder()
++{
++  AesGcm_Wipe(&_gcm);
++}
++
++HRESULT CBaseCoder::PrepareKey()
++{
++  // Argon2id is expensive (default: 256 MiB, ~hundreds of ms), so the
++  // key cache is load-bearing here, not just an optimization.
++  MT_LOCK
++
++  bool found = false;
++  if (!_cachedKeys.GetKey(_key))
++  {
++    found = g_GlobalKeyCache.GetKey(_key);
++    if (!found)
++    {
++      RINOK(_key.CalcKey())
++    }
++    _cachedKeys.Add(_key);
++  }
++  if (!found)
++    g_GlobalKeyCache.FindAndAdd(_key);
++  return S_OK;
++}
++
++HRESULT CBaseCoder::InitCipher()
++{
++  if (_ivSize == 0)
++    return E_FAIL;
++  RINOK(PrepareKey())
++  AesGcm_SetKey(&_gcm, _key.Key, kKeySize);
++  if (AesGcm_Start(&_gcm, _iv, _ivSize))
++    return E_FAIL;
++  return S_OK;
++}
++
++Z7_COM7F_IMF(CBaseCoder::Code(ISequentialInStream *inStream, ISequentialOutStream *outStream,
++    const UInt64 *inSize, const UInt64 *outSize, ICompressProgressInfo *progress))
++{
++  COM_TRY_BEGIN
++  return Code2(inStream, outStream, inSize, outSize, progress);
++  COM_TRY_END
++}
++
++Z7_COM7F_IMF(CBaseCoder::CryptoSetPassword(const Byte *data, UInt32 size))
++{
++  COM_TRY_BEGIN
++
++  _key.Password.Wipe();
++  _key.Password.CopyFrom(data, (size_t)size);
++  return S_OK;
++
++  COM_TRY_END
++}
++
++static const size_t kBufSize = (size_t)1 << 20;
++
++#ifndef Z7_EXTRACT_ONLY
++
++CEncoder::CEncoder()
++{
++  _key.SaltSize = kSaltSize;
++  MY_RAND_GEN(_key.Salt, kSaltSize);
++  _ivSize = kIvSize;
++  MY_RAND_GEN(_iv, _ivSize);
++}
++
++Z7_COM7F_IMF(CEncoder::ResetInitVector())
++{
++  _ivSize = kIvSize;
++  MY_RAND_GEN(_iv, _ivSize);
++  return S_OK;
++}
++
++Z7_COM7F_IMF(CEncoder::WriteCoderProperties(ISequentialOutStream *outStream))
++{
++  Byte props[16 + kSaltSize + kIvSize];
++  props[0] = 1;
++  props[1] = 1;
++  SetUi32(props + 2, _key.Mem_KiB)
++  SetUi32(props + 6, _key.Iters)
++  SetUi32(props + 10, _key.Lanes)
++  props[14] = (Byte)kSaltSize;
++  props[15] = (Byte)kIvSize;
++  memcpy(props + 16, _key.Salt, kSaltSize);
++  memcpy(props + 16 + kSaltSize, _iv, kIvSize);
++  return WriteStream(outStream, props, sizeof(props));
++}
++
++HRESULT CEncoder::Code2(ISequentialInStream *inStream, ISequentialOutStream *outStream,
++    const UInt64 * /* inSize */, const UInt64 * /* outSize */, ICompressProgressInfo *progress)
++{
++  RINOK(InitCipher())
++  CAlignedBuffer1 buf(kBufSize);
++  UInt64 inTotal = 0, outTotal = 0;
++  for (;;)
++  {
++    size_t size = kBufSize;
++    RINOK(ReadStream(inStream, buf, &size))
++    if (size == 0)
++      break;
++    AesGcm_Encrypt(&_gcm, buf, size);
++    RINOK(WriteStream(outStream, buf, size))
++    inTotal += size;
++    outTotal += size;
++    if (progress)
++    {
++      RINOK(progress->SetRatioInfo(&inTotal, &outTotal))
++    }
++  }
++  Byte tag[kTagSize];
++  AesGcm_GetTag(&_gcm, tag);
++  return WriteStream(outStream, tag, kTagSize);
++}
++
++#endif
++
++CDecoder::CDecoder()
++{
++}
++
++Z7_COM7F_IMF(CDecoder::SetDecoderProperties2(const Byte *data, UInt32 size))
++{
++  _key.ClearProps();
++  _ivSize = 0;
++  for (unsigned i = 0; i < sizeof(_iv); i++)
++    _iv[i] = 0;
++
++  if (size < 16)
++    return E_INVALIDARG;
++  if (data[0] != 1 || data[1] != 1)
++    return E_NOTIMPL;
++
++  const UInt32 mem = GetUi32(data + 2);
++  const UInt32 iters = GetUi32(data + 6);
++  const UInt32 lanes = GetUi32(data + 10);
++  const unsigned saltSize = data[14];
++  const unsigned ivSize = data[15];
++
++  if (saltSize < 8 || saltSize > kSaltSizeMax
++      || ivSize < 1 || ivSize > kIvSizeMax)
++    return E_NOTIMPL;
++  if (size != 16 + saltSize + ivSize)
++    return E_INVALIDARG;
++  if (iters < 1 || iters > kItersMax
++      || lanes < 1 || lanes > kLanesMax
++      || mem > kMemMax_KiB || mem < 8 * lanes)
++    return E_NOTIMPL;
++
++  _key.Mem_KiB = mem;
++  _key.Iters = iters;
++  _key.Lanes = lanes;
++  _key.SaltSize = saltSize;
++  data += 16;
++  memcpy(_key.Salt, data, saltSize);
++  data += saltSize;
++  memcpy(_iv, data, ivSize);
++  _ivSize = ivSize;
++  return S_OK;
++}
++
++HRESULT CDecoder::Code2(ISequentialInStream *inStream, ISequentialOutStream *outStream,
++    const UInt64 *inSize, const UInt64 *outSize, ICompressProgressInfo *progress)
++{
++  UInt64 dataSize;
++  if (inSize)
++  {
++    if (*inSize < kTagSize)
++      return S_FALSE;
++    dataSize = *inSize - kTagSize;
++    if (outSize && *outSize != dataSize)
++      return S_FALSE;
++  }
++  else if (outSize)
++    dataSize = *outSize;
++  else
++    return E_NOTIMPL;
++
++  RINOK(InitCipher())
++  CAlignedBuffer1 buf(kBufSize);
++  UInt64 inTotal = 0, outTotal = 0;
++  UInt64 rem = dataSize;
++  while (rem != 0)
++  {
++    const size_t size = (size_t)(rem < kBufSize ? rem : kBufSize);
++    RINOK(ReadStream_FALSE(inStream, buf, size))
++    AesGcm_Decrypt(&_gcm, buf, size);
++    RINOK(WriteStream(outStream, buf, size))
++    rem -= size;
++    inTotal += size;
++    outTotal += size;
++    if (progress)
++    {
++      RINOK(progress->SetRatioInfo(&inTotal, &outTotal))
++    }
++  }
++  Byte tagStored[kTagSize], tagCalced[kTagSize];
++  RINOK(ReadStream_FALSE(inStream, tagStored, kTagSize))
++  AesGcm_GetTag(&_gcm, tagCalced);
++  if (!AesGcm_IsTagEqual_CT(tagStored, tagCalced))
++    return S_FALSE;  // wrong password or corrupted data
++  return S_OK;
++}
++
++}}
+diff --git a/CPP/7zip/Crypto/7zGcm.h b/CPP/7zip/Crypto/7zGcm.h
+new file mode 100644
+index 00000000..f4b75841
+--- /dev/null
++++ b/CPP/7zip/Crypto/7zGcm.h
+@@ -0,0 +1,146 @@
++// 7zGcm.h -- AES-256-GCM + Argon2id coder for 7z archives
++// (Septima encryption expansion; standards-only: RFC 9106 + NIST SP 800-38D)
++
++#ifndef ZIP7_INC_CRYPTO_7Z_GCM_H
++#define ZIP7_INC_CRYPTO_7Z_GCM_H
++
++#include "../../../C/AesGcm.h"
++
++#include "../../Common/MyBuffer.h"
++#include "../../Common/MyCom.h"
++#include "../../Common/MyVector.h"
++
++#include "../ICoder.h"
++#include "../IPassword.h"
++
++namespace NCrypto {
++namespace N7zGcm {
++
++const unsigned kKeySize = 32;
++const unsigned kSaltSize = 16;      // written by encoder
++const unsigned kSaltSizeMax = 32;   // accepted by decoder
++const unsigned kIvSize = AES_GCM_IV_SIZE_DEFAULT;  // 12, written by encoder
++const unsigned kIvSizeMax = 16;     // accepted by decoder
++const unsigned kTagSize = AES_GCM_TAG_SIZE;        // 16, appended to pack stream
++
++// Argon2id cost defaults (encode side)
++const UInt32 kMemDefault_KiB = (UInt32)1 << 18;  // 256 MiB
++const UInt32 kItersDefault = 3;
++const UInt32 kLanesDefault = 4;
++
++// decode-side ceilings, so a hostile header cannot demand absurd resources
++const UInt32 kMemMax_KiB = (UInt32)1 << 21;      // 2 GiB
++const UInt32 kItersMax = 64;
++const UInt32 kLanesMax = 64;
++
++class CKeyInfo
++{
++public:
++  UInt32 Mem_KiB;
++  UInt32 Iters;
++  UInt32 Lanes;
++  unsigned SaltSize;
++  Byte Salt[kSaltSizeMax];
++  CByteBuffer Password;
++  Byte Key[kKeySize];
++
++  bool IsEqualTo(const CKeyInfo &a) const;
++  HRESULT CalcKey();  // Argon2id (RFC 9106)
++
++  CKeyInfo() { ClearProps(); }
++  void ClearProps()
++  {
++    Mem_KiB = kMemDefault_KiB;
++    Iters = kItersDefault;
++    Lanes = kLanesDefault;
++    SaltSize = 0;
++    for (unsigned i = 0; i < sizeof(Salt); i++)
++      Salt[i] = 0;
++  }
++
++  void Wipe()
++  {
++    Password.Wipe();
++    ClearProps();
++    Z7_memset_0_ARRAY(Key);
++  }
++
++#ifdef Z7_CPP_IS_SUPPORTED_default
++  CKeyInfo(const CKeyInfo &) = default;
++#endif
++  ~CKeyInfo() { Wipe(); }
++};
++
++class CKeyInfoCache
++{
++  unsigned Size;
++  CObjectVector<CKeyInfo> Keys;
++public:
++  CKeyInfoCache(unsigned size): Size(size) {}
++  bool GetKey(CKeyInfo &key);
++  void Add(const CKeyInfo &key);
++  void FindAndAdd(const CKeyInfo &key);
++};
++
++class CBaseCoder:
++  public ICompressCoder,
++  public ICryptoSetPassword,
++  public CMyUnknownImp
++{
++  Z7_IFACE_COM7_IMP(ICompressCoder)
++  Z7_IFACE_COM7_IMP(ICryptoSetPassword)
++protected:
++  CKeyInfoCache _cachedKeys;
++  CKeyInfo _key;
++  unsigned _ivSize;
++  Byte _iv[kIvSizeMax];
++  CAesGcm _gcm;
++
++  CBaseCoder();
++  virtual ~CBaseCoder();
++  HRESULT PrepareKey();
++  HRESULT InitCipher();
++  virtual HRESULT Code2(ISequentialInStream *inStream, ISequentialOutStream *outStream,
++      const UInt64 *inSize, const UInt64 *outSize, ICompressProgressInfo *progress) = 0;
++};
++
++#ifndef Z7_EXTRACT_ONLY
++
++class CEncoder Z7_final:
++  public CBaseCoder,
++  public ICompressWriteCoderProperties,
++  public ICryptoResetInitVector
++{
++  Z7_COM_UNKNOWN_IMP_4(
++      ICompressCoder,
++      ICryptoSetPassword,
++      ICompressWriteCoderProperties,
++      ICryptoResetInitVector)
++  Z7_IFACE_COM7_IMP(ICompressWriteCoderProperties)
++  Z7_IFACE_COM7_IMP(ICryptoResetInitVector)
++  virtual HRESULT Code2(ISequentialInStream *inStream, ISequentialOutStream *outStream,
++      const UInt64 *inSize, const UInt64 *outSize, ICompressProgressInfo *progress) Z7_override;
++public:
++  CEncoder();
++};
++
++#endif
++
++class CDecoder Z7_final:
++  public CBaseCoder,
++  public ICompressSetDecoderProperties2
++{
++  Z7_COM_UNKNOWN_IMP_3(
++      ICompressCoder,
++      ICryptoSetPassword,
++      ICompressSetDecoderProperties2)
++  Z7_IFACE_COM7_IMP(ICompressSetDecoderProperties2)
++  virtual HRESULT Code2(ISequentialInStream *inStream, ISequentialOutStream *outStream,
++      const UInt64 *inSize, const UInt64 *outSize, ICompressProgressInfo *progress) Z7_override;
++public:
++  CDecoder();
++};
++
++}}
++
++#endif
+diff --git a/CPP/7zip/Crypto/7zGcmRegister.cpp b/CPP/7zip/Crypto/7zGcmRegister.cpp
+new file mode 100644
+index 00000000..519f77c6
+--- /dev/null
++++ b/CPP/7zip/Crypto/7zGcmRegister.cpp
+@@ -0,0 +1,17 @@
++// 7zGcmRegister.cpp
++
++#include "StdAfx.h"
++
++#include "../Common/RegisterCodec.h"
++
++#include "7zGcm.h"
++
++namespace NCrypto {
++namespace N7zGcm {
++
++REGISTER_CODEC_E(SzGcm,
++    CDecoder,
++    CEncoder,
++    0x6F71101, "AES256GCM")
++
++}}
+diff --git a/DOC/Methods-Extern.md b/DOC/Methods-Extern.md
+index 17702cf5..895b3d89 100644
+--- a/DOC/Methods-Extern.md
++++ b/DOC/Methods-Extern.md
+@@ -304,3 +304,38 @@ Modes:
+ 
+ Versions:
+ The 7-Zip Lizard codec will be kept in sync with the current releases of Lizard.
++
++
++Range 06 F7 11 xx - encryption (proposed, Septima)
++--------------------------------------------------
++
++Full method ID 06 F7 11 01 - AES256GCM (AES-256-GCM + Argon2id)
++
++Standards-only authenticated encryption for 7z archives:
++- KDF: Argon2id (RFC 9106, version 0x13); password bytes are the UTF-16LE
++  password as delivered by ICryptoSetPassword (same convention as 7zAES)
++- Cipher/AEAD: AES-256-GCM (NIST SP 800-38D)
++- Pack stream layout: ciphertext || 16-byte GCM tag
++- Coder properties (little-endian integers):
++
++      Byte  0      props format version (1)
++      Byte  1      KDF id (1 = Argon2id v1.3)
++      Bytes 2..5   Argon2 m_cost, KiB (UInt32)
++      Bytes 6..9   Argon2 t_cost / passes (UInt32)
++      Bytes 10..13 Argon2 lanes (UInt32)
++      Byte  14     salt size (writer: 16; reader accepts 8..32)
++      Byte  15     iv size   (writer: 12; reader accepts 1..16)
++      then salt, then iv
++
++- Encoder defaults: m=262144 KiB (256 MiB), t=3, p=4; decoder ceilings:
++  m <= 2 GiB, t <= 64, p <= 64 (hostile headers must not demand
++  absurd resources)
++- The ID mirrors the existing F7 11 xx vendor range under the 06
++  (crypto) type byte. 06 F7 11 02+ reserved for future methods.
++
++Codec author: reference implementations only - PHC Argon2 (CC0/Apache-2.0),
++BearSSL constant-time GHASH (MIT), 7-Zip AES kernels.
++
++Codec plugin author: Septima
++- Source: https://github.com/superuser-miguel (patch series bundled with the
++  Septima Flatpak; proposed upstream via design issue)

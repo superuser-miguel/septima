@@ -6,7 +6,9 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::{gdk, gio, glib, CompositeTemplate, TemplateChild};
 
-use septima_engine::capabilities::{filters, formats, Codec, Format};
+use septima_engine::capabilities::{
+    encryption_methods, filters, formats, Codec, EncryptionMethod, Format,
+};
 use septima_engine::{estimate_add_memory, measure_selection, new_cancel_token, CancelToken, Selection};
 
 use crate::preset::{Preset, PresetStore};
@@ -61,16 +63,19 @@ pub struct CreateSettings {
     pub filter: Option<String>,
     pub password: Option<String>,
     pub encrypt_headers: bool,
-    /// zip-only cipher (`-mem=`); `None` outside zip or for the ZipCrypto choice.
-    pub zip_encryption: Option<String>,
+    /// Cipher (`-mem=`); `None` outside 7z/zip or for each format's default.
+    pub encryption_method: Option<String>,
     pub extra_params: Vec<String>,
     pub write_checksum: bool,
     pub batch_mode: bool,
 }
 
-/// Zip encryption choices: (label, `-mem` value). `None` = 7zz default (ZipCrypto).
-const ZIP_ENCRYPTION: &[(&str, Option<&str>)] =
-    &[("AES-256", Some("AES256")), ("ZipCrypto (legacy)", None)];
+/// Encryption choices for the current format, probed from the running `7zz`
+/// (see `capabilities::encryption_methods`). Rebuilt on every format change,
+/// so the AES-256-GCM entry appears only when the engine supports it.
+fn encryption_choices(format_id: &str) -> Vec<EncryptionMethod> {
+    encryption_methods(format_id)
+}
 
 /// Lizard families: (label, `-mx` base). The selected family's base is added to
 /// the 0-9 Level to form the final `-mx` (base 10/20/30/40).
@@ -198,8 +203,9 @@ mod imp {
             let vol_labels: Vec<&str> = VOLUME_PRESETS.iter().map(|(l, _)| *l).collect();
             self.volume_row.set_model(Some(&gtk::StringList::new(&vol_labels)));
 
-            let enc_labels: Vec<&str> = ZIP_ENCRYPTION.iter().map(|(l, _)| *l).collect();
-            self.encryption_row.set_model(Some(&gtk::StringList::new(&enc_labels)));
+            // Model is rebuilt per format in on_format_changed(); seed it with
+            // the initial format so the row is never momentarily empty.
+            self.rebuild_encryption_model();
 
             let lizard_labels: Vec<&str> = LIZARD_FAMILIES.iter().map(|(l, _)| *l).collect();
             self.lizard_family_row.set_model(Some(&gtk::StringList::new(&lizard_labels)));
@@ -231,6 +237,11 @@ mod imp {
                 #[weak]
                 obj,
                 move |_| obj.imp().on_codec_changed()
+            ));
+            self.encryption_row.connect_selected_notify(glib::clone!(
+                #[weak]
+                obj,
+                move |_| obj.imp().update_encryption_subtitle()
             ));
             // Toggling batch mode changes what inputs a raw stream will accept.
             self.batch_row.connect_active_notify(glib::clone!(
@@ -294,6 +305,33 @@ mod imp {
             &formats()[self.format_row.selected() as usize]
         }
 
+        /// Repopulate the cipher list for the current format. Formats without
+        /// encryption (tar, raw streams) leave the row insensitive and empty.
+        pub(super) fn rebuild_encryption_model(&self) {
+            let choices = encryption_choices(self.current_format().id);
+            let labels: Vec<&str> = choices.iter().map(|m| m.label).collect();
+            self.encryption_row
+                .set_model(Some(&gtk::StringList::new(&labels)));
+            self.encryption_row.set_sensitive(!choices.is_empty());
+            if !choices.is_empty() {
+                self.encryption_row.set_selected(0);
+            }
+            // Labels alone can't carry "opens only in Septima" — the subtitle does.
+            self.update_encryption_subtitle();
+        }
+
+        /// Subtitle follows the selected cipher, so the honest warning about
+        /// the Septima-only extension is visible exactly when it applies.
+        pub(super) fn update_encryption_subtitle(&self) {
+            let choices = encryption_choices(self.current_format().id);
+            let idx = self.encryption_row.selected() as usize;
+            let text = match choices.get(idx).and_then(|m| m.detail) {
+                Some(detail) => gettext(detail),
+                None => String::new(),
+            };
+            self.encryption_row.set_subtitle(&text);
+        }
+
         pub(super) fn current_codec(&self) -> &'static Codec {
             let fmt = self.current_format();
             let idx = (self.codec_row.selected() as usize).min(fmt.codecs.len().saturating_sub(1));
@@ -312,8 +350,7 @@ mod imp {
             self.codec_row.set_selected(0); // fires on_codec_changed
             self.solid_row.set_sensitive(fmt.supports_solid);
             self.filter_row.set_sensitive(fmt.id == "7z");
-            // Only zip has a cipher choice; 7z is always AES-256, tar has none.
-            self.encryption_row.set_sensitive(fmt.id == "zip");
+            self.rebuild_encryption_model();
             self.encrypt_headers_row.set_sensitive(fmt.supports_header_encryption);
             self.on_codec_changed();
             // Re-check Create: a raw stream needs exactly one file.
@@ -637,9 +674,9 @@ impl SeptimaCreateDialog {
                 .flatten(),
             password,
             encrypt_headers: format.supports_header_encryption && imp.encrypt_headers_row.is_active(),
-            zip_encryption: (format.id == "zip")
-                .then(|| ZIP_ENCRYPTION[imp.encryption_row.selected() as usize].1.map(str::to_string))
-                .flatten(),
+            encryption_method: encryption_choices(format.id)
+                .get(imp.encryption_row.selected() as usize)
+                .and_then(|m| m.id.map(str::to_string)),
             extra_params,
             write_checksum: imp.checksum_row.is_active(),
             batch_mode: imp.batch_row.is_active(),

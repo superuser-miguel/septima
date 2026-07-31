@@ -1,0 +1,792 @@
+From bb0b47ffe6e30d9d9ed4435d2e9c1b7b64d9f1fd Mon Sep 17 00:00:00 2001
+From: magnus_python <miguelsensacion@gmail.com>
+Date: Fri, 31 Jul 2026 11:05:45 -0400
+Subject: [PATCH] AES-GCM: add constant-time software AES-GCM kernel
+ (C/AesGcm.*)
+
+Septima encryption expansion, patch 1/N: streaming AES-GCM
+(NIST SP 800-38D) layered on the existing software AES kernel.
+
+- C/AesGcm.{h,c}: SetKey / Start / UpdateAad / Encrypt / Decrypt /
+  GetTag streaming API; in-place, arbitrary chunk sizes; 96-bit fast
+  path plus general IV lengths; constant-time tag compare; state wipe.
+- GHASH is BearSSL's ghash_ctmul64, (c) 2016 Thomas Pornin, MIT.
+  Adapted only for 7-Zip types/endian macros; logic line-for-line
+  identical, source verified byte-identical against canonical
+  bearssl.org (sha256 a5a5986e621de057...).
+- C/Aes.{h,c}: export single-block Aes_Enc_Block() (wraps the static
+  Aes_Encode) for GCM keystream / GHASH-key derivation. No behavior
+  change to existing coders.
+- C/Util/AesGcmTest: cross-validation harness, 3036 vectors passing
+  (36 edge + 3000 random: AES-128/192/256, IV lengths 8..128, AAD,
+  ragged streaming chunking, round-trip, tamper rejection) against
+  OpenSSL via python-cryptography.
+
+Software-only fallback path by design; PCLMUL/AES-NI GCM fast path is
+a follow-up patch.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ C/Aes.c                         |   7 +
+ C/Aes.h                         |   5 +
+ C/AesGcm.c                      | 363 ++++++++++++++++++++++++++++++++
+ C/AesGcm.h                      |  59 ++++++
+ C/Util/AesGcmTest/README.md     |  11 +
+ C/Util/AesGcmTest/gcm_oracle.py |  81 +++++++
+ C/Util/AesGcmTest/gcmtest.c     | 171 +++++++++++++++
+ 7 files changed, 697 insertions(+)
+ create mode 100644 C/AesGcm.c
+ create mode 100644 C/AesGcm.h
+ create mode 100644 C/Util/AesGcmTest/README.md
+ create mode 100644 C/Util/AesGcmTest/gcm_oracle.py
+ create mode 100644 C/Util/AesGcmTest/gcmtest.c
+
+diff --git a/C/Aes.c b/C/Aes.c
+index abc5d24b..7d9bf365 100644
+--- a/C/Aes.c
++++ b/C/Aes.c
+@@ -339,6 +339,13 @@ static void Aes_Decode(const UInt32 *w, UInt32 *dest, const UInt32 *src)
+   FD4(3)
+ }
+ 
++/* single-block ECB encryption for AES-GCM (AesGcm.c):
++   aes - pointer to keyMode+roundKeys sequence, as filled by Aes_SetKey_Enc() */
++void Z7_FASTCALL Aes_Enc_Block(const UInt32 *aes, UInt32 *dest, const UInt32 *src)
++{
++  Aes_Encode(aes, dest, src);
++}
++
+ void AesCbc_Init(UInt32 *p, const Byte *iv)
+ {
+   unsigned i;
+diff --git a/C/Aes.h b/C/Aes.h
+index 7f0182ac..2e6350c0 100644
+--- a/C/Aes.h
++++ b/C/Aes.h
+@@ -24,6 +24,11 @@ typedef void (Z7_FASTCALL *AES_SET_KEY_FUNC)(UInt32 *aes, const Byte *key, unsig
+ void Z7_FASTCALL Aes_SetKey_Enc(UInt32 *aes, const Byte *key, unsigned keySize);
+ void Z7_FASTCALL Aes_SetKey_Dec(UInt32 *aes, const Byte *key, unsigned keySize);
+ 
++/* single-block ECB encryption (software path), for AES-GCM keystream / GHASH key:
++   aes  - 16-byte aligned pointer to keyMode+roundKeys sequence (from Aes_SetKey_Enc)
++   dest, src - 4 UInt32 words each (little-endian word layout, as AesCbc/AesCtr use) */
++void Z7_FASTCALL Aes_Enc_Block(const UInt32 *aes, UInt32 *dest, const UInt32 *src);
++
+ /* ivAes - 16-byte aligned pointer to iv+keyMode+roundKeys sequence: UInt32[AES_NUM_IVMRK_WORDS] */
+ void AesCbc_Init(UInt32 *ivAes, const Byte *iv); /* iv size is AES_BLOCK_SIZE */
+ 
+diff --git a/C/AesGcm.c b/C/AesGcm.c
+new file mode 100644
+index 00000000..2c7ed2ec
+--- /dev/null
++++ b/C/AesGcm.c
+@@ -0,0 +1,363 @@
++/* AesGcm.c -- AES-GCM authenticated encryption (NIST SP 800-38D)
++   Part of the Septima encryption expansion patch series.
++
++   The GHASH core (bmul64, rev64, Ghash_CtMul64) is adapted line-for-line from
++   BearSSL src/hash/ghash_ctmul64.c (constant-time: integer multiplications
++   with spaced bits, no secret-dependent table lookups or branches):
++
++   Copyright (c) 2016 Thomas Pornin <pornin@bolet.org>
++
++   Permission is hereby granted, free of charge, to any person obtaining
++   a copy of this software and associated documentation files (the
++   "Software"), to deal in the Software without restriction, including
++   without limitation the rights to use, copy, modify, merge, publish,
++   distribute, sublicense, and/or sell copies of the Software, and to
++   permit persons to whom the Software is furnished to do so, subject to
++   the following conditions:
++
++   The above copyright notice and this permission notice shall be
++   included in all copies or substantial portions of the Software.
++
++   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++   EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
++   NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
++   BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
++   ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
++   CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++   SOFTWARE.
++
++   Changes vs BearSSL: 7-Zip types (UInt64/Byte), 7-Zip endian macros
++   (GetBe64/SetBe64), whitespace. No logic changes. */
++
++#include "Precomp.h"
++
++#include <string.h>
++
++#include "CpuArch.h"
++#include "AesGcm.h"
++
++/* ---- GHASH (BearSSL ghash_ctmul64) ---- */
++
++static UInt64 Bmul64(UInt64 x, UInt64 y)
++{
++  UInt64 x0, x1, x2, x3;
++  UInt64 y0, y1, y2, y3;
++  UInt64 z0, z1, z2, z3;
++
++  x0 = x & (UInt64)0x1111111111111111;
++  x1 = x & (UInt64)0x2222222222222222;
++  x2 = x & (UInt64)0x4444444444444444;
++  x3 = x & (UInt64)0x8888888888888888;
++  y0 = y & (UInt64)0x1111111111111111;
++  y1 = y & (UInt64)0x2222222222222222;
++  y2 = y & (UInt64)0x4444444444444444;
++  y3 = y & (UInt64)0x8888888888888888;
++  z0 = (x0 * y0) ^ (x1 * y3) ^ (x2 * y2) ^ (x3 * y1);
++  z1 = (x0 * y1) ^ (x1 * y0) ^ (x2 * y3) ^ (x3 * y2);
++  z2 = (x0 * y2) ^ (x1 * y1) ^ (x2 * y0) ^ (x3 * y3);
++  z3 = (x0 * y3) ^ (x1 * y2) ^ (x2 * y1) ^ (x3 * y0);
++  z0 &= (UInt64)0x1111111111111111;
++  z1 &= (UInt64)0x2222222222222222;
++  z2 &= (UInt64)0x4444444444444444;
++  z3 &= (UInt64)0x8888888888888888;
++  return z0 | z1 | z2 | z3;
++}
++
++static UInt64 Rev64(UInt64 x)
++{
++#define RMS(m, s)   do { \
++    x = ((x & (UInt64)(m)) << (s)) \
++      | ((x >> (s)) & (UInt64)(m)); \
++  } while (0)
++
++  RMS(0x5555555555555555,  1);
++  RMS(0x3333333333333333,  2);
++  RMS(0x0F0F0F0F0F0F0F0F,  4);
++  RMS(0x00FF00FF00FF00FF,  8);
++  RMS(0x0000FFFF0000FFFF, 16);
++  return (x << 32) | (x >> 32);
++
++#undef RMS
++}
++
++/* y <- (y ^ data) * H, over the full input; a trailing partial block
++   is zero-padded, which matches GCM's padding rule. */
++static void Ghash_CtMul64(Byte *y, const Byte *h, const Byte *data, size_t len)
++{
++  const Byte *buf, *hb;
++  Byte *yb;
++  UInt64 y0, y1;
++  UInt64 h0, h1, h2, h0r, h1r, h2r;
++
++  buf = data;
++  yb = y;
++  hb = h;
++  y1 = GetBe64(yb);
++  y0 = GetBe64(yb + 8);
++  h1 = GetBe64(hb);
++  h0 = GetBe64(hb + 8);
++  h0r = Rev64(h0);
++  h1r = Rev64(h1);
++  h2 = h0 ^ h1;
++  h2r = h0r ^ h1r;
++  while (len > 0)
++  {
++    const Byte *src;
++    Byte tmp[16];
++    UInt64 y0r, y1r, y2, y2r;
++    UInt64 z0, z1, z2, z0h, z1h, z2h;
++    UInt64 v0, v1, v2, v3;
++
++    if (len >= 16)
++    {
++      src = buf;
++      buf += 16;
++      len -= 16;
++    }
++    else
++    {
++      memcpy(tmp, buf, len);
++      memset(tmp + len, 0, (sizeof tmp) - len);
++      src = tmp;
++      len = 0;
++    }
++    y1 ^= GetBe64(src);
++    y0 ^= GetBe64(src + 8);
++
++    y0r = Rev64(y0);
++    y1r = Rev64(y1);
++    y2 = y0 ^ y1;
++    y2r = y0r ^ y1r;
++
++    z0 = Bmul64(y0, h0);
++    z1 = Bmul64(y1, h1);
++    z2 = Bmul64(y2, h2);
++    z0h = Bmul64(y0r, h0r);
++    z1h = Bmul64(y1r, h1r);
++    z2h = Bmul64(y2r, h2r);
++    z2 ^= z0 ^ z1;
++    z2h ^= z0h ^ z1h;
++    z0h = Rev64(z0h) >> 1;
++    z1h = Rev64(z1h) >> 1;
++    z2h = Rev64(z2h) >> 1;
++
++    v0 = z0;
++    v1 = z0h ^ z2;
++    v2 = z1 ^ z2h;
++    v3 = z1h;
++
++    v3 = (v3 << 1) | (v2 >> 63);
++    v2 = (v2 << 1) | (v1 >> 63);
++    v1 = (v1 << 1) | (v0 >> 63);
++    v0 = (v0 << 1);
++
++    v2 ^= v0 ^ (v0 >> 1) ^ (v0 >> 2) ^ (v0 >> 7);
++    v1 ^= (v0 << 63) ^ (v0 << 62) ^ (v0 << 57);
++    v3 ^= v1 ^ (v1 >> 1) ^ (v1 >> 2) ^ (v1 >> 7);
++    v2 ^= (v1 << 63) ^ (v1 << 62) ^ (v1 << 57);
++
++    y0 = v2;
++    y1 = v3;
++  }
++
++  SetBe64(yb, y1)
++  SetBe64(yb + 8, y0)
++}
++
++/* ---- AES-GCM ---- */
++
++/* single-block AES-ECB over byte blocks (word layout matches AesCbc/AesCtr) */
++static void AesGcm_EncBlock(const UInt32 *aes, const Byte *src, Byte *dest)
++{
++  MY_ALIGN(16) UInt32 in[4];
++  MY_ALIGN(16) UInt32 out[4];
++  in[0] = GetUi32(src);
++  in[1] = GetUi32(src + 4);
++  in[2] = GetUi32(src + 8);
++  in[3] = GetUi32(src + 12);
++  Aes_Enc_Block(aes, out, in);
++  SetUi32(dest,      out[0])
++  SetUi32(dest + 4,  out[1])
++  SetUi32(dest + 8,  out[2])
++  SetUi32(dest + 12, out[3])
++}
++
++static void AesGcm_Inc32(Byte *ctr)
++{
++  const UInt32 c = GetBe32(ctr + 12) + 1;
++  SetBe32(ctr + 12, c)
++}
++
++void AesGcm_SetKey(CAesGcm *p, const Byte *key, unsigned keySize)
++{
++  Byte zero[AES_BLOCK_SIZE];
++  memset(zero, 0, sizeof(zero));
++  Aes_SetKey_Enc(p->aes, key, keySize);
++  AesGcm_EncBlock(p->aes, zero, p->h);
++}
++
++int AesGcm_Start(CAesGcm *p, const Byte *iv, size_t ivLen)
++{
++  p->ksPos = AES_BLOCK_SIZE;
++  p->bufPos = 0;
++  p->aadPhase = 1;
++  p->aadLen = 0;
++  p->dataLen = 0;
++  memset(p->y, 0, AES_BLOCK_SIZE);
++
++  if (ivLen == 0)
++    return 1;
++  if (ivLen == AES_GCM_IV_SIZE_DEFAULT)
++  {
++    memcpy(p->j0, iv, AES_GCM_IV_SIZE_DEFAULT);
++    p->j0[12] = 0;
++    p->j0[13] = 0;
++    p->j0[14] = 0;
++    p->j0[15] = 1;
++  }
++  else
++  {
++    Byte lenBlock[AES_BLOCK_SIZE];
++    memset(p->j0, 0, AES_BLOCK_SIZE);
++    Ghash_CtMul64(p->j0, p->h, iv, ivLen);
++    memset(lenBlock, 0, 8);
++    SetBe64(lenBlock + 8, (UInt64)ivLen * 8)
++    Ghash_CtMul64(p->j0, p->h, lenBlock, AES_BLOCK_SIZE);
++  }
++  memcpy(p->ctr, p->j0, AES_BLOCK_SIZE);
++  return 0;
++}
++
++/* streams data into GHASH; only full blocks go to Ghash_CtMul64,
++   a partial block waits in buf until more data or an explicit flush */
++static void AesGcm_GhashUpdate(CAesGcm *p, const Byte *data, size_t size)
++{
++  if (p->bufPos != 0)
++  {
++    const size_t rem = AES_BLOCK_SIZE - p->bufPos;
++    const size_t n = (size < rem ? size : rem);
++    memcpy(p->buf + p->bufPos, data, n);
++    p->bufPos += (unsigned)n;
++    data += n;
++    size -= n;
++    if (p->bufPos != AES_BLOCK_SIZE)
++      return;
++    Ghash_CtMul64(p->y, p->h, p->buf, AES_BLOCK_SIZE);
++    p->bufPos = 0;
++  }
++  {
++    const size_t full = size & ~(size_t)(AES_BLOCK_SIZE - 1);
++    if (full != 0)
++    {
++      Ghash_CtMul64(p->y, p->h, data, full);
++      data += full;
++      size -= full;
++    }
++  }
++  if (size != 0)
++  {
++    memcpy(p->buf, data, size);
++    p->bufPos = (unsigned)size;
++  }
++}
++
++static void AesGcm_GhashFlush(CAesGcm *p)
++{
++  if (p->bufPos != 0)
++  {
++    /* Ghash_CtMul64 zero-pads the partial block (GCM padding rule) */
++    Ghash_CtMul64(p->y, p->h, p->buf, p->bufPos);
++    p->bufPos = 0;
++  }
++}
++
++void AesGcm_UpdateAad(CAesGcm *p, const Byte *data, size_t size)
++{
++  p->aadLen += size;
++  AesGcm_GhashUpdate(p, data, size);
++}
++
++static void AesGcm_EndAad(CAesGcm *p)
++{
++  if (p->aadPhase)
++  {
++    AesGcm_GhashFlush(p);
++    p->aadPhase = 0;
++  }
++}
++
++static void AesGcm_Ctr(CAesGcm *p, Byte *data, size_t size)
++{
++  while (size != 0)
++  {
++    size_t n;
++    if (p->ksPos == AES_BLOCK_SIZE)
++    {
++      AesGcm_Inc32(p->ctr);
++      AesGcm_EncBlock(p->aes, p->ctr, p->ks);
++      p->ksPos = 0;
++    }
++    n = AES_BLOCK_SIZE - p->ksPos;
++    if (n > size)
++      n = size;
++    {
++      const Byte *ks = p->ks + p->ksPos;
++      size_t i;
++      for (i = 0; i < n; i++)
++        data[i] = (Byte)(data[i] ^ ks[i]);
++    }
++    data += n;
++    size -= n;
++    p->ksPos += (unsigned)n;
++  }
++}
++
++void AesGcm_Encrypt(CAesGcm *p, Byte *data, size_t size)
++{
++  AesGcm_EndAad(p);
++  p->dataLen += size;
++  AesGcm_Ctr(p, data, size);
++  AesGcm_GhashUpdate(p, data, size); /* GHASH over ciphertext */
++}
++
++void AesGcm_Decrypt(CAesGcm *p, Byte *data, size_t size)
++{
++  AesGcm_EndAad(p);
++  p->dataLen += size;
++  AesGcm_GhashUpdate(p, data, size); /* GHASH over ciphertext */
++  AesGcm_Ctr(p, data, size);
++}
++
++void AesGcm_GetTag(CAesGcm *p, Byte *tag)
++{
++  Byte lenBlock[AES_BLOCK_SIZE];
++  Byte ekj0[AES_BLOCK_SIZE];
++  unsigned i;
++
++  AesGcm_EndAad(p);
++  AesGcm_GhashFlush(p);
++  SetBe64(lenBlock,     p->aadLen * 8)
++  SetBe64(lenBlock + 8, p->dataLen * 8)
++  Ghash_CtMul64(p->y, p->h, lenBlock, AES_BLOCK_SIZE);
++  AesGcm_EncBlock(p->aes, p->j0, ekj0);
++  for (i = 0; i < AES_GCM_TAG_SIZE; i++)
++    tag[i] = (Byte)(ekj0[i] ^ p->y[i]);
++}
++
++unsigned AesGcm_IsTagEqual_CT(const Byte *tag1, const Byte *tag2)
++{
++  unsigned d = 0;
++  unsigned i;
++  for (i = 0; i < AES_GCM_TAG_SIZE; i++)
++    d |= (unsigned)(tag1[i] ^ tag2[i]);
++  return (unsigned)((d - 1) >> 8) & 1;
++}
++
++void AesGcm_Wipe(CAesGcm *p)
++{
++  volatile Byte *pb = (volatile Byte *)p;
++  size_t size = sizeof(*p);
++  while (size--)
++    *pb++ = 0;
++}
+diff --git a/C/AesGcm.h b/C/AesGcm.h
+new file mode 100644
+index 00000000..cf07be38
+--- /dev/null
++++ b/C/AesGcm.h
+@@ -0,0 +1,59 @@
++/* AesGcm.h -- AES-GCM authenticated encryption (NIST SP 800-38D)
++   Part of the Septima encryption expansion patch series.
++   Streaming interface over the in-tree AES kernels (Aes.c).
++   GHASH is the constant-time ctmul64 implementation from BearSSL
++   (c) 2016 Thomas Pornin <pornin@bolet.org>, MIT license — see AesGcm.c. */
++
++#ifndef ZIP7_INC_AES_GCM_H
++#define ZIP7_INC_AES_GCM_H
++
++#include "Aes.h"
++
++EXTERN_C_BEGIN
++
++#define AES_GCM_TAG_SIZE 16
++#define AES_GCM_IV_SIZE_DEFAULT 12
++
++/* Call AesGenTables() once before any use (same rule as the other AES functions). */
++
++typedef struct
++{
++  MY_ALIGN(16) UInt32 aes[(1 + 15) * 4]; /* keyMode + round keys (Aes_SetKey_Enc layout) */
++  Byte h[AES_BLOCK_SIZE];      /* GHASH key: E_K(0^128) */
++  Byte y[AES_BLOCK_SIZE];      /* GHASH accumulator */
++  Byte j0[AES_BLOCK_SIZE];     /* pre-counter block; E_K(j0) masks the tag */
++  Byte ctr[AES_BLOCK_SIZE];    /* current counter block (inc32 semantics) */
++  Byte ks[AES_BLOCK_SIZE];     /* current keystream block */
++  Byte buf[AES_BLOCK_SIZE];    /* partial GHASH input block */
++  unsigned ksPos;              /* consumed keystream bytes; AES_BLOCK_SIZE == empty */
++  unsigned bufPos;
++  int aadPhase;
++  UInt64 aadLen;               /* bytes */
++  UInt64 dataLen;              /* bytes */
++} CAesGcm;
++
++/* keySize = 16, 24 or 32 (bytes) */
++void AesGcm_SetKey(CAesGcm *p, const Byte *key, unsigned keySize);
++
++/* starts a new message under the current key; any ivLen >= 1 per SP 800-38D
++   (12 is the standard fast path). Returns 0 on success, 1 on bad ivLen. */
++int AesGcm_Start(CAesGcm *p, const Byte *iv, size_t ivLen);
++
++/* all AAD must be supplied before the first Encrypt/Decrypt call */
++void AesGcm_UpdateAad(CAesGcm *p, const Byte *data, size_t size);
++
++/* in-place, arbitrary chunk sizes across calls */
++void AesGcm_Encrypt(CAesGcm *p, Byte *data, size_t size);
++void AesGcm_Decrypt(CAesGcm *p, Byte *data, size_t size);
++
++/* call once, after all data; tag is AES_GCM_TAG_SIZE bytes */
++void AesGcm_GetTag(CAesGcm *p, Byte *tag);
++
++/* constant-time; returns 1 if equal, 0 otherwise */
++unsigned AesGcm_IsTagEqual_CT(const Byte *tag1, const Byte *tag2);
++
++void AesGcm_Wipe(CAesGcm *p);
++
++EXTERN_C_END
++
++#endif
+diff --git a/C/Util/AesGcmTest/README.md b/C/Util/AesGcmTest/README.md
+new file mode 100644
+index 00000000..1a5aeb21
+--- /dev/null
++++ b/C/Util/AesGcmTest/README.md
+@@ -0,0 +1,11 @@
++# AesGcmTest — cross-validation harness for C/AesGcm.c
++
++Validates the streaming AES-GCM kernel against OpenSSL (via python-cryptography):
++edge cases plus 3000 random vectors — AES-128/192/256, IV lengths 8..128 bytes,
++AAD, ragged streaming chunk sizes, round-trip decryption, tamper rejection.
++
++```sh
++gcc -O2 -Wall -Wextra -I ../../ gcmtest.c \
++    ../../AesGcm.c ../../Aes.c ../../AesOpt.c ../../CpuArch.c -o gcmtest
++python3 gcm_oracle.py     # runs ./gcmtest, prints N/N vectors passed
++```
+diff --git a/C/Util/AesGcmTest/gcm_oracle.py b/C/Util/AesGcmTest/gcm_oracle.py
+new file mode 100644
+index 00000000..439c42ba
+--- /dev/null
++++ b/C/Util/AesGcmTest/gcm_oracle.py
+@@ -0,0 +1,81 @@
++#!/usr/bin/env python3
++"""Cross-check C/AesGcm.c against python-cryptography (OpenSSL AES-GCM).
++
++Feeds vectors to ./gcmtest via stdin, compares ct/tag with AESGCM output.
++Includes edge cases + N random vectors (keys 128/192/256, IV lens 12 and odd).
++"""
++import os
++import random
++import subprocess
++import sys
++
++from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
++
++N_RANDOM = 3000
++random.seed(0x5E971A)  # deterministic
++
++def oracle(key: bytes, iv: bytes, aad: bytes, pt: bytes):
++    enc = Cipher(algorithms.AES(key), modes.GCM(iv)).encryptor()
++    enc.authenticate_additional_data(aad)
++    ct = enc.update(pt) + enc.finalize()
++    return ct, enc.tag
++
++def h(b: bytes) -> str:
++    return b.hex() if b else "-"
++
++vectors = []
++
++# --- edge cases ---
++Z = bytes
++edge_keys = [bytes(16), bytes(24), bytes(32), bytes(range(32))]
++for key in edge_keys:
++    vectors.append((key, bytes(12), b"", b""))                      # all-zero, empty
++    vectors.append((key, bytes(12), b"", bytes(16)))                # single block
++    vectors.append((key, bytes(12), b"\xab" * 20, b""))             # AAD only
++    vectors.append((key, bytes(12), b"", b"\x01"))                  # 1 byte
++    vectors.append((key, bytes(12), b"", bytes(15)))                # partial block
++    vectors.append((key, bytes(12), b"", bytes(17)))                # block + 1
++    vectors.append((key, bytes(8), b"", bytes(16)))                 # non-96-bit IV
++    vectors.append((key, bytes(60), b"\x02" * 16, bytes(64)))       # long IV
++    vectors.append((key, bytes(range(1, 13)), b"\x03" * 15, bytes(255)))
++
++# --- random vectors ---
++for _ in range(N_RANDOM):
++    key = random.randbytes(random.choice([16, 24, 32]))
++    ivlen = random.choice([12, 12, 12, 8, 13, 16, 32, 120, 128])
++    iv = random.randbytes(ivlen)
++    aad = random.randbytes(random.randrange(0, 90))
++    pt = random.randbytes(random.randrange(0, 700))
++    vectors.append((key, iv, aad, pt))
++
++lines = "".join(f"{h(k)} {h(i)} {h(a)} {h(p)}\n" for k, i, a, p in vectors)
++proc = subprocess.run([os.path.join(os.path.dirname(__file__) or ".", "gcmtest")],
++                      input=lines, capture_output=True, text=True)
++if proc.returncode != 0:
++    sys.exit(f"gcmtest crashed: rc={proc.returncode}\n{proc.stderr}")
++
++out = proc.stdout.strip().splitlines()
++if len(out) != len(vectors):
++    sys.exit(f"line count mismatch: {len(out)} != {len(vectors)}")
++
++fails = 0
++for idx, ((key, iv, aad, pt), line) in enumerate(zip(vectors, out)):
++    parts = line.split()
++    if parts[0] != "OK":
++        print(f"[{idx}] C-side failure: {line}  "
++              f"(key={len(key)*8} iv={len(iv)} aad={len(aad)} pt={len(pt)})")
++        fails += 1
++        continue
++    ct_hex = "" if parts[1] == "-" else parts[1]
++    tag_hex = parts[2]
++    ct_ref, tag_ref = oracle(key, iv, aad, pt)
++    if ct_hex != ct_ref.hex() or tag_hex != tag_ref.hex():
++        print(f"[{idx}] MISMATCH key={key.hex()} iv={iv.hex()} "
++              f"aad={aad.hex()} pt={pt.hex()}")
++        print(f"  got ct={ct_hex} tag={tag_hex}")
++        print(f"  ref ct={ct_ref.hex()} tag={tag_ref.hex()}")
++        fails += 1
++
++print(f"{len(vectors) - fails}/{len(vectors)} vectors passed "
++      f"({len(edge_keys) * 9} edge + {N_RANDOM} random)")
++sys.exit(1 if fails else 0)
+diff --git a/C/Util/AesGcmTest/gcmtest.c b/C/Util/AesGcmTest/gcmtest.c
+new file mode 100644
+index 00000000..5104b601
+--- /dev/null
++++ b/C/Util/AesGcmTest/gcmtest.c
+@@ -0,0 +1,171 @@
++/* gcmtest.c -- stdin/stdout test driver for C/AesGcm.c
++   Input lines:  <keyhex> <ivhex> <aadhex|-> <pthex|->
++   Output lines: OK <cthex|-> <taghex>
++   or:           FAIL <reason>
++   Encryption is streamed through awkward chunk sizes; the result is then
++   decrypted (different chunk sizes) and round-trip + tamper checks run. */
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include "AesGcm.h"
++
++static int HexVal(int c)
++{
++  if (c >= '0' && c <= '9') return c - '0';
++  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
++  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
++  return -1;
++}
++
++/* "-" means empty; returns length or -1 */
++static int ParseHex(const char *s, Byte *out, int maxLen)
++{
++  int len = 0;
++  if (strcmp(s, "-") == 0)
++    return 0;
++  while (s[0] && s[1])
++  {
++    int hi = HexVal(s[0]), lo = HexVal(s[1]);
++    if (hi < 0 || lo < 0 || len >= maxLen)
++      return -1;
++    out[len++] = (Byte)((hi << 4) | lo);
++    s += 2;
++  }
++  if (s[0])
++    return -1;
++  return len;
++}
++
++static void PrintHex(const Byte *p, int len)
++{
++  if (len == 0)
++    printf("-");
++  else
++  {
++    int i;
++    for (i = 0; i < len; i++)
++      printf("%02x", p[i]);
++  }
++}
++
++static const size_t chunksA[] = { 1, 7, 16, 3, 32, 5, 13, 64, 2, 17 };
++static const size_t chunksB[] = { 4, 1, 29, 16, 8, 47, 1, 3, 128, 11 };
++
++typedef void (*GCM_UPDATE)(CAesGcm *p, Byte *data, size_t size);
++
++static void FeedChunks(CAesGcm *g, GCM_UPDATE f, Byte *data, size_t len,
++    const size_t *pattern, size_t patternLen)
++{
++  size_t pos = 0, k = 0;
++  while (pos < len)
++  {
++    size_t n = pattern[k % patternLen];
++    k++;
++    if (n > len - pos)
++      n = len - pos;
++    f(g, data + pos, n);
++    pos += n;
++  }
++}
++
++static void FeedAadChunks(CAesGcm *g, const Byte *data, size_t len)
++{
++  size_t pos = 0, k = 0;
++  while (pos < len)
++  {
++    size_t n = chunksB[k % (sizeof(chunksB) / sizeof(chunksB[0]))];
++    k++;
++    if (n > len - pos)
++      n = len - pos;
++    AesGcm_UpdateAad(g, data + pos, n);
++    pos += n;
++  }
++}
++
++#define MAX_BUF (1 << 16)
++
++int main(void)
++{
++  static char line[5 * MAX_BUF];
++  static Byte key[64], iv[256], aad[MAX_BUF], data[MAX_BUF], orig[MAX_BUF];
++  AesGenTables();
++
++  while (fgets(line, sizeof(line), stdin))
++  {
++    char *sKey, *sIv, *sAad, *sPt, *save = NULL;
++    int keyLen, ivLen, aadLen, ptLen;
++    CAesGcm g;
++    Byte tag[AES_GCM_TAG_SIZE], tag2[AES_GCM_TAG_SIZE];
++
++    if (line[0] == '\n' || line[0] == '#')
++      continue;
++    sKey = strtok_r(line, " \t\n", &save);
++    sIv  = strtok_r(NULL, " \t\n", &save);
++    sAad = strtok_r(NULL, " \t\n", &save);
++    sPt  = strtok_r(NULL, " \t\n", &save);
++    if (!sKey || !sIv || !sAad || !sPt)
++      { printf("FAIL parse\n"); continue; }
++
++    keyLen = ParseHex(sKey, key, sizeof(key));
++    ivLen  = ParseHex(sIv, iv, sizeof(iv));
++    aadLen = ParseHex(sAad, aad, sizeof(aad));
++    ptLen  = ParseHex(sPt, data, sizeof(data));
++    if (keyLen <= 0 || ivLen <= 0 || aadLen < 0 || ptLen < 0)
++      { printf("FAIL hex\n"); continue; }
++    memcpy(orig, data, (size_t)ptLen);
++
++    /* encrypt (streamed) */
++    AesGcm_SetKey(&g, key, (unsigned)keyLen);
++    if (AesGcm_Start(&g, iv, (size_t)ivLen))
++      { printf("FAIL start\n"); continue; }
++    FeedAadChunks(&g, aad, (size_t)aadLen);
++    FeedChunks(&g, AesGcm_Encrypt, data, (size_t)ptLen,
++        chunksA, sizeof(chunksA) / sizeof(chunksA[0]));
++    AesGcm_GetTag(&g, tag);
++
++    /* round-trip decrypt with different chunking */
++    {
++      static Byte ct[MAX_BUF];
++      memcpy(ct, data, (size_t)ptLen);
++      AesGcm_Start(&g, iv, (size_t)ivLen);
++      FeedAadChunks(&g, aad, (size_t)aadLen);
++      FeedChunks(&g, AesGcm_Decrypt, ct, (size_t)ptLen,
++          chunksB, sizeof(chunksB) / sizeof(chunksB[0]));
++      AesGcm_GetTag(&g, tag2);
++      if (!AesGcm_IsTagEqual_CT(tag, tag2))
++        { printf("FAIL rt-tag\n"); continue; }
++      if (ptLen && memcmp(ct, orig, (size_t)ptLen) != 0)
++        { printf("FAIL rt-data\n"); continue; }
++
++      /* tamper: flip one ciphertext byte (or the tag if empty) -> must not verify */
++      AesGcm_Start(&g, iv, (size_t)ivLen);
++      FeedAadChunks(&g, aad, (size_t)aadLen);
++      if (ptLen)
++      {
++        memcpy(ct, data, (size_t)ptLen);
++        ct[ptLen / 2] ^= 0x40;
++        AesGcm_Decrypt(&g, ct, (size_t)ptLen);
++        AesGcm_GetTag(&g, tag2);
++        if (AesGcm_IsTagEqual_CT(tag, tag2))
++          { printf("FAIL tamper-accepted\n"); continue; }
++      }
++      else
++      {
++        AesGcm_GetTag(&g, tag2);
++        tag2[0] ^= 1;
++        if (AesGcm_IsTagEqual_CT(tag, tag2))
++          { printf("FAIL tamper-accepted\n"); continue; }
++      }
++    }
++
++    printf("OK ");
++    PrintHex(data, ptLen);
++    printf(" ");
++    PrintHex(tag, AES_GCM_TAG_SIZE);
++    printf("\n");
++    AesGcm_Wipe(&g);
++  }
++  return 0;
++}

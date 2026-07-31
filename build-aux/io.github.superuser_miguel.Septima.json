@@ -22,9 +22,10 @@
     {
       "name": "7-zip-zstd",
       "buildsystem": "simple",
-      "//": "7-Zip ZS by Tino Reichardt (LGPL-2.1-or-later + BSD-3-Clause for zstd/lz4/etc.). Includes 7-Zip's own RAR *decode* only, which carries the unRAR restriction (no RAR creation). Bundled unmodified as a separate binary.",
+      "//": "7-Zip ZS by Tino Reichardt (LGPL-2.1-or-later + BSD-3-Clause for zstd/lz4/etc.). Includes 7-Zip's own RAR *decode* only, which carries the unRAR restriction (no RAR creation). Bundled as a separate binary, patched with the Septima encryption series (see patches/README.md): AES-256-GCM + Argon2id, standard constructions from reference implementations (PHC Argon2 CC0/Apache-2.0, BearSSL GHASH MIT). Septima probes 7zz i at runtime, so it stays correct against an unpatched 7zz.",
       "build-commands": [
         "make -j ${FLATPAK_BUILDER_N_JOBS} -C CPP/7zip/Bundles/Alone2 -f makefile.gcc",
+        "C/Util/AesGcmTest/roundtrip.sh CPP/7zip/Bundles/Alone2/_o/7zz",
         "install -Dm755 CPP/7zip/Bundles/Alone2/_o/7zz /app/bin/7zz"
       ],
       "sources": [
@@ -32,6 +33,22 @@
           "type": "archive",
           "url": "https://github.com/mcmilk/7-Zip-zstd/archive/refs/tags/v26.02-v1.5.7-R2.tar.gz",
           "sha256": "02a684ff8fd7fae110d30dddd4c55648061d3dceeeaefb1c9c20baed3a51795a"
+        },
+        {
+          "type": "patch",
+          "path": "patches/0001-AES-GCM-add-constant-time-software-AES-GCM-kernel-C-.patch"
+        },
+        {
+          "type": "patch",
+          "path": "patches/0002-Argon2-vendor-PHC-reference-implementation-C-argon2.patch"
+        },
+        {
+          "type": "patch",
+          "path": "patches/0003-7z-AES256GCM-coder-AES-256-GCM-Argon2id-method-ID-06.patch"
+        },
+        {
+          "type": "patch",
+          "path": "patches/0004-AES256GCM-add-functional-acceptance-test-script.patch"
         }
       ]
     },
