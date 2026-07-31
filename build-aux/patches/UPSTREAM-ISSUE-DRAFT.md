@@ -1,9 +1,9 @@
-# Draft: design issue for mcmilk/7-Zip-zstd
+# Design issue for mcmilk/7-Zip-zstd
 
-Not yet filed. Post as a **new issue** (not a PR) to agree scope and the
-codec ID before asking for review of ~1,400 lines. Title:
+**Filed 2026-07-31 as [mcmilk/7-Zip-zstd#528](https://github.com/mcmilk/7-Zip-zstd/issues/528).**
+Kept here as the source of record; edit upstream if this changes. Title:
 
-> Design proposal: AES-256-GCM + Argon2id for .7z (standards-only, 2 methods, test vectors included)
+> Design proposal: AES-256-GCM + Argon2id for .7z (standards-only, one method, test vectors included)
 
 ---
 
@@ -113,8 +113,8 @@ against 26.02), no crash.
 
 ## Status and expectations
 
-This is already shipping in [Septima](https://github.com/superuser-miguel) (a
-Linux GUI over 7-Zip ZS) as a patch series on the pinned ZS tarball, with the
+This is already shipping in [Septima](https://github.com/superuser-miguel/septima)
+(a Linux GUI over 7-Zip ZS) as a patch series on the pinned ZS tarball, with the
 GUI probing `7zz i` so it degrades correctly against an unpatched binary. So
 there's no time pressure from my side — if this lands upstream the patches
 disappear and the archives stay compatible because the IDs match.
