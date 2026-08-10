@@ -1,5 +1,5 @@
-From bb0b47ffe6e30d9d9ed4435d2e9c1b7b64d9f1fd Mon Sep 17 00:00:00 2001
-From: magnus_python <miguelsensacion@gmail.com>
+From 03b2f30c8c17fb44ed61e6b829e02e569c038515 Mon Sep 17 00:00:00 2001
+From: superuser-miguel <16271056+superuser-miguel@users.noreply.github.com>
 Date: Fri, 31 Jul 2026 11:05:45 -0400
 Subject: [PATCH] AES-GCM: add constant-time software AES-GCM kernel
  (C/AesGcm.*)

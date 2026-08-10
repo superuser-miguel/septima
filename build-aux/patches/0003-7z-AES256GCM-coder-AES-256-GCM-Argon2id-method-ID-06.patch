@@ -1,5 +1,5 @@
-From 73f45689986f79fe88b1b01f3613f8a79a53709a Mon Sep 17 00:00:00 2001
-From: magnus_python <miguelsensacion@gmail.com>
+From df2c30cc7cdba791f2ddce52d443936aee7b4c72 Mon Sep 17 00:00:00 2001
+From: superuser-miguel <16271056+superuser-miguel@users.noreply.github.com>
 Date: Fri, 31 Jul 2026 11:33:52 -0400
 Subject: [PATCH] =?UTF-8?q?7z:=20AES256GCM=20coder=20=E2=80=94=20AES-256-G?=
  =?UTF-8?q?CM=20+=20Argon2id=20method=20(ID=2006=20F7=2011=2001)?=
@@ -25,6 +25,12 @@ with -mhe=on so encrypted headers use the same method.
   full coder-props layout.
 - 7zCompressionMode.h/7zEncode.cpp: CryptoMethod field replaces the
   hardcoded k_AES at both insertion sites (content + header folders).
+- 7zOut.cpp: the header-only encode path (WriteDatabase) builds a local
+  CCompressionMethodMode and must carry CryptoMethod across too. Without
+  it that path keeps the k_AES default, and since 7zHandlerOut.cpp clears
+  CompressMainHeader when numItems < 2, a single-item archive written with
+  -mem=AES256GCM -mhe=on would encrypt its file names with legacy
+  AES-256-CBC + the SHA-256 KDF while the data used GCM/Argon2id.
 - 7zHandlerOut.cpp: -mem= parsing for 7z (aes256|aes256cbc|aes256gcm).
 - 7zHandler.cpp/7zItem.h: encrypted-flag detection + method display
   ("AES256GCM:256m:t3:p4" in l -slt).
@@ -33,7 +39,9 @@ with -mhe=on so encrypted headers use the same method.
 
 Tested (Linux x64): create/list/extract round-trip (LZMA2+AES256GCM);
 wrong password rejected via tag; 1-byte ciphertext tamper rejected;
--mhe=on list-without-password refused, extract OK; default archives
+-mhe=on list-without-password refused, extract OK, and the encrypted
+header carries the -mem= cipher for one-item and multi-item archives
+alike (no legacy 7zAES coder id anywhere in the file); default archives
 still legacy 7zAES:19; stock 7zz 26.02 lists the archive and fails
 extraction gracefully ("Unsupported Method", no crash).
 
@@ -47,12 +55,13 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
  CPP/7zip/Archive/7z/7zHandlerOut.cpp    |  19 ++
  CPP/7zip/Archive/7z/7zHeader.h          |   4 +
  CPP/7zip/Archive/7z/7zItem.h            |   3 +-
+ CPP/7zip/Archive/7z/7zOut.cpp           |   5 +
  CPP/7zip/Bundles/Format7zF/Arc_gcc.mak  |   9 +
  CPP/7zip/Crypto/7zGcm.cpp               | 344 ++++++++++++++++++++++++
  CPP/7zip/Crypto/7zGcm.h                 | 146 ++++++++++
  CPP/7zip/Crypto/7zGcmRegister.cpp       |  17 ++
  DOC/Methods-Extern.md                   |  35 +++
- 13 files changed, 634 insertions(+), 5 deletions(-)
+ 14 files changed, 639 insertions(+), 5 deletions(-)
  create mode 100644 CPP/7zip/Crypto/7zGcm.cpp
  create mode 100644 CPP/7zip/Crypto/7zGcm.h
  create mode 100644 CPP/7zip/Crypto/7zGcmRegister.cpp
@@ -291,6 +300,22 @@ index 06737c81..9cc1af30 100644
          return true;
      return false;
    }
+diff --git a/CPP/7zip/Archive/7z/7zOut.cpp b/CPP/7zip/Archive/7z/7zOut.cpp
+index d0c8cf29..e2733d13 100644
+--- a/CPP/7zip/Archive/7z/7zOut.cpp
++++ b/CPP/7zip/Archive/7z/7zOut.cpp
+@@ -933,6 +933,11 @@ HRESULT COutArchive::WriteDatabase(
+       CCompressionMethodMode encryptOptions;
+       encryptOptions.PasswordIsDefined = options->PasswordIsDefined;
+       encryptOptions.Password = options->Password;
++      // headers must use the same cipher as the data (-mem=): without this the
++      // header-only path silently falls back to the k_AES default, so a
++      // single-item archive (numItems < 2 clears CompressMainHeader) would
++      // protect its file names with legacy AES-256-CBC + the SHA-256 KDF.
++      encryptOptions.CryptoMethod = options->CryptoMethod;
+       CEncoder encoder(headerOptions.CompressMainHeader ? *options : encryptOptions);
+       CRecordVector<UInt64> packSizes;
+       CObjectVector<CFolder> folders;
 diff --git a/CPP/7zip/Bundles/Format7zF/Arc_gcc.mak b/CPP/7zip/Bundles/Format7zF/Arc_gcc.mak
 index 814a7978..36e45596 100644
 --- a/CPP/7zip/Bundles/Format7zF/Arc_gcc.mak

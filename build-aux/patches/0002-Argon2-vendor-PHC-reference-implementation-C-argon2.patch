@@ -1,5 +1,5 @@
-From 1fc86f994d2cd0486c4b9f33211f42f9d596b51e Mon Sep 17 00:00:00 2001
-From: magnus_python <miguelsensacion@gmail.com>
+From 59fe7a24da61886b510846ae1bb826bcc5cce71c Mon Sep 17 00:00:00 2001
+From: superuser-miguel <16271056+superuser-miguel@users.noreply.github.com>
 Date: Fri, 31 Jul 2026 11:12:11 -0400
 Subject: [PATCH] Argon2: vendor PHC reference implementation (C/argon2/)
 MIME-Version: 1.0

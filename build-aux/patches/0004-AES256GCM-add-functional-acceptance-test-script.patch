@@ -1,5 +1,5 @@
-From dd1c3e6dc8e7aeb34c8bd51c820e423858230beb Mon Sep 17 00:00:00 2001
-From: magnus_python <miguelsensacion@gmail.com>
+From 73a38aabc5376ce834516d211c05b146d362551c Mon Sep 17 00:00:00 2001
+From: superuser-miguel <16271056+superuser-miguel@users.noreply.github.com>
 Date: Fri, 31 Jul 2026 11:49:29 -0400
 Subject: [PATCH] AES256GCM: add functional acceptance test script
 
@@ -12,16 +12,16 @@ Usage: C/Util/AesGcmTest/roundtrip.sh /path/to/7zz
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
 ---
- C/Util/AesGcmTest/roundtrip.sh | 56 ++++++++++++++++++++++++++++++++++
- 1 file changed, 56 insertions(+)
+ C/Util/AesGcmTest/roundtrip.sh | 69 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 69 insertions(+)
  create mode 100755 C/Util/AesGcmTest/roundtrip.sh
 
 diff --git a/C/Util/AesGcmTest/roundtrip.sh b/C/Util/AesGcmTest/roundtrip.sh
 new file mode 100755
-index 00000000..a9a3c050
+index 00000000..bbc1e111
 --- /dev/null
 +++ b/C/Util/AesGcmTest/roundtrip.sh
-@@ -0,0 +1,56 @@
+@@ -0,0 +1,69 @@
 +#!/bin/sh
 +# roundtrip.sh -- functional acceptance tests for the AES256GCM 7z method
 +# Usage: ./roundtrip.sh /path/to/7zz
@@ -71,6 +71,19 @@ index 00000000..a9a3c050
 +"$Z" x -pSecret -oouthe he.7z >/dev/null 2>&1 || fail "-mhe extract"
 +diff -r src outhe/src >/dev/null 2>&1 || fail "-mhe roundtrip diff"
 +ok "-mhe=on (encrypted headers) roundtrip"
++
++# A one-item archive takes the header-only encode path (7zHandlerOut.cpp clears
++# CompressMainHeader when numItems < 2). That path must still use the -mem=
++# cipher: if it falls back to the default, the file names end up under legacy
++# AES-256-CBC + the SHA-256 KDF while the data is GCM, and any stock 7zz can
++# list them with the password. Check the legacy coder id is absent from the file.
++"$Z" a -pSecret -mem=AES256GCM -mhe=on he1.7z src/a.txt >/dev/null 2>&1 \
++    || fail "single-item -mhe create"
++od -An -tx1 -v he1.7z | tr -d ' \n' | grep -q '06f10701' \
++    && fail "single-item -mhe header fell back to legacy 7zAES (06 F1 07 01)"
++"$Z" x -pSecret -oouthe1 he1.7z >/dev/null 2>&1 || fail "single-item -mhe extract"
++cmp -s src/a.txt outhe1/src/a.txt || fail "single-item -mhe roundtrip diff"
++ok "-mhe=on one-item archive keeps the -mem= cipher (no legacy fallback)"
 +
 +"$Z" a -pSecret legacy.7z src/a.txt >/dev/null 2>&1 || fail "legacy create"
 +"$Z" l -slt -pSecret legacy.7z 2>/dev/null | grep -q "7zAES:19" \
