@@ -47,7 +47,10 @@ flatpak run --env=SEPTIMA_DEBUG=1 "$APP" "${ARGS[@]}" 2>&1 \
   | grep --line-buffered -E "$KEEP" \
   | tee -a "$LOG" "$RUNLOG" || true
 
-count() { grep -c -- "$1" "$RUNLOG" 2>/dev/null || echo 0; }
+# grep -c already prints 0 when it matches nothing, but exits 1 while doing so —
+# so `|| echo 0` appended a second zero and every count came out as "0\n0",
+# which broke the comparison below with "integer expected".
+count() { local n; n=$(grep -c -- "$1" "$RUNLOG" 2>/dev/null) || n=0; printf '%s' "${n:-0}"; }
 
 echo
 echo "=== job summary (this run) ==="
