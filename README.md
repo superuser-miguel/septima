@@ -159,7 +159,7 @@ meson compile -C builddir
 
 ## Roadmap
 
-### Shipped (through v0.3.0)
+### Shipped (through v0.4.0)
 
 - [x] **Browse & extract** — any archive `7zz` reads, with live progress, cancel
       and password support.
@@ -196,31 +196,35 @@ meson compile -C builddir
       archive for each item," and each one is compressed into its own archive
       saved next to it, instead of combining them into one.
 
-### Landing in 0.4.x — full `7zz` CLI parity
+Completing full `7zz` CLI parity in **v0.4.0** — genuine 1:1 coverage of what
+the bundled `7zz` can create on Linux:
 
-_Built and on `main`; ships in the next release. Gives genuine 1:1 coverage of
-what the bundled `7zz` can create on Linux._
+- [x] **Complete hash calculator** — CRC-64, MD5, SHA-1, SHA-384, SHA3-512 and
+      BLAKE2sp added, and xxHash split into XXH32 / XXH64 (13 digests in all).
+      _(v0.3.0)_
+- [x] **Zip encryption method** — choose AES-256 for zip instead of the weak
+      ZipCrypto default. _(v0.3.0)_
+- [x] **More format × codec combinations** — **XZ** and **Deflate64** inside
+      zip, and **Brotli / LZ4 / LZ5 / Lizard** as `tar` post-compressors.
+      _(v0.3.0)_
+- [x] **Architecture / filter picker** — a real control for the filter family:
+      Delta, ARM64, ARM/ARMT, PPC, SPARC, RISC-V and BCJ2, alongside x86 BCJ.
+- [x] **Lizard family × level picker** — surface the four method families
+      (fastLZ4 / LIZv1, ± Huffman) instead of one flat 10–49 slider.
+- [x] **Standalone single-stream creation** — write a raw `.zst` / `.br` /
+      `.lz4` / `.lz5` / `.xz` / `.gz` / `.bz2` stream, not only `tar` + a
+      compressor.
 
-- **Complete hash calculator** — CRC-64, MD5, SHA-1, SHA-384, SHA3-512 and
-  BLAKE2sp added, and xxHash split into XXH32 / XXH64 (13 digests in all).
-- **Zip encryption method** — choose AES-256 for zip instead of the weak
-  ZipCrypto default.
-- **More format × codec combinations** — **XZ** and **Deflate64** inside zip,
-  and **Brotli / LZ4 / LZ5 / Lizard** as `tar` post-compressors.
-- **Architecture / filter picker** — a real control for the filter family:
-  Delta, ARM64, ARM/ARMT, PPC, SPARC, RISC-V and BCJ2, alongside x86 BCJ.
-- **Lizard family × level picker** — surface the four method families
-  (fastLZ4 / LIZv1, ± Huffman) instead of one flat 10–49 slider.
-- **Standalone single-stream creation** — write a raw `.zst` / `.br` / `.lz4` /
-  `.lz5` / `.xz` / `.gz` / `.bz2` stream, not only `tar` + a compressor.
-
-Plus fixes to already-shipped work: `.tar.br` archives created with threads were
-unreadable by default, because `-mmt` silently switches `7zz` between two
-incompatible brotli stream formats (an upstream quirk we now work around on both
-the write *and* read side, and
-[reported upstream](https://github.com/mcmilk/7-Zip-zstd/pull/352#issuecomment-5144178288)
-— see [the write-up](https://superuser-miguel.github.io/septima/blog/2026-07-27-brotli-mmt-corruption.html)),
-and `.tar.br` / `.tar.lz5` / `.tar.liz` couldn't be transparently browsed.
+**v0.4.0 also repairs Brotli creation.** Every `.br` and `.tar.br` written by
+v0.3.0 was corrupt — it failed its own integrity test — because Septima always
+passed `-mmt`, and that flag silently switches `7zz` between two incompatible
+brotli stream formats. Fixed on the write *and* read side; existing broken files
+can't be repaired, so recreate them. Also reported upstream
+([#352](https://github.com/mcmilk/7-Zip-zstd/pull/352#issuecomment-5144178288),
+and the detection design in
+[#538](https://github.com/mcmilk/7-Zip-zstd/issues/538)) — see
+[the write-up](https://superuser-miguel.github.io/septima/blog/2026-07-27-brotli-mmt-corruption.html).
+`.tar.br` / `.tar.lz5` / `.tar.liz` are transparently browsable again too.
 
 ### In design — the headline 0.4.x feature
 

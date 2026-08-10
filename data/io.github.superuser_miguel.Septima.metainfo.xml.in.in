@@ -39,6 +39,20 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.4.0" date="2026-08-10">
+      <description>
+        <p>Repairs Brotli archive creation, and completes 7-Zip CLI parity for what the bundled engine can write.</p>
+        <ul>
+          <li>Fixed: Brotli archives created with 0.3.0 were corrupt. Every .br stream and .tar.br archive it wrote failed its own integrity test, because Septima always passed a thread count and the bundled engine silently switches Brotli stream formats when it sees one. Existing broken files cannot be repaired — recreate them with this release.</li>
+          <li>Fixed: .tar.br, .tar.lz5 and .tar.liz archives (and their .tbr / .tlz5 / .tliz short forms) can now be browsed and extracted in one step, as the other compressed tarballs already could.</li>
+          <li>Fixed: Brotli archives written by other multithreaded tools now open correctly instead of being rejected.</li>
+          <li>Fixed: .7z archives made elsewhere holding raw Brotli could not be opened at all. They now open normally.</li>
+          <li>Architecture / filter picker — a real control for the filter family: Delta, ARM64, ARM/ARMT, PPC, SPARC, RISC-V and BCJ2, alongside x86 BCJ.</li>
+          <li>Lizard family and level picker — choose among the four method families (fastLZ4 / LIZv1, with or without Huffman) instead of one flat 10–49 slider.</li>
+          <li>Standalone single-stream creation — write a raw .zst, .br, .lz4, .lz5, .xz, .gz or .bz2 stream, not only a tar plus a compressor.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.3.0" date="2026-07-26">
       <description>
         <p>A 7-Zip CLI-parity release, plus a real-world encryption fix.</p>
