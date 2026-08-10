@@ -133,6 +133,47 @@ fn mt_tar_br_browses_and_extracts() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Brotli inside a `.7z` splits the same way, but in the opposite direction: a
+/// container decodes as the threaded format unless `-mmt=off` is passed, so an
+/// archive written with `-t7z -m0=brotli -mmt=off` is unreadable without it.
+/// Septima never writes those — brotli in a container keeps its threads — but
+/// they exist in the wild, and upstream deliberately kept the fix behind the
+/// flag rather than probing by default (mcmilk/7-Zip-zstd#538), so the retry
+/// has to be ours. Both browsing and extracting must recover it.
+#[test]
+#[ignore = "spawns real 7zz"]
+fn foreign_raw_brotli_in_a_7z_browses_and_extracts() {
+    let dir = scratch("sevenz");
+    let data = payload();
+    let input = dir.join("data.bin");
+    std::fs::write(&input, &data).unwrap();
+
+    let archive = dir.join("foreign.7z");
+    let status = Command::new(sevenzip_path())
+        .args(["a", "-t7z", "-m0=brotli", "-mmt=off", "--"])
+        .arg(&archive)
+        .arg(&input)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .expect("spawn 7zz");
+    assert!(status.success(), "raw-brotli .7z fixture failed");
+
+    let listing = list_archive(&sevenzip_path(), &archive, None)
+        .expect("raw-brotli .7z list failed — the -mmt=off retry did not fire");
+    assert!(
+        listing.entries.iter().any(|e| e.path.ends_with("data.bin")),
+        "listed wrong contents: {:?}",
+        listing.entries.iter().map(|e| &e.path).collect::<Vec<_>>()
+    );
+
+    let dest = dir.join("out");
+    extract_to(&archive, &dest).expect("raw-brotli .7z extract failed");
+    assert_eq!(std::fs::read(dest.join("data.bin")).unwrap(), data);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// A genuinely broken compressed tar must surface as an error. The inner
 /// listing stage exits 0 on a truncated stream, so without checking the outer
 /// decompressor's status this silently reported an empty archive.

@@ -4,7 +4,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use crate::command::{is_compressed_tar, should_retry_brotli, BROTLI_MT_RETRY};
+use crate::command::{brotli_retry_flag, is_compressed_tar, should_retry_brotli};
 use crate::compress::existing_output_paths;
 use crate::error::EngineError;
 use crate::progress::{apply_fragment, ExtractProgress};
@@ -108,7 +108,7 @@ pub fn run_extract(
                 req,
                 cancel,
                 &mut on_progress,
-                Some(BROTLI_MT_RETRY),
+                brotli_retry_flag(&req.archive),
             )
             .map_err(|_| e),
             other => other,
@@ -117,14 +117,20 @@ pub fn run_extract(
 
     match run_extract_once(sevenzip, req, cancel, &mut on_progress, None) {
         Err(e) if should_retry_brotli(&req.archive, &e) => {
-            run_extract_once(sevenzip, req, cancel, &mut on_progress, Some(BROTLI_MT_RETRY))
+            run_extract_once(
+                sevenzip,
+                req,
+                cancel,
+                &mut on_progress,
+                brotli_retry_flag(&req.archive),
+            )
                 .map_err(|_| e)
         }
         other => other,
     }
 }
 
-/// One `7zz x` attempt, with an optional extra flag (see [`BROTLI_MT_RETRY`]).
+/// One `7zz x` attempt, with an optional extra flag (see [`brotli_retry_flag`]).
 fn run_extract_once(
     sevenzip: &Path,
     req: &ExtractRequest,
