@@ -417,6 +417,28 @@ Talked through with the user; these are decisions, not options:
    is transient (reviewed → vaulted → deleted), but declining protection shows
    a plain-words warning about leaving the file next to the archives.
 
+### Future: archive naming patterns in batch mode (noted 2026-08-11)
+
+User idea during 0.5.0 testing: rename batch archives with a prefix/suffix and
+keep the association in the passwords file so decrypt opens the right one.
+
+**The association already works** — the manifest's `archive` column records
+the final filename and `source` what it was made from, and the extract picker
+shows "from `source`" per row. Renamed archives round-trip today with no
+schema change. What's missing is only the *naming control at create time*:
+
+- One optional **"Archive names" pattern row** in batch mode beats separate
+  prefix/suffix boxes: `backup_{name}`, `{name}_2026`, tokens `{name}` /
+  `{n}` / `{rand}` / `{date}`. Presets: Keep names · Add prefix · Add suffix ·
+  **Obfuscate** (fully random — recreates the 2022 `${prefix}_archive_${seq}`
+  shell workflow; with `-mhe` nothing readable is left on disk and the
+  passwords file becomes the only map back).
+- With obfuscated names, extraction should offer to name the output folder
+  after `source` instead of the meaningless archive stem
+  (`sibling_extract_dir` uses the stem today).
+- `unique_output`'s collision numbering and the manifest's basename-only rule
+  both apply unchanged; patterns must be sanitized to filesystem-safe names.
+
 ### Phased plan (if pursued)
 
 1. Password generator (engine) + redaction check.
