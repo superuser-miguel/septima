@@ -521,7 +521,7 @@ impl SeptimaWindow {
     }
 
     fn choose_output_and_compress(&self, settings: CreateSettings) {
-        let filename = format!("{}.{}", settings.name, archive_extension(&settings));
+        let filename = archive_filename(&settings.name, &archive_extension(&settings));
         let dialog = gtk::FileDialog::builder()
             .title(gettext("Save Archive"))
             .modal(true)
@@ -908,6 +908,29 @@ impl SeptimaWindow {
 }
 
 /// Full file extension for the chosen settings, e.g. `7z`, `zip`, `tar.zst`.
+/// Join a user-typed archive name with the format's extension without repeating
+/// what the name already ends in.
+///
+/// People type the extension themselves — the Save dialog shows it, so it looks
+/// like part of the name. Blindly appending turned `notes.7z` into
+/// `notes.7z.7z`. The multi-part case matters too: for a `tar.zst`, a name
+/// ending in `.tar` only needs the `.zst` half.
+///
+/// Only for names the user typed. Batch mode derives each name from its input
+/// (`notes.txt` -> `notes.txt.7z`), where keeping the original suffix is right.
+fn archive_filename(name: &str, ext: &str) -> String {
+    let lower = name.to_ascii_lowercase();
+    if lower.ends_with(&format!(".{}", ext.to_ascii_lowercase())) {
+        return name.to_string();
+    }
+    if let Some((head, tail)) = ext.split_once('.') {
+        if lower.ends_with(&format!(".{}", head.to_ascii_lowercase())) {
+            return format!("{name}.{tail}");
+        }
+    }
+    format!("{name}.{ext}")
+}
+
 fn archive_extension(settings: &CreateSettings) -> String {
     if settings.format.id == "stream" {
         // Raw single-file stream: the extension is the codec's (zst/xz/gz/…).
@@ -1014,4 +1037,33 @@ fn sibling_extract_dir(archive: &Path) -> PathBuf {
         _ => stem,
     };
     archive.with_file_name(stem)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::archive_filename;
+
+    #[test]
+    fn does_not_repeat_an_extension_the_user_already_typed() {
+        assert_eq!(archive_filename("notes", "7z"), "notes.7z");
+        assert_eq!(archive_filename("notes.7z", "7z"), "notes.7z");
+        assert_eq!(archive_filename("NOTES.7Z", "7z"), "NOTES.7Z"); // case is theirs to keep
+    }
+
+    #[test]
+    fn completes_a_partly_typed_multi_part_extension() {
+        // "bundle.tar" for a tar.zst needs only the .zst half.
+        assert_eq!(archive_filename("bundle.tar", "tar.zst"), "bundle.tar.zst");
+        assert_eq!(archive_filename("bundle", "tar.zst"), "bundle.tar.zst");
+        assert_eq!(archive_filename("bundle.tar.zst", "tar.zst"), "bundle.tar.zst");
+    }
+
+    #[test]
+    fn leaves_an_unrelated_suffix_alone() {
+        // A name that merely contains a dot is not an extension we should eat.
+        assert_eq!(archive_filename("v1.2-final", "7z"), "v1.2-final.7z");
+        assert_eq!(archive_filename("report.txt", "7z"), "report.txt.7z");
+        // A different archive extension is not ours to swallow either.
+        assert_eq!(archive_filename("old.zip", "7z"), "old.zip.7z");
+    }
 }
