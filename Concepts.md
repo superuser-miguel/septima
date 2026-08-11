@@ -382,6 +382,12 @@ which is the natural first slice.
 
 ### ✅ DESIGN SETTLED (2026-08-11) — supersedes the deferred sections above
 
+**Built the same day, on the `batch-encrypt` branch** — write side (dialog
+controls, passwords-first ordering, serialized atomic rewrites) and read side
+(open a `.json`/`.json.gpg`/`.csv` → batch-extract with recorded passwords),
+with `real_manifest_flow.rs` covering the loop end to end. Interactive UI
+testing is what remains before it ships.
+
 Talked through with the user; these are decisions, not options:
 
 1. **The manifest is JSON, not CSV.** Human review is the primary use — the user
