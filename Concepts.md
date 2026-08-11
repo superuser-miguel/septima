@@ -439,6 +439,31 @@ schema change. What's missing is only the *naming control at create time*:
 - `unique_output`'s collision numbering and the manifest's basename-only rule
   both apply unchanged; patterns must be sanitized to filesystem-safe names.
 
+### Future: public-key protection for the passwords file (noted 2026-08-11)
+
+User request after understanding the 0.5.0 symmetric mode ("you're using gpg
+to set a password, not encrypt with a key!"). Add a third choice to the
+batch dialog's Passwords-file row: **Encrypt to a GPG key** — `gpg -e -r
+<recipient>` instead of `gpg -c`. Nothing to remember at write time; decrypt
+happens wherever the secret key lives, with the user's normal pinentry.
+
+- This is exactly option **B1** from the backend discussion above: only ever
+  touches the **public** key, sandbox stays clean, no host-spawn. The
+  sandbox's gpg has an empty keyring, so the user imports/picks their public
+  key once (export from Seahorse/KeePassXC or paste an armored block).
+- The design work is the **key picker**: the user runs several keys — list
+  what the sandbox keyring holds, let them choose per run, remember the last
+  choice. Silent default-key selection was already rejected in the earlier
+  framing discussion.
+- Read side: `looks_gpg_encrypted` already matches (OpenPGP packets either
+  way); decrypt would need the agent + the user's pinentry rather than the
+  loopback path — which means the Secret-key material question stays OUT of
+  Septima: shelling `gpg -d` and letting gpg fail with "no secret key" on
+  the wrong machine is honest behavior.
+- Trade-off to state in the UI: symmetric = recoverable anywhere with the
+  password; key-mode = recoverable only where the secret key is. Both are
+  the user's call, not ours.
+
 ### Phased plan (if pursued)
 
 1. Password generator (engine) + redaction check.
