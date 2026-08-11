@@ -309,38 +309,70 @@ impl SeptimaWindow {
     /// Offer to batch-extract the archives a passwords file lists, each with
     /// its own recorded password. Archives resolve next to the manifest (the
     /// manifest stores basenames only — and only the basename is trusted, so a
-    /// hand-edited "../evil" can't walk out of the folder).
+    /// hand-edited "../evil" can't walk out of the folder). A manifest opened
+    /// through the file portal sits *alone* in its document directory, so
+    /// "next to it" can legitimately hold nothing — in that case the user
+    /// points Septima at the folder that really holds the archives.
     fn confirm_manifest_extract(&self, manifest_path: PathBuf, manifest: Manifest) {
         let dir = manifest_path.parent().map(Path::to_path_buf).unwrap_or_default();
-        let mut jobs: Vec<(PathBuf, String)> = Vec::new();
-        let mut missing = 0usize;
-        let mut passwordless = 0usize;
-        for entry in &manifest.entries {
-            // Never trim, never guess: an empty password row is skipped loudly.
-            if entry.password.is_empty() {
-                passwordless += 1;
-                continue;
-            }
-            let Some(name) = Path::new(&entry.archive).file_name() else {
-                missing += 1;
-                continue;
-            };
-            let archive = dir.join(name);
-            if archive.is_file() {
-                jobs.push((archive, entry.password.clone()));
-            } else {
-                missing += 1;
-            }
+        let (jobs, missing, passwordless) = manifest_jobs(&dir, &manifest);
+        if !jobs.is_empty() {
+            self.present_manifest_extract(jobs, missing, passwordless);
+            return;
         }
-
-        if jobs.is_empty() {
-            self.show_error(&gettext(
-                "None of the archives in this passwords file were found next to it. \
-                 Move the file into the folder that holds the archives, then open it again.",
-            ));
+        if manifest.entries.is_empty() {
+            self.show_error(&gettext("This passwords file lists no archives."));
             return;
         }
 
+        let dialog = adw::AlertDialog::new(
+            Some(&gettext("Locate the Archives")),
+            Some(&gettext(
+                "None of the archives in this passwords file were found next to it. \
+                 Point Septima at the folder that holds them?",
+            )),
+        );
+        dialog.add_response("cancel", &gettext("Cancel"));
+        dialog.add_response("locate", &gettext("Choose Folder…"));
+        dialog.set_response_appearance("locate", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("locate"));
+
+        let window = self.clone();
+        dialog.connect_response(None, move |_, response| {
+            if response != "locate" {
+                return;
+            }
+            let window2 = window.clone();
+            let manifest = manifest.clone();
+            let picker = gtk::FileDialog::builder()
+                .title(gettext("Folder With the Archives"))
+                .modal(true)
+                .build();
+            picker.select_folder(Some(&window), gio::Cancellable::NONE, move |result| {
+                if let Ok(folder) = result {
+                    if let Some(dir) = folder.path() {
+                        let (jobs, missing, passwordless) = manifest_jobs(&dir, &manifest);
+                        if jobs.is_empty() {
+                            window2.show_error(&gettext(
+                                "None of the listed archives are in that folder either.",
+                            ));
+                        } else {
+                            window2.present_manifest_extract(jobs, missing, passwordless);
+                        }
+                    }
+                }
+            });
+        });
+        dialog.present(Some(self));
+    }
+
+    /// The confirm dialog for a resolved manifest batch, then the extractions.
+    fn present_manifest_extract(
+        &self,
+        jobs: Vec<(PathBuf, String)>,
+        missing: usize,
+        passwordless: usize,
+    ) {
         let mut body = n_manifest_body(jobs.len());
         if missing > 0 {
             body.push(' ');
@@ -718,16 +750,27 @@ impl SeptimaWindow {
         });
     }
 
-    /// Confirm, then compress each staged item into its own archive saved
-    /// next to it (e.g. `dir1/` -> `dir1.7z`) — no per-item Save dialog.
+    /// Confirm, then compress each staged item into its own archive — saved
+    /// next to it when we can really write there, or into one user-picked
+    /// destination folder when we can't (or when a passwords file is coming).
+    ///
+    /// "Next to it" is a lie for portal-picked items: their paths live under
+    /// the document portal, where a sibling write lands in the portal's
+    /// private store, invisible in the real folder. And a passwords file must
+    /// sit with its archives for the read side to find them. Both cases go
+    /// through the destination picker.
     fn confirm_batch_compress(&self, settings: CreateSettings) {
         let items = settings.inputs.clone();
         let ext = archive_extension(&settings);
+        let pick_destination =
+            settings.generate_passwords || items.iter().any(|p| under_doc_portal(p));
 
-        let dialog = adw::AlertDialog::new(
-            Some(&gettext("Create Archives")),
-            Some(&n_archives_create_body(items.len())),
-        );
+        let body = if pick_destination {
+            n_archives_create_pick_body(items.len(), settings.generate_passwords)
+        } else {
+            n_archives_create_body(items.len())
+        };
+        let dialog = adw::AlertDialog::new(Some(&gettext("Create Archives")), Some(&body));
         dialog.add_response("cancel", &gettext("Cancel"));
         dialog.add_response("create", &gettext("Create"));
         dialog.set_response_appearance("create", adw::ResponseAppearance::Suggested);
@@ -738,8 +781,8 @@ impl SeptimaWindow {
             if response != "create" {
                 return;
             }
-            if settings.generate_passwords {
-                window.choose_manifest_and_batch(settings.clone(), items.clone(), ext.clone());
+            if pick_destination {
+                window.choose_batch_destination(settings.clone(), items.clone(), ext.clone());
                 return;
             }
             for item in &items {
@@ -754,26 +797,35 @@ impl SeptimaWindow {
         dialog.present(Some(self));
     }
 
-    /// Pick where the batch's passwords file lands, then run the batch.
-    /// Cancelling here cancels the whole batch — no manifest, no archives.
-    fn choose_manifest_and_batch(&self, settings: CreateSettings, items: Vec<PathBuf>, ext: String) {
-        let stamp = glib::DateTime::now_local()
-            .ok()
-            .and_then(|d| d.format("%Y-%m-%d_%H%M").ok())
-            .map(|s| s.to_string())
-            .unwrap_or_default();
-        let suffix = if settings.manifest_passphrase.is_some() { "json.gpg" } else { "json" };
+    /// Pick the one folder the whole batch lands in (archives, and the
+    /// passwords file when generating). Cancelling cancels the batch —
+    /// nothing is created anywhere.
+    fn choose_batch_destination(&self, settings: CreateSettings, items: Vec<PathBuf>, ext: String) {
         let dialog = gtk::FileDialog::builder()
-            .title(gettext("Save Passwords File"))
+            .title(gettext("Save Archives To"))
             .modal(true)
-            .initial_name(&format!("septima-passwords-{stamp}.{suffix}"))
             .build();
 
         let window = self.clone();
-        dialog.save(Some(self), gio::Cancellable::NONE, move |result| match result {
-            Ok(file) => match file.path() {
-                Some(dest) => window.start_batch_with_manifest(settings, items, ext, dest),
-                None => window.show_toast(&gettext("That location can't be written to directly.")),
+        dialog.select_folder(Some(self), gio::Cancellable::NONE, move |result| match result {
+            Ok(folder) => match folder.path() {
+                Some(dir) => {
+                    if settings.generate_passwords {
+                        window.start_batch_with_manifest(settings, items, ext, dir);
+                    } else {
+                        let mut taken = std::collections::HashSet::new();
+                        for item in &items {
+                            let Some(stem) = item.file_stem() else {
+                                continue;
+                            };
+                            let output =
+                                unique_output(&dir, &stem.to_string_lossy(), &ext, &mut taken);
+                            let req = compression_request(&settings, vec![item.clone()], output);
+                            window.start_compress(req, settings.write_checksum, None);
+                        }
+                    }
+                }
+                None => window.show_toast(&gettext("That folder can't be written to directly.")),
             },
             Err(err) => {
                 if !err.matches(gtk::DialogError::Dismissed) {
@@ -793,23 +845,31 @@ impl SeptimaWindow {
         settings: CreateSettings,
         items: Vec<PathBuf>,
         ext: String,
-        dest: PathBuf,
+        dir: PathBuf,
     ) {
         let now = glib::DateTime::now_utc()
             .ok()
             .and_then(|d| d.format_iso8601().ok())
             .map(|s| s.to_string())
             .unwrap_or_default();
+        let stamp = glib::DateTime::now_local()
+            .ok()
+            .and_then(|d| d.format("%Y-%m-%d_%H%M").ok())
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let suffix = if settings.manifest_passphrase.is_some() { "json.gpg" } else { "json" };
+        let dest = dir.join(format!("septima-passwords-{stamp}.{suffix}"));
 
         let mut manifest = Manifest::new();
         manifest.septima = crate::config::VERSION.to_string();
         manifest.created = now.clone();
         let mut jobs: Vec<(PathBuf, PathBuf, String)> = Vec::new();
+        let mut taken = std::collections::HashSet::new();
         for item in &items {
             let Some(stem) = item.file_stem() else {
                 continue;
             };
-            let output = item.with_file_name(format!("{}.{ext}", stem.to_string_lossy()));
+            let output = unique_output(&dir, &stem.to_string_lossy(), &ext, &mut taken);
             let password = match septima_engine::generate_password(64, septima_engine::Charset::Alphanumeric)
             {
                 Ok(pw) => pw,
@@ -1384,6 +1444,66 @@ fn n_skipped(n: usize) -> String {
     .replacen("{}", &n.to_string(), 1)
 }
 
+/// Whether `path` sits under the document portal's FUSE mount
+/// (`$XDG_RUNTIME_DIR/doc/…`). Writes to *siblings* of a granted item there
+/// land in the portal's private store, not in the real folder — so "save next
+/// to it" must not be attempted for such paths.
+fn under_doc_portal(path: &Path) -> bool {
+    path.starts_with(glib::user_runtime_dir().join("doc"))
+}
+
+/// A non-colliding output path in `dir`: `photos.7z`, then `photos_2.7z`, …
+/// Collisions happen when same-named items are staged from different folders,
+/// or the destination already holds an archive by that name (which `7zz a`
+/// would silently *update* rather than replace).
+fn unique_output(
+    dir: &Path,
+    stem: &str,
+    ext: &str,
+    taken: &mut std::collections::HashSet<String>,
+) -> PathBuf {
+    let mut n = 1usize;
+    loop {
+        let name = if n == 1 {
+            format!("{stem}.{ext}")
+        } else {
+            format!("{stem}_{n}.{ext}")
+        };
+        let candidate = dir.join(&name);
+        if !taken.contains(&name) && !candidate.exists() {
+            taken.insert(name);
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+/// Resolve a manifest's entries against `dir`: (archive, password) jobs for
+/// the ones present, plus counts of missing archives and empty-password rows
+/// (skipped loudly — never trimmed, never guessed).
+fn manifest_jobs(dir: &Path, manifest: &Manifest) -> (Vec<(PathBuf, String)>, usize, usize) {
+    let mut jobs = Vec::new();
+    let mut missing = 0usize;
+    let mut passwordless = 0usize;
+    for entry in &manifest.entries {
+        if entry.password.is_empty() {
+            passwordless += 1;
+            continue;
+        }
+        let Some(name) = Path::new(&entry.archive).file_name() else {
+            missing += 1;
+            continue;
+        };
+        let archive = dir.join(name);
+        if archive.is_file() {
+            jobs.push((archive, entry.password.clone()));
+        } else {
+            missing += 1;
+        }
+    }
+    (jobs, missing, passwordless)
+}
+
 /// Whether `path` is named like a passwords file rather than an archive:
 /// `.json`, `.json.gpg`, or the CSV export re-imported. Content is verified
 /// after (parse / OpenPGP sniff); the name just routes it away from `7zz`.
@@ -1431,6 +1551,23 @@ fn n_archives_create_body(n: usize) -> String {
     .replacen("{}", &n.to_string(), 1)
 }
 
+fn n_archives_create_pick_body(n: usize, with_manifest: bool) -> String {
+    let text = if with_manifest {
+        gettextrs::ngettext(
+            "Create {} archive? You'll pick the folder where it and the passwords file are saved.",
+            "Create {} archives? You'll pick one folder where they and the passwords file are saved.",
+            n as u32,
+        )
+    } else {
+        gettextrs::ngettext(
+            "Create {} archive? You'll pick the folder it's saved into.",
+            "Create {} archives? You'll pick the folder they're saved into.",
+            n as u32,
+        )
+    };
+    text.replacen("{}", &n.to_string(), 1)
+}
+
 /// Where a batch-extracted archive's contents land: a new folder next to it,
 /// named after the archive (`photos.zip` -> `photos/`, `data.tar.gz` -> `data/`).
 fn sibling_extract_dir(archive: &Path) -> PathBuf {
@@ -1447,7 +1584,21 @@ fn sibling_extract_dir(archive: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::archive_filename;
+    use super::{archive_filename, unique_output};
+
+    #[test]
+    fn unique_output_numbers_collisions() {
+        let dir = std::env::temp_dir().join(format!("septima-unique-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("busy.7z"), b"existing archive").unwrap();
+        let mut taken = std::collections::HashSet::new();
+        // In-batch duplicate names number up.
+        assert_eq!(unique_output(&dir, "photos", "7z", &mut taken), dir.join("photos.7z"));
+        assert_eq!(unique_output(&dir, "photos", "7z", &mut taken), dir.join("photos_2.7z"));
+        // A file already on disk is a collision too — 7zz would update it.
+        assert_eq!(unique_output(&dir, "busy", "7z", &mut taken), dir.join("busy_2.7z"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn does_not_repeat_an_extension_the_user_already_typed() {
