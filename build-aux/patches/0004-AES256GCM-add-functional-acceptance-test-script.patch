@@ -1,0 +1,93 @@
+From 73a38aabc5376ce834516d211c05b146d362551c Mon Sep 17 00:00:00 2001
+From: superuser-miguel <16271056+superuser-miguel@users.noreply.github.com>
+Date: Fri, 31 Jul 2026 11:49:29 -0400
+Subject: [PATCH] AES256GCM: add functional acceptance test script
+
+Septima encryption expansion, patch 4/N: self-contained roundtrip.sh
+covering codec registration, create/list/extract roundtrip, wrong-
+password and 1-byte-tamper rejection via the GCM tag, -mhe=on
+(encrypted headers), and the legacy-7zAES default staying intact.
+
+Usage: C/Util/AesGcmTest/roundtrip.sh /path/to/7zz
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+---
+ C/Util/AesGcmTest/roundtrip.sh | 69 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 69 insertions(+)
+ create mode 100755 C/Util/AesGcmTest/roundtrip.sh
+
+diff --git a/C/Util/AesGcmTest/roundtrip.sh b/C/Util/AesGcmTest/roundtrip.sh
+new file mode 100755
+index 00000000..bbc1e111
+--- /dev/null
++++ b/C/Util/AesGcmTest/roundtrip.sh
+@@ -0,0 +1,69 @@
++#!/bin/sh
++# roundtrip.sh -- functional acceptance tests for the AES256GCM 7z method
++# Usage: ./roundtrip.sh /path/to/7zz
++# Exits 0 only if every check passes.
++set -u
++
++Z=${1:?usage: roundtrip.sh /path/to/7zz}
++case "$Z" in /*) ;; *) Z=$(pwd)/$Z ;; esac
++T=$(mktemp -d) || exit 1
++trap 'rm -rf "$T"' EXIT
++cd "$T" || exit 1
++
++fail() { echo "FAIL: $1"; exit 1; }
++PASS=0
++ok() { PASS=$((PASS + 1)); echo "ok $PASS - $1"; }
++
++mkdir src
++echo "hello gcm world" > src/a.txt
++dd if=/dev/urandom of=src/b.bin bs=1024 count=300 status=none
++printf '' > src/empty.txt
++
++"$Z" i | grep -q "6F71101 AES256GCM" || fail "codec not listed in 7zz i"
++ok "codec registered (6F71101 AES256GCM)"
++
++"$Z" a -pSecret -mem=AES256GCM gcm.7z src/ >/dev/null 2>&1 || fail "create"
++ok "create with -mem=AES256GCM"
++
++"$Z" l -slt -pSecret gcm.7z 2>/dev/null | grep -q "AES256GCM:256m:t3:p4" \
++    || fail "method display"
++ok "method + Argon2 params displayed"
++
++"$Z" x -pSecret -oout gcm.7z >/dev/null 2>&1 || fail "extract"
++diff -r src out/src >/dev/null 2>&1 || fail "roundtrip diff"
++ok "extract roundtrip identical"
++
++"$Z" t -pWrong gcm.7z >/dev/null 2>&1 && fail "wrong password accepted"
++ok "wrong password rejected"
++
++cp gcm.7z bad.7z
++# flip one byte inside the packed data (offset past the signature header)
++printf 'X' | dd of=bad.7z bs=1 seek=2000 conv=notrunc status=none
++"$Z" t -pSecret bad.7z >/dev/null 2>&1 && fail "tampered archive accepted"
++ok "1-byte tamper rejected (GCM tag)"
++
++"$Z" a -pSecret -mem=AES256GCM -mhe=on he.7z src/ >/dev/null 2>&1 || fail "create -mhe"
++"$Z" l he.7z </dev/null >/dev/null 2>&1 && fail "-mhe list without password succeeded"
++"$Z" x -pSecret -oouthe he.7z >/dev/null 2>&1 || fail "-mhe extract"
++diff -r src outhe/src >/dev/null 2>&1 || fail "-mhe roundtrip diff"
++ok "-mhe=on (encrypted headers) roundtrip"
++
++# A one-item archive takes the header-only encode path (7zHandlerOut.cpp clears
++# CompressMainHeader when numItems < 2). That path must still use the -mem=
++# cipher: if it falls back to the default, the file names end up under legacy
++# AES-256-CBC + the SHA-256 KDF while the data is GCM, and any stock 7zz can
++# list them with the password. Check the legacy coder id is absent from the file.
++"$Z" a -pSecret -mem=AES256GCM -mhe=on he1.7z src/a.txt >/dev/null 2>&1 \
++    || fail "single-item -mhe create"
++od -An -tx1 -v he1.7z | tr -d ' \n' | grep -q '06f10701' \
++    && fail "single-item -mhe header fell back to legacy 7zAES (06 F1 07 01)"
++"$Z" x -pSecret -oouthe1 he1.7z >/dev/null 2>&1 || fail "single-item -mhe extract"
++cmp -s src/a.txt outhe1/src/a.txt || fail "single-item -mhe roundtrip diff"
++ok "-mhe=on one-item archive keeps the -mem= cipher (no legacy fallback)"
++
++"$Z" a -pSecret legacy.7z src/a.txt >/dev/null 2>&1 || fail "legacy create"
++"$Z" l -slt -pSecret legacy.7z 2>/dev/null | grep -q "7zAES:19" \
++    || fail "default no longer legacy 7zAES"
++ok "default encryption still legacy 7zAES"
++
++echo "all $PASS checks passed"

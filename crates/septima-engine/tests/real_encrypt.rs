@@ -33,7 +33,7 @@ fn scratch(tag: &str) -> std::path::PathBuf {
     dir
 }
 
-/// Build an encrypted archive. `mem` = zip cipher (`-mem=`); `headers` = 7z
+/// Build an encrypted archive. `mem` = cipher (`-mem=`); `headers` = 7z
 /// encrypted headers (`-mhe=on`).
 fn build(dir: &std::path::Path, name: &str, format: &str, mem: Option<&str>, headers: bool) -> std::path::PathBuf {
     let input = dir.join("payload.txt");
@@ -41,7 +41,7 @@ fn build(dir: &std::path::Path, name: &str, format: &str, mem: Option<&str>, hea
     let archive = dir.join(name);
     let mut req = CompressionRequest::new(archive.clone(), vec![input], format);
     req.password = Some(PW.into());
-    req.zip_encryption = mem.map(String::from);
+    req.encryption_method = mem.map(String::from);
     req.encrypt_headers = headers;
     run_add(&sevenzip_path(), &req, &new_cancel_token(), |_| {}).unwrap();
     archive
@@ -152,6 +152,67 @@ fn correct_password_extracts_every_variant() {
 }
 
 // --- The specific cipher actually applied ---------------------------------
+
+// --- AES-256-GCM + Argon2id (Septima engine extension) --------------------
+//
+// Skipped automatically when the `7zz` under test is stock (no GCM codec), so
+// the suite still passes against a distro 7-Zip.
+
+#[test]
+#[ignore = "spawns real 7zz"]
+fn sevenz_gcm_roundtrips_and_rejects_wrong_passwords() {
+    if !septima_engine::capabilities::aes256gcm_available() {
+        eprintln!("skipping: this 7zz has no AES256GCM codec");
+        return;
+    }
+    let dir = scratch("gcm");
+    for (name, hdr) in [("gcm.7z", false), ("gcm-hdr.7z", true)] {
+        let archive = build(&dir, name, "7z", Some("AES256GCM"), hdr);
+        let dest = dir.join(format!("out-{name}"));
+
+        assert!(
+            matches!(try_extract(&archive, &dest, None), Err(EngineError::PasswordRequired)),
+            "{name}: extract with no password must be PasswordRequired"
+        );
+        assert!(
+            matches!(try_extract(&archive, &dest, Some("wrong")), Err(EngineError::PasswordRequired)),
+            "{name}: a wrong password must be PasswordRequired, not a corruption error"
+        );
+
+        try_extract(&archive, &dest, Some(PW)).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        let got = std::fs::read(dest.join("payload.txt")).unwrap();
+        assert_eq!(got, b"confidential contents for encryption testing", "{name} content");
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+#[ignore = "spawns real 7zz"]
+fn sevenz_gcm_is_opt_in_and_reported_in_the_listing() {
+    if !septima_engine::capabilities::aes256gcm_available() {
+        eprintln!("skipping: this 7zz has no AES256GCM codec");
+        return;
+    }
+    let dir = scratch("gcm-method");
+    let method_of = |archive: &std::path::Path| {
+        list_archive(&sevenzip_path(), archive, Some(PW))
+            .unwrap()
+            .entries
+            .iter()
+            .find(|e| e.path == "payload.txt")
+            .and_then(|e| e.method.clone())
+            .unwrap_or_default()
+    };
+
+    let gcm = method_of(&build(&dir, "gcm.7z", "7z", Some("AES256GCM"), false));
+    assert!(gcm.contains("AES256GCM"), "expected AES256GCM, got {gcm:?}");
+
+    // Without an explicit request, 7z must stay on the interoperable default.
+    let default = method_of(&build(&dir, "plain.7z", "7z", None, false));
+    assert!(default.contains("7zAES"), "default 7z should be 7zAES, got {default:?}");
+    assert!(!default.contains("GCM"), "default 7z must not silently use GCM, got {default:?}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
 
 #[test]
 #[ignore = "spawns real 7zz"]

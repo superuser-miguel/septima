@@ -4,6 +4,10 @@
 //! formats) with the codec-specific `-mx` level ranges from the 7-Zip ZS docs.
 //! The build is pinned, so this static model stays accurate; a future refinement
 //! can parse `7zz i` at runtime.
+//!
+//! Encryption methods are the exception: they *are* probed at runtime
+//! ([`encryption_methods`]), because Septima may run against a stock `7zz`
+//! (host install, distro packaging) that lacks the bundled build's extensions.
 
 /// A compression codec, with its `7zz` method id and `-mx` level range.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,6 +138,81 @@ pub fn stream_extension(codec_id: &str) -> &'static str {
 /// Every creatable format, in menu order (7z first).
 pub fn formats() -> &'static [Format] {
     FORMATS
+}
+
+/// An encryption method offered for a format (`-mem=<id>`).
+///
+/// `id: None` means "don't pass `-mem=` at all", i.e. the format's built-in
+/// default (7z: AES-256-CBC; zip: the weak legacy ZipCrypto).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EncryptionMethod {
+    pub id: Option<&'static str>,
+    pub label: &'static str,
+    /// Longer explanation for the UI, where the trade-off isn't obvious.
+    pub detail: Option<&'static str>,
+}
+
+const SEVENZ_AES_CBC: EncryptionMethod = EncryptionMethod {
+    id: None,
+    label: "AES-256 (standard)",
+    detail: Some("Opens in any 7-Zip"),
+};
+// Only offered when the running 7zz reports the codec — see aes256gcm_available().
+const SEVENZ_AES_GCM: EncryptionMethod = EncryptionMethod {
+    id: Some("AES256GCM"),
+    label: "AES-256-GCM + Argon2id",
+    detail: Some("Stronger: tamper-detecting, resists password cracking. \
+                  Septima extension — the archive opens only in Septima."),
+};
+const ZIP_AES: EncryptionMethod = EncryptionMethod {
+    id: Some("AES256"),
+    label: "AES-256",
+    detail: None,
+};
+const ZIP_CRYPTO: EncryptionMethod = EncryptionMethod {
+    id: None,
+    label: "ZipCrypto (legacy)",
+    detail: Some("Weak, but reads on old tools"),
+};
+
+/// Whether the `7zz` we will actually run supports the AES-256-GCM + Argon2id
+/// method (the Septima patch series; absent from stock 7-Zip).
+///
+/// Probed once by parsing `7zz i`, then cached. Any failure to run the probe is
+/// treated as "not supported", so the option simply doesn't appear.
+pub fn aes256gcm_available() -> bool {
+    use std::sync::OnceLock;
+    static AVAILABLE: OnceLock<bool> = OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        std::process::Command::new(crate::command::sevenzip_path())
+            .arg("i")
+            .stdin(std::process::Stdio::null())
+            .output()
+            .map(|out| {
+                String::from_utf8_lossy(&out.stdout)
+                    .lines()
+                    .any(|line| line.split_whitespace().any(|w| w == "AES256GCM"))
+            })
+            .unwrap_or(false)
+    })
+}
+
+/// Encryption methods offered for `format_id`, in menu order (default first).
+///
+/// Empty for formats without encryption. The 7z list gains the GCM entry only
+/// when [`aes256gcm_available`] says the engine understands it.
+pub fn encryption_methods(format_id: &str) -> Vec<EncryptionMethod> {
+    match format_id {
+        "7z" => {
+            let mut v = vec![SEVENZ_AES_CBC];
+            if aes256gcm_available() {
+                v.push(SEVENZ_AES_GCM);
+            }
+            v
+        }
+        "zip" => vec![ZIP_AES, ZIP_CRYPTO],
+        _ => Vec::new(),
+    }
 }
 
 /// A pre-codec filter (`-m0=<id> -m1=<codec>`), for the create dialog's Filter

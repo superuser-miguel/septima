@@ -22,7 +22,7 @@
     {
       "name": "7-zip-zstd",
       "buildsystem": "simple",
-      "//": "7-Zip ZS by Tino Reichardt (LGPL-2.1-or-later + BSD-3-Clause for zstd/lz4/etc.). Includes 7-Zip's own RAR *decode* only, which carries the unRAR restriction (no RAR creation). Bundled unmodified as a separate binary.",
+      "//": "7-Zip ZS by Tino Reichardt (LGPL-2.1-or-later + BSD-3-Clause for zstd/lz4/etc.). Includes 7-Zip's own RAR *decode* only, which carries the unRAR restriction (no RAR creation). Bundled unmodified as a separate binary. The Septima encryption series (AES-256-GCM + Argon2id, patches/README.md) is NOT applied pending the upstream codec-ID ruling (mcmilk/7-Zip-zstd#528); Septima probes 7zz i at runtime, so the option stays hidden until the four patch sources are restored here.",
       "build-commands": [
         "make -j ${FLATPAK_BUILDER_N_JOBS} -C CPP/7zip/Bundles/Alone2 -f makefile.gcc",
         "install -Dm755 CPP/7zip/Bundles/Alone2/_o/7zz /app/bin/7zz"
