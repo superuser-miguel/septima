@@ -1,7 +1,7 @@
 # 7-Zip ZS patches — Septima encryption expansion
 
-Applied to the pinned `v26.02-v1.5.7-R2` tarball by the Flatpak manifest, in
-numeric order. They add one archive encryption method to the bundled `7zz`:
+Apply to the pinned `v26.02-v1.5.7-R2` tarball in numeric order. They add one
+archive encryption method to the bundled `7zz`:
 
 **AES-256-GCM + Argon2id**, method ID `06 F7 11 01`, selected with
 `-mem=AES256GCM` on `.7z` creation.
@@ -11,7 +11,18 @@ numeric order. They add one archive encryption method to the bundled `7zz`:
 | 0001 | `C/AesGcm.{h,c}` — streaming AES-GCM (NIST SP 800-38D) over the in-tree AES kernel. GHASH is BearSSL `ghash_ctmul64` (MIT, constant-time), vendored unmodified apart from 7-Zip types. Plus `C/Util/AesGcmTest/` (3036 vectors vs OpenSSL). |
 | 0002 | `C/argon2/` — PHC `phc-winner-argon2` release `20190702` vendored **verbatim** (tarball sha256 `daf972a8…`, CC0/Apache-2.0), plus RFC 9106 §5 known-answer tests. |
 | 0003 | `CPP/7zip/Crypto/7zGcm.*` coder + 7z format wiring (`-mem=`, method display, encrypted-flag detection, the header-encryption path, makefiles) and the ID documented in `DOC/Methods-Extern.md`. |
-| 0004 | `roundtrip.sh` — 9 acceptance checks, run by the manifest right after the build, so a broken crypto build fails the Flatpak build rather than shipping. |
+| 0004 | `roundtrip.sh` — 9 acceptance checks, run right after the build when the series is enabled, so a broken crypto build fails the Flatpak build rather than shipping. |
+
+## ⛔ Currently gated OFF
+
+The Flatpak manifest does **not** apply these patches yet — the shipped `7zz`
+is pristine, and the runtime probe keeps the UI option hidden. The gate stays
+closed until the codec-ID question is settled upstream
+([mcmilk/7-Zip-zstd#528](https://github.com/mcmilk/7-Zip-zstd/issues/528)).
+To flip it: restore the four `"type": "patch"` sources in
+`build-aux/io.github.superuser_miguel.Septima.json` and the
+`roundtrip.sh` build command between `make` and `install` (git history of that
+file has the exact hunk).
 
 ## Design rules these follow
 
