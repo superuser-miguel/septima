@@ -102,6 +102,13 @@ fn run_gpg(args: &[&str], data: &[u8], passphrase: &str) -> Result<Vec<u8>, GpgE
     if passphrase.is_empty() || passphrase.contains(['\n', '\r']) {
         return Err(GpgError::UnusablePassphrase);
     }
+    // The SEPTIMA_DEBUG trace covers gpg like it covers 7zz — a protected
+    // batch that dies in gpg must show up in the log, not only in a dialog.
+    // Argv is safe to print verbatim: the passphrase and the plaintext ride
+    // stdin, never arguments.
+    if crate::supervise::debug_enabled() {
+        eprintln!("[septima] gpg: gpg {} ({} bytes in)", args.join(" "), data.len());
+    }
     let mut child = Command::new("gpg")
         .args(args)
         // Loopback keeps pinentry out of it; --no-symkey-cache keeps the
@@ -146,6 +153,15 @@ fn run_gpg(args: &[&str], data: &[u8], passphrase: &str) -> Result<Vec<u8>, GpgE
         .status();
 
     let out = out?;
+    if crate::supervise::debug_enabled() {
+        match out.status.code() {
+            Some(0) => eprintln!("[septima] gpg: exited 0 ({} bytes out)", out.stdout.len()),
+            code => eprintln!(
+                "[septima] gpg: exited {code:?}: {}",
+                String::from_utf8_lossy(&out.stderr).trim().replace('\n', " | ")
+            ),
+        }
+    }
     if out.status.success() {
         return Ok(out.stdout);
     }
