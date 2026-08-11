@@ -106,19 +106,12 @@ fn run_gpg(args: &[&str], data: &[u8], passphrase: &str) -> Result<Vec<u8>, GpgE
         .args(args)
         // Loopback keeps pinentry out of it; --no-symkey-cache keeps the
         // passphrase out of the agent's cache. Both streams ride stdin:
-        // first line passphrase, remainder data. --no-autostart matters in
-        // the Flatpak: without it the first gpg call daemonizes a gpg-agent
-        // inside the sandbox, and since bwrap waits for every process in its
-        // namespace, the app "stays open" after its window closes. Symmetric
-        // ops with a loopback passphrase don't need the agent at all.
-        .args([
-            "--pinentry-mode",
-            "loopback",
-            "--passphrase-fd",
-            "0",
-            "--no-symkey-cache",
-            "--no-autostart",
-        ])
+        // first line passphrase, remainder data. The agent itself is
+        // unavoidable — in GnuPG 2.4 the loopback passphrase machinery runs
+        // inside gpg-agent, so --no-autostart breaks symmetric ops outright
+        // (tried; whether it limps along depends on ambient socket-dir
+        // state). It gets killed right after the operation instead.
+        .args(["--pinentry-mode", "loopback", "--passphrase-fd", "0", "--no-symkey-cache"])
         .args(["--output", "-", "-"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -138,9 +131,21 @@ fn run_gpg(args: &[&str], data: &[u8], passphrase: &str) -> Result<Vec<u8>, GpgE
         let _ = stdin.write_all(&feed);
     });
 
-    let out = child.wait_with_output().map_err(GpgError::Io)?;
+    let out = child.wait_with_output().map_err(GpgError::Io);
     let _ = writer.join();
 
+    // The operation auto-started a gpg-agent; leave none behind. In the
+    // Flatpak a lingering agent keeps bwrap (and so `flatpak run`) alive
+    // after the app window closes — the "app still open" zombie. Best-effort:
+    // a failed kill only means the agent wasn't there.
+    let _ = Command::new("gpgconf")
+        .args(["--kill", "gpg-agent"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
+    let out = out?;
     if out.status.success() {
         return Ok(out.stdout);
     }
