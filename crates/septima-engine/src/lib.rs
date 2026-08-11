@@ -33,7 +33,9 @@ pub use extract::{
     delete_archive, new_cancel_token, run_extract, CancelToken, ExtractRequest, OverwriteMode,
 };
 pub use listing::{parse_listing, ArchiveEntry, ArchiveListing};
-pub use manifest::{generate_password, Charset, Manifest, ManifestEntry};
+pub use manifest::{
+    generate_password, write_atomic, Charset, Manifest, ManifestEntry, ManifestParseError,
+};
 pub use measure::{measure_selection, Selection};
 pub use progress::ExtractProgress;
 
