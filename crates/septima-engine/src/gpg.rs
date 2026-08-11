@@ -106,8 +106,19 @@ fn run_gpg(args: &[&str], data: &[u8], passphrase: &str) -> Result<Vec<u8>, GpgE
         .args(args)
         // Loopback keeps pinentry out of it; --no-symkey-cache keeps the
         // passphrase out of the agent's cache. Both streams ride stdin:
-        // first line passphrase, remainder data.
-        .args(["--pinentry-mode", "loopback", "--passphrase-fd", "0", "--no-symkey-cache"])
+        // first line passphrase, remainder data. --no-autostart matters in
+        // the Flatpak: without it the first gpg call daemonizes a gpg-agent
+        // inside the sandbox, and since bwrap waits for every process in its
+        // namespace, the app "stays open" after its window closes. Symmetric
+        // ops with a loopback passphrase don't need the agent at all.
+        .args([
+            "--pinentry-mode",
+            "loopback",
+            "--passphrase-fd",
+            "0",
+            "--no-symkey-cache",
+            "--no-autostart",
+        ])
         .args(["--output", "-", "-"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
