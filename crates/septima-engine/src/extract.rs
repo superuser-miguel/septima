@@ -155,6 +155,13 @@ fn run_extract_once(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    // Extract jobs were invisible in the trace next to run_add's line, which
+    // made a multi-job batch log unreadable — every "7zz started" needs a
+    // command to pin it to. Same redaction as run_add.
+    if crate::supervise::debug_enabled() {
+        eprintln!("[septima] run_extract: {}", crate::compress::debug_argv(&cmd));
+    }
+
     // A wrong/missing password makes 7zz create each encrypted entry as an
     // empty placeholder file before it fails to decrypt (zip does this; 7z
     // writes nothing). Snapshot the destination so those 0-byte leftovers can

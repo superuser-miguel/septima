@@ -335,7 +335,7 @@ fn remove_new_outputs(output: &Path, before: &[PathBuf]) {
 
 /// Render a spawn command for the `SEPTIMA_DEBUG` trace, redacting any
 /// `-p<password>` so passwords never reach the log in `Troubleshooting/`.
-fn debug_argv(cmd: &Command) -> String {
+pub(crate) fn debug_argv(cmd: &Command) -> String {
     std::iter::once(cmd.get_program())
         .chain(cmd.get_args())
         .map(|s| {
