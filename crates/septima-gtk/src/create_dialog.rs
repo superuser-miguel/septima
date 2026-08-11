@@ -772,7 +772,8 @@ impl SeptimaCreateDialog {
 
     // --- Presets ------------------------------------------------------------
 
-    /// Current settings captured as a named preset (no password).
+    /// Current settings captured as a named preset (never a password or
+    /// passphrase — only the choices around them).
     fn current_preset(&self, name: String) -> Preset {
         let s = self.settings();
         Preset {
@@ -787,13 +788,20 @@ impl SeptimaCreateDialog {
             filter: s.filter,
             encrypt_headers: s.encrypt_headers,
             extra_params: s.extra_params,
+            encryption_method: s.encryption_method,
+            write_checksum: s.write_checksum,
+            batch_mode: s.batch_mode,
+            generate_passwords: s.generate_passwords,
+            manifest_protected: self.imp().manifest_protected(),
         }
     }
 
-    /// Apply a preset to the dialog. Order matters: format first (rebuilds the
-    /// codec list), then codec (sets the level range), then the explicit values.
+    /// Apply a preset to the dialog. Order matters: batch mode and format
+    /// first (they rebuild rows and models), then codec (sets the level
+    /// range), then the explicit values.
     fn apply_preset(&self, p: &Preset) {
         let imp = self.imp();
+        imp.batch_row.set_active(p.batch_mode);
         imp.format_row.set_selected(format_index(&p.format));
         imp.codec_row
             .set_selected(codec_index(imp.current_format(), &p.codec));
@@ -815,7 +823,22 @@ impl SeptimaCreateDialog {
         imp.volume_row.set_selected(vol_index(p.volume_size.as_deref()));
         imp.filter_row.set_selected(filter_index(p.filter.as_deref()));
         imp.encrypt_headers_row.set_active(p.encrypt_headers);
+        // The cipher list was rebuilt by the format change above; a method the
+        // running 7zz doesn't offer (a GCM preset against a stock build) falls
+        // back to the format's default entry.
+        let cipher = encryption_choices(imp.current_format().id)
+            .iter()
+            .position(|m| m.id == p.encryption_method.as_deref())
+            .unwrap_or(0);
+        imp.encryption_row.set_selected(cipher as u32);
+        imp.checksum_row.set_active(p.write_checksum);
+        imp.generate_row.set_active(p.generate_passwords);
+        // Index 1 (protected) exists only when gpg is available.
+        let manifest_choices = imp.manifest_row.model().map(|m| m.n_items()).unwrap_or(1);
+        imp.manifest_row
+            .set_selected((p.manifest_protected && manifest_choices > 1) as u32);
         imp.params_row.set_text(&p.extra_params.join(" "));
+        imp.update_batch_password_rows();
         imp.update_memory();
     }
 

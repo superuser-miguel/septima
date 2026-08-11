@@ -19,6 +19,15 @@ pub struct Preset {
     pub filter: Option<String>,
     pub encrypt_headers: bool,
     pub extra_params: Vec<String>,
+    /// Cipher (`-mem=`) id; `None` = the format's default entry.
+    pub encryption_method: Option<String>,
+    pub write_checksum: bool,
+    pub batch_mode: bool,
+    /// Batch: a generated password per archive, recorded in a passwords file.
+    pub generate_passwords: bool,
+    /// Passwords file mode: GPG-protected. The passphrase itself is a secret
+    /// and is never part of a preset — only the choice is.
+    pub manifest_protected: bool,
 }
 
 impl Preset {
@@ -35,13 +44,20 @@ impl Preset {
             self.filter.clone().unwrap_or_default(),
             bool_str(self.encrypt_headers),
             self.extra_params.join(" "),
+            self.encryption_method.clone().unwrap_or_default(),
+            bool_str(self.write_checksum),
+            bool_str(self.batch_mode),
+            bool_str(self.generate_passwords),
+            bool_str(self.manifest_protected),
         ];
         fields.join(&SEP.to_string())
     }
 
     fn deserialize(s: &str) -> Option<Preset> {
         let f: Vec<&str> = s.split(SEP).collect();
-        if f.len() != 11 || f[0].is_empty() {
+        // 11 fields = a pre-0.5 preset; the newer fields default off. Anything
+        // shorter is corrupt.
+        if f.len() < 11 || f[0].is_empty() {
             return None;
         }
         Some(Preset {
@@ -62,6 +78,11 @@ impl Preset {
             },
             encrypt_headers: f[9] == "1",
             extra_params: f[10].split_whitespace().map(str::to_string).collect(),
+            encryption_method: f.get(11).and_then(|s| non_empty(s)),
+            write_checksum: f.get(12).is_some_and(|s| *s == "1"),
+            batch_mode: f.get(13).is_some_and(|s| *s == "1"),
+            generate_passwords: f.get(14).is_some_and(|s| *s == "1"),
+            manifest_protected: f.get(15).is_some_and(|s| *s == "1"),
         })
     }
 }
@@ -139,5 +160,49 @@ fn parse_opt_bool(s: &str) -> Option<bool> {
         "1" => Some(true),
         "0" => Some(false),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn round_trips_every_field() {
+        let p = Preset {
+            name: "vault batch".into(),
+            format: "7z".into(),
+            codec: "lzma2".into(),
+            level: Some(9),
+            threads: 12,
+            dictionary: Some("16m".into()),
+            solid: Some(true),
+            volume_size: None,
+            filter: Some("BCJ".into()),
+            encrypt_headers: true,
+            extra_params: vec!["-mfb=273".into()],
+            encryption_method: Some("AES256GCM".into()),
+            write_checksum: true,
+            batch_mode: true,
+            generate_passwords: true,
+            manifest_protected: true,
+        };
+        let back = Preset::deserialize(&p.serialize()).unwrap();
+        assert_eq!(back.encryption_method.as_deref(), Some("AES256GCM"));
+        assert!(back.write_checksum && back.batch_mode);
+        assert!(back.generate_passwords && back.manifest_protected);
+        assert_eq!(back.name, p.name);
+        assert_eq!(back.filter, p.filter);
+    }
+
+    #[test]
+    fn reads_a_pre_05_eleven_field_preset() {
+        // Saved by 0.4.x: exactly 11 fields, no cipher/checksum/batch columns.
+        let legacy = ["old", "zip", "deflate", "6", "4", "", "", "", "", "0", ""]
+            .join(&SEP.to_string());
+        let p = Preset::deserialize(&legacy).unwrap();
+        assert_eq!(p.name, "old");
+        assert_eq!(p.encryption_method, None);
+        assert!(!p.write_checksum && !p.batch_mode && !p.generate_passwords);
     }
 }
