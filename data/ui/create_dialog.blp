@@ -170,6 +170,22 @@ template $SeptimaCreateDialog: Adw.Dialog {
           title: _("Encrypt file names");
           subtitle: _("Hides the file list (7z only)");
         }
+
+        Adw.SwitchRow generate_row {
+          title: _("Unique password per archive");
+          subtitle: _("Every archive gets its own random 64-character password, saved to a passwords file");
+          visible: false;
+        }
+
+        Adw.ComboRow manifest_row {
+          title: _("Passwords file");
+          visible: false;
+        }
+
+        Adw.PasswordEntryRow manifest_pass_row {
+          title: _("Passwords file password");
+          visible: false;
+        }
       }
     };
   }

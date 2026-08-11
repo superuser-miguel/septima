@@ -49,6 +49,7 @@ fn codec_uses_dictionary(codec: &Codec) -> bool {
 }
 
 /// The compression settings collected by the dialog (output path is chosen after).
+#[derive(Clone)]
 pub struct CreateSettings {
     pub inputs: Vec<PathBuf>,
     pub name: String,
@@ -68,6 +69,13 @@ pub struct CreateSettings {
     pub extra_params: Vec<String>,
     pub write_checksum: bool,
     pub batch_mode: bool,
+    /// Batch mode: give every archive its own generated password and write the
+    /// archive→password manifest to a user-picked passwords file.
+    pub generate_passwords: bool,
+    /// `Some` = GPG-protect the passwords file with this passphrase (chosen in
+    /// the dialog, before anything is written, so an encrypted run never has a
+    /// plaintext moment on disk). `None` = plain JSON, warned.
+    pub manifest_passphrase: Option<String>,
 }
 
 /// Encryption choices for the current format, probed from the running `7zz`
@@ -136,6 +144,12 @@ mod imp {
         pub encryption_row: TemplateChild<adw::ComboRow>,
         #[template_child]
         pub encrypt_headers_row: TemplateChild<adw::SwitchRow>,
+        #[template_child]
+        pub generate_row: TemplateChild<adw::SwitchRow>,
+        #[template_child]
+        pub manifest_row: TemplateChild<adw::ComboRow>,
+        #[template_child]
+        pub manifest_pass_row: TemplateChild<adw::PasswordEntryRow>,
         #[template_child]
         pub presets_button: TemplateChild<gtk::MenuButton>,
         pub on_create: RefCell<Option<CreateCallback>>,
@@ -243,8 +257,41 @@ mod imp {
                 obj,
                 move |_| obj.imp().update_encryption_subtitle()
             ));
-            // Toggling batch mode changes what inputs a raw stream will accept.
+            // Toggling batch mode changes what inputs a raw stream will accept,
+            // and whether the per-archive password controls apply.
             self.batch_row.connect_active_notify(glib::clone!(
+                #[weak]
+                obj,
+                move |_| {
+                    obj.imp().update_batch_password_rows();
+                    obj.update_create_state();
+                }
+            ));
+
+            // "Protect with a password" only appears when the runtime has gpg.
+            let mut manifest_choices = vec![gettext("Plain JSON")];
+            if septima_engine::gpg_available() {
+                manifest_choices.push(gettext("Password-protected (GPG)"));
+            }
+            let choice_refs: Vec<&str> = manifest_choices.iter().map(String::as_str).collect();
+            self.manifest_row.set_model(Some(&gtk::StringList::new(&choice_refs)));
+            self.generate_row.connect_active_notify(glib::clone!(
+                #[weak]
+                obj,
+                move |_| {
+                    obj.imp().update_batch_password_rows();
+                    obj.update_create_state();
+                }
+            ));
+            self.manifest_row.connect_selected_notify(glib::clone!(
+                #[weak]
+                obj,
+                move |_| {
+                    obj.imp().update_batch_password_rows();
+                    obj.update_create_state();
+                }
+            ));
+            self.manifest_pass_row.connect_changed(glib::clone!(
                 #[weak]
                 obj,
                 move |_| obj.update_create_state()
@@ -352,9 +399,39 @@ mod imp {
             self.filter_row.set_sensitive(fmt.id == "7z");
             self.rebuild_encryption_model();
             self.encrypt_headers_row.set_sensitive(fmt.supports_header_encryption);
+            self.update_batch_password_rows();
             self.on_codec_changed();
             // Re-check Create: a raw stream needs exactly one file.
             self.obj().update_create_state();
+        }
+
+        /// Whether the passwords-file choice is "Password-protected (GPG)".
+        /// Index 1 exists only when gpg is available (see `constructed`).
+        pub(super) fn manifest_protected(&self) -> bool {
+            self.manifest_row.selected() == 1
+        }
+
+        /// Show the per-archive password controls only where they mean
+        /// something: batch mode, on a format that encrypts. The passwords-file
+        /// subtitle carries the plain-words warning exactly when declining
+        /// protection, and the shared-password row steps aside while each
+        /// archive gets its own.
+        pub(super) fn update_batch_password_rows(&self) {
+            let applies = self.batch_row.is_active() && self.current_format().supports_encryption;
+            self.generate_row.set_visible(applies);
+            let generating = applies && self.generate_row.is_active();
+            self.manifest_row.set_visible(generating);
+            self.password_row.set_sensitive(!generating);
+            let protected = self.manifest_protected();
+            self.manifest_pass_row.set_visible(generating && protected);
+            self.manifest_row.set_subtitle(&if protected {
+                gettext("Encrypted with GPG — opens anywhere with this file's password")
+            } else {
+                gettext(
+                    "Anyone who can read this file can open every archive — move it \
+                     to your password manager, away from the archives",
+                )
+            });
         }
 
         fn on_codec_changed(&self) {
@@ -542,7 +619,11 @@ impl SeptimaCreateDialog {
             };
             imp.files_group.set_description(Some(&msg));
         } else {
-            imp.create_button.set_sensitive(!inputs.is_empty());
+            // A protected passwords file needs its passphrase before anything
+            // runs — that's the whole point of deciding up front.
+            let missing_passphrase = imp.manifest_pass_row.is_visible()
+                && imp.manifest_pass_row.text().is_empty();
+            imp.create_button.set_sensitive(!inputs.is_empty() && !missing_passphrase);
             drop(inputs);
             self.start_measure();
         }
@@ -680,6 +761,12 @@ impl SeptimaCreateDialog {
             extra_params,
             write_checksum: imp.checksum_row.is_active(),
             batch_mode: imp.batch_row.is_active(),
+            generate_passwords: format.supports_encryption
+                && imp.batch_row.is_active()
+                && imp.generate_row.is_active(),
+            manifest_passphrase: (imp.manifest_pass_row.is_visible())
+                .then(|| imp.manifest_pass_row.text().to_string())
+                .filter(|t| !t.is_empty()),
         }
     }
 

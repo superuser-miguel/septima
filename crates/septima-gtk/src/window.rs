@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::atomic::Ordering;
 
 use adw::prelude::*;
@@ -7,7 +8,8 @@ use adw::subclass::prelude::*;
 use gtk::{gio, glib, CompositeTemplate, TemplateChild};
 
 use septima_engine::{
-    CompressionRequest, EngineError, ExtractProgress, ExtractRequest, OverwriteMode,
+    CompressionRequest, EngineError, ExtractProgress, ExtractRequest, Manifest, ManifestEntry,
+    OverwriteMode,
 };
 
 use crate::archive_view::SeptimaArchiveView;
@@ -18,6 +20,37 @@ use crate::progress_row::SeptimaProgressRow;
 enum Job {
     Progress(ExtractProgress),
     Done(Result<(), EngineError>),
+}
+
+/// Shared state of a batch run's passwords file. Entries are updated on the
+/// main thread as jobs finish; every write is a fresh, complete snapshot
+/// serialised through one writer task, so the file on disk is always whole.
+struct BatchManifest {
+    manifest: RefCell<Manifest>,
+    dest: PathBuf,
+    /// `Some` = GPG-protect the file; captured before the batch started.
+    passphrase: Option<String>,
+}
+
+impl BatchManifest {
+    /// Snapshot → (optionally encrypt) → atomic write, off the main thread.
+    /// In protected mode the plaintext exists only in memory, never on disk.
+    async fn write(&self) -> Result<(), String> {
+        let json = self.manifest.borrow().to_json();
+        let dest = self.dest.clone();
+        let passphrase = self.passphrase.clone();
+        let outcome = gio::spawn_blocking(move || {
+            let bytes = match &passphrase {
+                Some(p) => {
+                    septima_engine::encrypt_symmetric(json.as_bytes(), p).map_err(|e| e.to_string())?
+                }
+                None => json.into_bytes(),
+            };
+            septima_engine::write_atomic(&dest, &bytes).map_err(|e| e.to_string())
+        })
+        .await;
+        outcome.map_err(|_| gettext("the write task failed"))?
+    }
 }
 
 fn gettext(s: &str) -> String {
@@ -210,7 +243,143 @@ impl SeptimaWindow {
             ));
             return;
         }
+        // A passwords file opens the batch-decrypt flow, not the archive view.
+        if is_manifest_name(&path) {
+            self.open_manifest(path);
+            return;
+        }
         self.load_archive(path, None);
+    }
+
+    // --- Passwords-file (manifest) decrypt ----------------------------------
+
+    /// Open a passwords file: decrypt it if GPG-protected (prompting for its
+    /// passphrase), parse it, and offer to extract the archives it lists.
+    fn open_manifest(&self, path: PathBuf) {
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(err) => {
+                self.show_error(&format!("{} {err}", gettext("The passwords file couldn't be read:")));
+                return;
+            }
+        };
+        if septima_engine::looks_gpg_encrypted(&bytes) {
+            let window = self.clone();
+            let body = gettext("“{}” is protected. Enter the passwords file's password to open it.")
+                .replacen("{}", &file_name(&path), 1);
+            self.prompt_password(&body, move |passphrase| {
+                window.decrypt_and_parse_manifest(path.clone(), bytes.clone(), passphrase);
+            });
+        } else {
+            let text = String::from_utf8_lossy(&bytes).into_owned();
+            self.parse_manifest(path, &text);
+        }
+    }
+
+    fn decrypt_and_parse_manifest(&self, path: PathBuf, bytes: Vec<u8>, passphrase: String) {
+        let window = self.clone();
+        glib::spawn_future_local(async move {
+            let outcome =
+                gio::spawn_blocking(move || septima_engine::decrypt_symmetric(&bytes, &passphrase))
+                    .await;
+            match outcome {
+                Ok(Ok(plain)) => {
+                    window.parse_manifest(path, &String::from_utf8_lossy(&plain));
+                }
+                Ok(Err(septima_engine::GpgError::WrongPassphrase)) => {
+                    window.show_toast(&gettext("Wrong password for this file."));
+                    window.open_manifest(path); // re-read + re-prompt
+                }
+                Ok(Err(err)) => window.show_error(&err.to_string()),
+                Err(_) => window.show_toast(&gettext("The decrypt task failed.")),
+            }
+        });
+    }
+
+    fn parse_manifest(&self, path: PathBuf, text: &str) {
+        match Manifest::parse(text) {
+            Ok(manifest) => self.confirm_manifest_extract(path, manifest),
+            Err(err) => self.show_error(&format!(
+                "{}\n\n{err}",
+                gettext("This doesn't look like a Septima passwords file.")
+            )),
+        }
+    }
+
+    /// Offer to batch-extract the archives a passwords file lists, each with
+    /// its own recorded password. Archives resolve next to the manifest (the
+    /// manifest stores basenames only — and only the basename is trusted, so a
+    /// hand-edited "../evil" can't walk out of the folder).
+    fn confirm_manifest_extract(&self, manifest_path: PathBuf, manifest: Manifest) {
+        let dir = manifest_path.parent().map(Path::to_path_buf).unwrap_or_default();
+        let mut jobs: Vec<(PathBuf, String)> = Vec::new();
+        let mut missing = 0usize;
+        let mut passwordless = 0usize;
+        for entry in &manifest.entries {
+            // Never trim, never guess: an empty password row is skipped loudly.
+            if entry.password.is_empty() {
+                passwordless += 1;
+                continue;
+            }
+            let Some(name) = Path::new(&entry.archive).file_name() else {
+                missing += 1;
+                continue;
+            };
+            let archive = dir.join(name);
+            if archive.is_file() {
+                jobs.push((archive, entry.password.clone()));
+            } else {
+                missing += 1;
+            }
+        }
+
+        if jobs.is_empty() {
+            self.show_error(&gettext(
+                "None of the archives in this passwords file were found next to it. \
+                 Move the file into the folder that holds the archives, then open it again.",
+            ));
+            return;
+        }
+
+        let mut body = n_manifest_body(jobs.len());
+        if missing > 0 {
+            body.push(' ');
+            body.push_str(&n_manifest_missing(missing));
+        }
+        if passwordless > 0 {
+            body.push(' ');
+            body.push_str(&n_manifest_passwordless(passwordless));
+        }
+
+        let delete_after = gtk::CheckButton::builder()
+            .label(gettext("Delete the archives after extracting"))
+            .build();
+        let dialog = adw::AlertDialog::builder()
+            .heading(gettext("Extract From Passwords File"))
+            .body(body)
+            .extra_child(&delete_after)
+            .build();
+        dialog.add_response("cancel", &gettext("Cancel"));
+        dialog.add_response("extract", &gettext("Extract"));
+        dialog.set_response_appearance("extract", adw::ResponseAppearance::Suggested);
+        dialog.set_default_response(Some("extract"));
+
+        let window = self.clone();
+        dialog.connect_response(None, move |_, response| {
+            if response != "extract" {
+                return;
+            }
+            for (archive, password) in &jobs {
+                let dest = sibling_extract_dir(archive);
+                window.start_extract(
+                    archive.clone(),
+                    dest,
+                    Some(password.clone()),
+                    delete_after.is_active(),
+                );
+            }
+        });
+        dialog.present(Some(self));
     }
 
     /// Confirm, then extract every archive in `files` into a new sibling
@@ -511,7 +680,10 @@ impl SeptimaWindow {
                 return;
             }
             dlg.close();
-            if settings.batch_mode && settings.inputs.len() >= 2 {
+            // Generated per-archive passwords only make sense through the batch
+            // flow (the password lives in the manifest, not in the user's head),
+            // so it takes that path even for a single staged item.
+            if settings.batch_mode && (settings.inputs.len() >= 2 || settings.generate_passwords) {
                 window.confirm_batch_compress(settings);
             } else {
                 window.choose_output_and_compress(settings);
@@ -534,7 +706,7 @@ impl SeptimaWindow {
                 Some(output) => {
                     let write_checksum = settings.write_checksum;
                     let inputs = settings.inputs.clone();
-                    window.start_compress(compression_request(&settings, inputs, output), write_checksum)
+                    window.start_compress(compression_request(&settings, inputs, output), write_checksum, None)
                 }
                 None => window.show_toast(&gettext("That location can't be written to directly.")),
             },
@@ -566,19 +738,157 @@ impl SeptimaWindow {
             if response != "create" {
                 return;
             }
+            if settings.generate_passwords {
+                window.choose_manifest_and_batch(settings.clone(), items.clone(), ext.clone());
+                return;
+            }
             for item in &items {
                 let Some(stem) = item.file_stem() else {
                     continue;
                 };
                 let output = item.with_file_name(format!("{}.{ext}", stem.to_string_lossy()));
                 let req = compression_request(&settings, vec![item.clone()], output);
-                window.start_compress(req, settings.write_checksum);
+                window.start_compress(req, settings.write_checksum, None);
             }
         });
         dialog.present(Some(self));
     }
 
-    fn start_compress(&self, req: CompressionRequest, write_checksum: bool) {
+    /// Pick where the batch's passwords file lands, then run the batch.
+    /// Cancelling here cancels the whole batch — no manifest, no archives.
+    fn choose_manifest_and_batch(&self, settings: CreateSettings, items: Vec<PathBuf>, ext: String) {
+        let stamp = glib::DateTime::now_local()
+            .ok()
+            .and_then(|d| d.format("%Y-%m-%d_%H%M").ok())
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let suffix = if settings.manifest_passphrase.is_some() { "json.gpg" } else { "json" };
+        let dialog = gtk::FileDialog::builder()
+            .title(gettext("Save Passwords File"))
+            .modal(true)
+            .initial_name(&format!("septima-passwords-{stamp}.{suffix}"))
+            .build();
+
+        let window = self.clone();
+        dialog.save(Some(self), gio::Cancellable::NONE, move |result| match result {
+            Ok(file) => match file.path() {
+                Some(dest) => window.start_batch_with_manifest(settings, items, ext, dest),
+                None => window.show_toast(&gettext("That location can't be written to directly.")),
+            },
+            Err(err) => {
+                if !err.matches(gtk::DialogError::Dismissed) {
+                    window.show_toast(err.message());
+                }
+            }
+        });
+    }
+
+    /// The generated-passwords batch. Order is deliberate: every password is
+    /// persisted to the passwords file **before** any archive exists, so a
+    /// crash mid-batch can never leave an archive on disk whose password is
+    /// lost. As each job finishes, its sha256 lands and the file is rewritten
+    /// (atomically, one writer, freshest snapshot).
+    fn start_batch_with_manifest(
+        &self,
+        settings: CreateSettings,
+        items: Vec<PathBuf>,
+        ext: String,
+        dest: PathBuf,
+    ) {
+        let now = glib::DateTime::now_utc()
+            .ok()
+            .and_then(|d| d.format_iso8601().ok())
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+
+        let mut manifest = Manifest::new();
+        manifest.septima = crate::config::VERSION.to_string();
+        manifest.created = now.clone();
+        let mut jobs: Vec<(PathBuf, PathBuf, String)> = Vec::new();
+        for item in &items {
+            let Some(stem) = item.file_stem() else {
+                continue;
+            };
+            let output = item.with_file_name(format!("{}.{ext}", stem.to_string_lossy()));
+            let password = match septima_engine::generate_password(64, septima_engine::Charset::Alphanumeric)
+            {
+                Ok(pw) => pw,
+                Err(err) => {
+                    // No password, no batch — never fall back to something weaker.
+                    self.show_error(&format!(
+                        "{} {err}",
+                        gettext("Passwords couldn't be generated, so no archives were created.")
+                    ));
+                    return;
+                }
+            };
+            manifest.push(ManifestEntry {
+                archive: file_name(&output),
+                source: file_name(item),
+                password: password.clone(),
+                sha256: String::new(),
+                created: now.clone(),
+                encryption: encryption_description(&settings),
+            });
+            jobs.push((item.clone(), output, password));
+        }
+        if jobs.is_empty() {
+            return;
+        }
+
+        let state = Rc::new(BatchManifest {
+            manifest: RefCell::new(manifest),
+            dest,
+            passphrase: settings.manifest_passphrase.clone(),
+        });
+
+        let window = self.clone();
+        glib::spawn_future_local(async move {
+            // The single point of failure, handled first: if the passwords
+            // can't be persisted, nothing gets encrypted with them.
+            if let Err(err) = state.write().await {
+                window.show_error(&format!(
+                    "{} {err}",
+                    gettext("The passwords file couldn't be written, so no archives were created.")
+                ));
+                return;
+            }
+            window.show_toast(&format!(
+                "{} {}",
+                gettext("Passwords file written to"),
+                state.dest.display()
+            ));
+
+            // One writer task serialises rewrites; job completions just queue a
+            // nudge. It ends when the last job's sender drops.
+            let (nudge, rewrites) = async_channel::unbounded::<()>();
+            let writer_state = state.clone();
+            let writer_window = window.clone();
+            glib::spawn_future_local(async move {
+                while rewrites.recv().await.is_ok() {
+                    if let Err(err) = writer_state.write().await {
+                        writer_window.show_toast(&format!(
+                            "{} {err}",
+                            gettext("The passwords file couldn't be updated:")
+                        ));
+                    }
+                }
+            });
+
+            for (item, output, password) in jobs {
+                let mut req = compression_request(&settings, vec![item], output);
+                req.password = Some(password);
+                window.start_compress(req, settings.write_checksum, Some((state.clone(), nudge.clone())));
+            }
+        });
+    }
+
+    fn start_compress(
+        &self,
+        req: CompressionRequest,
+        write_checksum: bool,
+        manifest: Option<(Rc<BatchManifest>, async_channel::Sender<()>)>,
+    ) {
         let output = req.output.clone();
         let row = SeptimaProgressRow::new(&format!("{}: {}", gettext("Creating"), file_name(&output)));
         let imp = self.imp();
@@ -620,6 +930,47 @@ impl SeptimaWindow {
                                     gettext("Created"),
                                     output.display()
                                 ));
+                                // Batch-with-manifest: record this archive's
+                                // sha256 and rewrite the passwords file. The
+                                // password itself was persisted before the job
+                                // started, so nothing is at risk meanwhile.
+                                if let Some((state, nudge)) = &manifest {
+                                    let state = state.clone();
+                                    let nudge = nudge.clone();
+                                    let sevenzip = sevenzip_for_checksum.clone();
+                                    let archive = output.clone();
+                                    glib::spawn_future_local(async move {
+                                        let hash_path = archive.clone();
+                                        let digest = gio::spawn_blocking(move || {
+                                            septima_engine::hash_file(&sevenzip, &hash_path, &["SHA256"])
+                                        })
+                                        .await;
+                                        let hex = match digest {
+                                            Ok(Ok(digests)) => digests
+                                                .into_iter()
+                                                .next()
+                                                .map(|d| d.hex)
+                                                .unwrap_or_default(),
+                                            _ => String::new(), // sha256 is optional; the password is what matters
+                                        };
+                                        let name = file_name(&archive);
+                                        let done = glib::DateTime::now_utc()
+                                            .ok()
+                                            .and_then(|d| d.format_iso8601().ok())
+                                            .map(|s| s.to_string())
+                                            .unwrap_or_default();
+                                        {
+                                            let mut m = state.manifest.borrow_mut();
+                                            if let Some(entry) =
+                                                m.entries.iter_mut().find(|e| e.archive == name)
+                                            {
+                                                entry.sha256 = hex;
+                                                entry.created = done;
+                                            }
+                                        }
+                                        let _ = nudge.try_send(());
+                                    });
+                                }
                                 if write_checksum {
                                     let output = output.clone();
                                     let window = window.clone();
@@ -931,6 +1282,23 @@ fn archive_filename(name: &str, ext: &str) -> String {
     format!("{name}.{ext}")
 }
 
+/// The human-readable cipher note stored per manifest entry — the context
+/// nobody remembers six months later ("7z, AES-256, encrypted headers").
+fn encryption_description(settings: &CreateSettings) -> String {
+    let cipher = match (settings.format.id, settings.encryption_method.as_deref()) {
+        ("7z", Some("AES256GCM")) => "AES-256-GCM + Argon2id",
+        ("7z", _) => "AES-256",
+        ("zip", Some("AES256")) => "AES-256",
+        ("zip", _) => "ZipCrypto (legacy)",
+        _ => return String::new(),
+    };
+    let mut out = format!("{}, {cipher}", settings.format.id);
+    if settings.encrypt_headers {
+        out.push_str(", encrypted headers");
+    }
+    out
+}
+
 fn archive_extension(settings: &CreateSettings) -> String {
     if settings.format.id == "stream" {
         // Raw single-file stream: the extension is the codec's (zst/xz/gz/…).
@@ -1011,6 +1379,44 @@ fn n_skipped(n: usize) -> String {
     gettextrs::ngettext(
         "({} file couldn't be read and will be skipped.)",
         "({} files couldn't be read and will be skipped.)",
+        n as u32,
+    )
+    .replacen("{}", &n.to_string(), 1)
+}
+
+/// Whether `path` is named like a passwords file rather than an archive:
+/// `.json`, `.json.gpg`, or the CSV export re-imported. Content is verified
+/// after (parse / OpenPGP sniff); the name just routes it away from `7zz`.
+fn is_manifest_name(path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    name.ends_with(".json") || name.ends_with(".json.gpg") || name.ends_with(".csv")
+}
+
+fn n_manifest_body(n: usize) -> String {
+    gettextrs::ngettext(
+        "Extract {} archive listed in this passwords file, using its recorded password? It will be extracted into a new folder next to itself.",
+        "Extract {} archives listed in this passwords file, each with its recorded password? Each will be extracted into a new folder next to itself.",
+        n as u32,
+    )
+    .replacen("{}", &n.to_string(), 1)
+}
+
+fn n_manifest_missing(n: usize) -> String {
+    gettextrs::ngettext(
+        "({} listed archive wasn't found next to the passwords file and will be skipped.)",
+        "({} listed archives weren't found next to the passwords file and will be skipped.)",
+        n as u32,
+    )
+    .replacen("{}", &n.to_string(), 1)
+}
+
+fn n_manifest_passwordless(n: usize) -> String {
+    gettextrs::ngettext(
+        "({} entry has no password recorded and will be skipped.)",
+        "({} entries have no password recorded and will be skipped.)",
         n as u32,
     )
     .replacen("{}", &n.to_string(), 1)
