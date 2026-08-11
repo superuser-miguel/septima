@@ -16,6 +16,7 @@ mod compress;
 mod edit;
 mod error;
 mod extract;
+mod gpg;
 mod hash;
 mod listing;
 mod manifest;
@@ -31,6 +32,9 @@ pub use hash::{hash_algorithms, hash_file, hash_file_progress, write_checksum_fi
 pub use error::EngineError;
 pub use extract::{
     delete_archive, new_cancel_token, run_extract, CancelToken, ExtractRequest, OverwriteMode,
+};
+pub use gpg::{
+    decrypt_symmetric, encrypt_symmetric, gpg_available, looks_gpg_encrypted, GpgError,
 };
 pub use listing::{parse_listing, ArchiveEntry, ArchiveListing};
 pub use manifest::{
