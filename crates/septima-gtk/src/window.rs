@@ -372,6 +372,7 @@ impl SeptimaWindow {
     /// is deliberate: a bare count once made two successful extractions read
     /// as one.
     fn present_manifest_extract(&self, rows: Vec<ManifestRow>) {
+        let n_rows = rows.len();
         let list = gtk::ListBox::new();
         list.set_selection_mode(gtk::SelectionMode::None);
         list.add_css_class("boxed-list");
@@ -406,6 +407,25 @@ impl SeptimaWindow {
             .min_content_width(340)
             .child(&list)
             .build();
+
+        // Long lists need selection ergonomics, not just a scrollbar: a live
+        // "N of M" count, Select All / Clear (so 1-of-20 is Clear + one
+        // check), and — only once the list is long enough to lose things in —
+        // a filter box.
+        let selected_label = gtk::Label::builder().xalign(0.0).hexpand(true).build();
+        selected_label.add_css_class("dim-label");
+        let select_all = gtk::Button::with_label(&gettext("Select All"));
+        select_all.add_css_class("flat");
+        let clear = gtk::Button::with_label(&gettext("Clear"));
+        clear.add_css_class("flat");
+        let strip = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(6)
+            .build();
+        strip.append(&selected_label);
+        strip.append(&select_all);
+        strip.append(&clear);
+
         let delete_after = gtk::CheckButton::builder()
             .label(gettext("Delete the archives after extracting"))
             .build();
@@ -413,6 +433,30 @@ impl SeptimaWindow {
             .orientation(gtk::Orientation::Vertical)
             .spacing(12)
             .build();
+        extra.append(&strip);
+        if n_rows >= 10 {
+            let search = gtk::SearchEntry::builder()
+                .placeholder_text(gettext("Filter archives…"))
+                .build();
+            let query: Rc<RefCell<String>> = Rc::default();
+            {
+                let query = query.clone();
+                list.set_filter_func(move |row| {
+                    let q = query.borrow();
+                    q.is_empty()
+                        || row
+                            .downcast_ref::<adw::ActionRow>()
+                            .map(|r| r.title().to_lowercase().contains(q.as_str()))
+                            .unwrap_or(true)
+                });
+            }
+            let list_for_filter = list.clone();
+            search.connect_search_changed(move |s| {
+                *query.borrow_mut() = s.text().to_lowercase();
+                list_for_filter.invalidate_filter();
+            });
+            extra.append(&search);
+        }
         extra.append(&scroller);
         extra.append(&delete_after);
 
@@ -428,21 +472,44 @@ impl SeptimaWindow {
         dialog.set_response_appearance("extract", adw::ResponseAppearance::Suggested);
         dialog.set_default_response(Some("extract"));
 
-        // The Extract button counts what's checked and disables at zero.
+        // The Extract button and the count label follow what's checked; the
+        // button disables at zero.
         let checks = Rc::new(checks);
         let update = {
             let dialog = dialog.clone();
             let checks = checks.clone();
+            let selected_label = selected_label.clone();
             move || {
                 let n = checks.iter().filter(|(c, _, _)| c.is_active()).count();
                 dialog.set_response_label("extract", &extract_label(n));
                 dialog.set_response_enabled("extract", n > 0);
+                selected_label.set_text(
+                    &gettext("{} of {} selected")
+                        .replacen("{}", &n.to_string(), 1)
+                        .replacen("{}", &checks.len().to_string(), 1),
+                );
             }
         };
         update();
         for (check, _, _) in checks.iter() {
             let update = update.clone();
             check.connect_toggled(move |_| update());
+        }
+        {
+            let checks = checks.clone();
+            select_all.connect_clicked(move |_| {
+                for (check, _, _) in checks.iter() {
+                    check.set_active(true);
+                }
+            });
+        }
+        {
+            let checks = checks.clone();
+            clear.connect_clicked(move |_| {
+                for (check, _, _) in checks.iter() {
+                    check.set_active(false);
+                }
+            });
         }
 
         let window = self.clone();
