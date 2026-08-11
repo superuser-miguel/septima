@@ -315,9 +315,9 @@ impl SeptimaWindow {
     /// points Septima at the folder that really holds the archives.
     fn confirm_manifest_extract(&self, manifest_path: PathBuf, manifest: Manifest) {
         let dir = manifest_path.parent().map(Path::to_path_buf).unwrap_or_default();
-        let (jobs, missing, passwordless) = manifest_jobs(&dir, &manifest);
-        if !jobs.is_empty() {
-            self.present_manifest_extract(jobs, missing, passwordless);
+        let rows = manifest_rows(&dir, &manifest);
+        if rows.iter().any(|r| r.job.is_some()) {
+            self.present_manifest_extract(rows);
             return;
         }
         if manifest.entries.is_empty() {
@@ -351,13 +351,13 @@ impl SeptimaWindow {
             picker.select_folder(Some(&window), gio::Cancellable::NONE, move |result| {
                 if let Ok(folder) = result {
                     if let Some(dir) = folder.path() {
-                        let (jobs, missing, passwordless) = manifest_jobs(&dir, &manifest);
-                        if jobs.is_empty() {
+                        let rows = manifest_rows(&dir, &manifest);
+                        if rows.iter().any(|r| r.job.is_some()) {
+                            window2.present_manifest_extract(rows);
+                        } else {
                             window2.show_error(&gettext(
                                 "None of the listed archives are in that folder either.",
                             ));
-                        } else {
-                            window2.present_manifest_extract(jobs, missing, passwordless);
                         }
                     }
                 }
@@ -366,42 +366,94 @@ impl SeptimaWindow {
         dialog.present(Some(self));
     }
 
-    /// The confirm dialog for a resolved manifest batch, then the extractions.
-    fn present_manifest_extract(
-        &self,
-        jobs: Vec<(PathBuf, String)>,
-        missing: usize,
-        passwordless: usize,
-    ) {
-        let mut body = n_manifest_body(jobs.len());
-        if missing > 0 {
-            body.push(' ');
-            body.push_str(&n_manifest_missing(missing));
-        }
-        if passwordless > 0 {
-            body.push(' ');
-            body.push_str(&n_manifest_passwordless(passwordless));
+    /// The picker for a resolved manifest batch: one row per listed archive —
+    /// found ones pre-checked, missing or password-less ones greyed with the
+    /// reason — then the checked extractions. Seeing every entry's state here
+    /// is deliberate: a bare count once made two successful extractions read
+    /// as one.
+    fn present_manifest_extract(&self, rows: Vec<ManifestRow>) {
+        let list = gtk::ListBox::new();
+        list.set_selection_mode(gtk::SelectionMode::None);
+        list.add_css_class("boxed-list");
+        let mut checks: Vec<(gtk::CheckButton, PathBuf, String)> = Vec::new();
+        for row in rows {
+            let action = adw::ActionRow::builder()
+                .title(&row.title)
+                .subtitle(&row.subtitle)
+                .title_lines(1)
+                .subtitle_lines(1)
+                .build();
+            let check = gtk::CheckButton::builder().valign(gtk::Align::Center).build();
+            action.add_prefix(&check);
+            match row.job {
+                Some((archive, password)) => {
+                    check.set_active(true);
+                    action.set_activatable_widget(Some(&check));
+                    checks.push((check, archive, password));
+                }
+                None => {
+                    check.set_sensitive(false);
+                    action.set_sensitive(false);
+                }
+            }
+            list.append(&action);
         }
 
+        let scroller = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .propagate_natural_height(true)
+            .max_content_height(320)
+            .min_content_width(340)
+            .child(&list)
+            .build();
         let delete_after = gtk::CheckButton::builder()
             .label(gettext("Delete the archives after extracting"))
             .build();
+        let extra = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(12)
+            .build();
+        extra.append(&scroller);
+        extra.append(&delete_after);
+
         let dialog = adw::AlertDialog::builder()
             .heading(gettext("Extract From Passwords File"))
-            .body(body)
-            .extra_child(&delete_after)
+            .body(gettext(
+                "Choose which archives to extract — each uses its recorded password.",
+            ))
+            .extra_child(&extra)
             .build();
         dialog.add_response("cancel", &gettext("Cancel"));
         dialog.add_response("extract", &gettext("Extract"));
         dialog.set_response_appearance("extract", adw::ResponseAppearance::Suggested);
         dialog.set_default_response(Some("extract"));
 
+        // The Extract button counts what's checked and disables at zero.
+        let checks = Rc::new(checks);
+        let update = {
+            let dialog = dialog.clone();
+            let checks = checks.clone();
+            move || {
+                let n = checks.iter().filter(|(c, _, _)| c.is_active()).count();
+                dialog.set_response_label("extract", &extract_label(n));
+                dialog.set_response_enabled("extract", n > 0);
+            }
+        };
+        update();
+        for (check, _, _) in checks.iter() {
+            let update = update.clone();
+            check.connect_toggled(move |_| update());
+        }
+
         let window = self.clone();
         dialog.connect_response(None, move |_, response| {
             if response != "extract" {
                 return;
             }
-            for (archive, password) in &jobs {
+            for (check, archive, password) in checks.iter() {
+                if !check.is_active() {
+                    continue;
+                }
                 let dest = sibling_extract_dir(archive);
                 window.start_extract(
                     archive.clone(),
@@ -1478,30 +1530,69 @@ fn unique_output(
     }
 }
 
-/// Resolve a manifest's entries against `dir`: (archive, password) jobs for
-/// the ones present, plus counts of missing archives and empty-password rows
-/// (skipped loudly — never trimmed, never guessed).
-fn manifest_jobs(dir: &Path, manifest: &Manifest) -> (Vec<(PathBuf, String)>, usize, usize) {
-    let mut jobs = Vec::new();
-    let mut missing = 0usize;
-    let mut passwordless = 0usize;
-    for entry in &manifest.entries {
-        if entry.password.is_empty() {
-            passwordless += 1;
-            continue;
-        }
-        let Some(name) = Path::new(&entry.archive).file_name() else {
-            missing += 1;
-            continue;
-        };
-        let archive = dir.join(name);
-        if archive.is_file() {
-            jobs.push((archive, entry.password.clone()));
-        } else {
-            missing += 1;
-        }
+/// One manifest entry as the extract picker shows it: the archive's name, a
+/// one-line context subtitle, and — when it's present with a password — the
+/// (path, password) job a checked row runs.
+struct ManifestRow {
+    title: String,
+    subtitle: String,
+    job: Option<(PathBuf, String)>,
+}
+
+/// Resolve a manifest's entries against `dir` into picker rows. Only the
+/// basename of each recorded archive is trusted (a hand-edited "../evil"
+/// can't walk out of the folder), and an empty password greys the row rather
+/// than guessing — never trimmed, never defaulted.
+fn manifest_rows(dir: &Path, manifest: &Manifest) -> Vec<ManifestRow> {
+    manifest
+        .entries
+        .iter()
+        .map(|entry| {
+            let title = entry.archive.clone();
+            if entry.password.is_empty() {
+                return ManifestRow {
+                    title,
+                    subtitle: gettext("No password recorded — check the passwords file"),
+                    job: None,
+                };
+            }
+            let archive = Path::new(&entry.archive).file_name().map(|n| dir.join(n));
+            match archive {
+                Some(archive) if archive.is_file() => {
+                    let mut subtitle = String::new();
+                    if !entry.source.is_empty() {
+                        subtitle = gettext("from {}").replacen("{}", &entry.source, 1);
+                    }
+                    if !entry.encryption.is_empty() {
+                        if !subtitle.is_empty() {
+                            subtitle.push_str(" · ");
+                        }
+                        subtitle.push_str(&entry.encryption);
+                    }
+                    ManifestRow {
+                        title,
+                        subtitle,
+                        job: Some((archive, entry.password.clone())),
+                    }
+                }
+                _ => ManifestRow {
+                    title,
+                    subtitle: gettext("Not found next to the passwords file"),
+                    job: None,
+                },
+            }
+        })
+        .collect()
+}
+
+/// The picker's confirm-button label: "Extract 2" while counting, plain
+/// "Extract" only at zero (where the button is disabled anyway).
+fn extract_label(n: usize) -> String {
+    if n == 0 {
+        gettext("Extract")
+    } else {
+        format!("{} {n}", gettext("Extract"))
     }
-    (jobs, missing, passwordless)
 }
 
 /// Whether `path` is named like a passwords file rather than an archive:
@@ -1513,33 +1604,6 @@ fn is_manifest_name(path: &Path) -> bool {
         .map(|n| n.to_string_lossy().to_ascii_lowercase())
         .unwrap_or_default();
     name.ends_with(".json") || name.ends_with(".json.gpg") || name.ends_with(".csv")
-}
-
-fn n_manifest_body(n: usize) -> String {
-    gettextrs::ngettext(
-        "Extract {} archive listed in this passwords file, using its recorded password? It will be extracted into a new folder next to itself.",
-        "Extract {} archives listed in this passwords file, each with its recorded password? Each will be extracted into a new folder next to itself.",
-        n as u32,
-    )
-    .replacen("{}", &n.to_string(), 1)
-}
-
-fn n_manifest_missing(n: usize) -> String {
-    gettextrs::ngettext(
-        "({} listed archive wasn't found next to the passwords file and will be skipped.)",
-        "({} listed archives weren't found next to the passwords file and will be skipped.)",
-        n as u32,
-    )
-    .replacen("{}", &n.to_string(), 1)
-}
-
-fn n_manifest_passwordless(n: usize) -> String {
-    gettextrs::ngettext(
-        "({} entry has no password recorded and will be skipped.)",
-        "({} entries have no password recorded and will be skipped.)",
-        n as u32,
-    )
-    .replacen("{}", &n.to_string(), 1)
 }
 
 fn n_archives_create_body(n: usize) -> String {
