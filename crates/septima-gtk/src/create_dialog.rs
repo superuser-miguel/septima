@@ -417,6 +417,10 @@ mod imp {
         /// protection, and the shared-password row steps aside while each
         /// archive gets its own.
         pub(super) fn update_batch_password_rows(&self) {
+            // Batch names derive from each item, so the single-archive name
+            // field is inert there — grey it rather than swallow typing.
+            // (The planned naming-pattern control will revive it.)
+            self.name_row.set_sensitive(!self.batch_row.is_active());
             let applies = self.batch_row.is_active() && self.current_format().supports_encryption;
             self.generate_row.set_visible(applies);
             let generating = applies && self.generate_row.is_active();
