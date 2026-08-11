@@ -14,8 +14,10 @@ codec-tuning controls no other Linux archive manager exposes.
 It is an **archive tool, not a file manager**. It never links or vendors 7-Zip
 code: a UI-free engine crate supervises the `7zz` binary as a subprocess.
 
-> Status: early but working. Browse, extract, and create-with-tuning all
-> function today in a sandboxed Flatpak. See the [roadmap](#roadmap).
+> Status: **v0.4.0**, and past the awkward stage. Browse, extract, create with
+> full tuning, batch operations and in-place editing all work today in a
+> sandboxed Flatpak, with 1:1 coverage of what the bundled `7zz` can create on
+> Linux. See the [roadmap](#roadmap).
 
 <p align="center">
   <img src="docs/screenshots/codec-menu.png" alt="Septima's Add-to-Archive dialog with the modern-codec method menu open — LZMA2, Zstandard, Brotli, Fast-LZMA2, LZ4, LZ5, Lizard and more" width="640">
@@ -51,16 +53,35 @@ Where Septima aims to *win*, not just match:
 - Open an archive from the file chooser, your file manager ("Open With"), or by
   **dropping it onto the window**.
 - Extract with **live progress, cancel, and password** support.
+- **Transparent nested browse + extract** — open a `.tar.zst` / `.tgz` /
+  `.tar.br` and see the files inside, not the intermediate `.tar`.
 - **Create / Add to Archive** with full tuning:
-  - Formats: **7z, zip, tar** (+ tar → zstd/xz/gzip/bzip2).
-  - Codecs: LZMA2, LZMA, PPMd, **Zstandard, Brotli, Fast-LZMA2, LZ4, LZ5, Lizard**,
-    BZip2, Deflate, Store.
+  - Formats: **7z, zip, tar** (+ tar → zstd / xz / gzip / bzip2 / **brotli /
+    LZ4 / LZ5 / Lizard**), and **raw single-file streams** — write a bare
+    `.zst`, `.br`, `.lz4`, `.lz5`, `.xz`, `.gz` or `.bz2`.
+  - Codecs: LZMA2, LZMA, PPMd, **Zstandard, Brotli, Fast-LZMA2, LZ4, LZ5,
+    Lizard**, BZip2, Deflate, Deflate64, XZ, Store.
   - Level, dictionary size, solid mode, CPU threads, live memory estimate.
-  - Executable-optimization (BCJ), free-text advanced parameters.
-  - Encryption (AES-256) with optional encrypted file names (7z).
-  - Split into volumes (`.001`, `.002`, …).
-- **Checksum calculator** — CRC-32, SHA-256/512, SHA3-256, BLAKE3, xxHash, with
-  copy and verify-against-a-checksum.
+  - **Architecture / filter picker** — Delta, ARM64, ARM/ARMT, PPC, SPARC,
+    RISC-V and BCJ2, alongside x86 BCJ.
+  - **Lizard family × level** — pick among the four method families
+    (fastLZ4 / LIZv1, ± Huffman) instead of one flat 10–49 slider.
+  - Encryption — AES-256 with optional encrypted file names (7z), and
+    **AES-256 instead of the weak ZipCrypto default** for zip.
+  - Split into volumes (`.001`, `.002`, …), free-text advanced parameters.
+- **Batch extract** — select or drop several archives and each unpacks into its
+  own folder, with one shared password for encrypted sets.
+- **Batch compress** — stage several items and create a separate archive for
+  each, saved next to it.
+- **Edit an archive in place** — delete or rename entries, plus a one-click
+  **Test Archive** with the same live progress as extract.
+- **Post-extract actions** — "Show in Files", and an optional
+  delete-the-archive-afterwards toggle that understands split volumes.
+- **Checksum calculator** — 13 digests: CRC-32/64, MD5, SHA-1, SHA-256/384/512,
+  SHA3-256/512, BLAKE3, BLAKE2sp, XXH32/64 — with copy and
+  verify-against-a-checksum-file.
+- **Generate a checksum file** — optionally write a `.sha256` next to a new
+  archive, one line per volume part.
 - **Named compression presets** — save your tuning as a reusable preset.
 - **Staged input list** — Add Files / Add Folder across locations, with per-item
   remove, drag-and-drop, and a live count + total size of what's staged.
@@ -196,7 +217,7 @@ meson compile -C builddir
       archive for each item," and each one is compressed into its own archive
       saved next to it, instead of combining them into one.
 
-Completing full `7zz` CLI parity in **v0.4.0** — genuine 1:1 coverage of what
+Full `7zz` CLI parity, completed in **v0.4.0** — genuine 1:1 coverage of what
 the bundled `7zz` can create on Linux:
 
 - [x] **Complete hash calculator** — CRC-64, MD5, SHA-1, SHA-384, SHA3-512 and
@@ -226,7 +247,7 @@ and the detection design in
 [the write-up](https://superuser-miguel.github.io/septima/blog/2026-07-27-brotli-mmt-corruption.html).
 `.tar.br` / `.tar.lz5` / `.tar.liz` are transparently browsable again too.
 
-### In design — the headline 0.4.x feature
+### In design — the headline 0.5.x feature
 
 - **Batch-encrypt with a portable manifest** — compress a pile of files/folders,
   each into its own archive with a **freshly generated password**, and write a

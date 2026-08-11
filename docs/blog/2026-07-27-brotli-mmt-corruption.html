@@ -211,9 +211,19 @@ if run(args).failed_with_efail() {
   <code>t</code> — is what settled it. Test the thing; don't reason about it from
   one data point.</p>
 
-  <p>Both fixes land in <strong>0.4.x</strong>, along with the rest of the
-  <code>7zz</code> CLI-parity work. If you're on the signed Flatpak repo, they'll
-  arrive with <code>flatpak update</code>.</p>
+  <p><em>Update, 10 August 2026:</em> both fixes shipped in <strong>v0.4.0</strong>,
+  along with the rest of the <code>7zz</code> CLI-parity work — <code>flatpak
+  update</code> if you're on the signed repo. Any <code>.br</code> or
+  <code>.tar.br</code> written by v0.3.0 is still corrupt and can't be repaired;
+  recreate those.</p>
+
+  <p>Upstream went further than the workaround described here. After testing
+  the detection design on Linux and reporting a follow-on regression,
+  <a href="https://github.com/mcmilk/7-Zip-zstd/issues/538">7-Zip ZS #538</a>
+  settled on trying the single-threaded decode first and treating
+  <code>-mmt=off</code> as the deliberate opt-in for the multithreaded format
+  inside a <code>.7z</code>. Septima now retries with that flag on its own, so
+  archives made elsewhere with raw brotli in a container open too.</p>
 </article>
 
 <footer><div class="wrap">

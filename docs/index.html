@@ -160,16 +160,28 @@
       <p>Zstandard (1–22), Brotli, Fast-LZMA2, LZ4/LZ5, Lizard, plus LZMA2, PPMd, BZip2 — inside real <code>.7z</code>.</p>
     </div>
     <div class="card">
-      <h3>Optimize for executables</h3>
-      <p>One switch for the BCJ filter, instead of the <code>-m0=bcj</code> folklore the Windows tool makes you learn.</p>
+      <h3>Architecture &amp; filter picker</h3>
+      <p>Delta, ARM64, ARM/ARMT, PPC, SPARC, RISC-V and BCJ2 alongside x86 BCJ — a real control, instead of the <code>-m0=bcj</code> folklore the Windows tool makes you learn.</p>
     </div>
     <div class="card">
       <h3>Transparent modern tarballs</h3>
-      <p>Create a real <code>.tar.zst</code> / <code>.tar.xz</code> in one gesture, with full compression control.</p>
+      <p>Create a real <code>.tar.zst</code> / <code>.tar.xz</code> / <code>.tar.br</code> — or Lizard, LZ4 and LZ5 — in one gesture, with full compression control.</p>
+    </div>
+    <div class="card">
+      <h3>Raw single-file streams</h3>
+      <p>Write a bare <code>.zst</code>, <code>.br</code>, <code>.lz4</code>, <code>.lz5</code>, <code>.xz</code>, <code>.gz</code> or <code>.bz2</code> — not only <code>tar</code> plus a compressor.</p>
+    </div>
+    <div class="card">
+      <h3>Lizard, properly exposed</h3>
+      <p>Choose among Lizard's four method families (fastLZ4 / LIZv1, with or without Huffman) rather than guessing at one flat 10–49 slider.</p>
     </div>
     <div class="card">
       <h3>Extract, safely</h3>
       <p>Live progress and cancel, encrypted-archive password prompts, and split-volume output.</p>
+    </div>
+    <div class="card">
+      <h3>Real encryption choices</h3>
+      <p>AES-256 with optional encrypted file names for <code>.7z</code> — and AES-256 for zip instead of its weak ZipCrypto default.</p>
     </div>
     <div class="card">
       <h3>Sandboxed by design</h3>
@@ -177,7 +189,7 @@
     </div>
     <div class="card">
       <h3>Built-in checksum calculator</h3>
-      <p>CRC-32, SHA-256/512, SHA3-256, BLAKE3 and xxHash, with copy and verify-against-a-checksum.</p>
+      <p>13 digests — CRC-32/64, MD5, SHA-1, SHA-256/384/512, SHA3-256/512, BLAKE3, BLAKE2sp and XXH32/64 — with copy and verify-against-a-checksum.</p>
     </div>
     <div class="card">
       <h3>Named tuning presets</h3>
@@ -227,10 +239,10 @@
 
 <section class="wrap">
   <h2>Roadmap</h2>
-  <p class="sub">Honest about where it's headed. <strong>v0.3.0 is out now</strong>; the items below are in flight for <strong>0.4.x</strong>. (Read the deep-dive: <a href="blog/">the Septima blog</a>.)</p>
+  <p class="sub">Honest about where it's headed. <strong>v0.4.0 is out now</strong>, and it completes <code>7zz</code> CLI parity. (Read the deep-dive: <a href="blog/">the Septima blog</a>.)</p>
 
-  <h3 style="margin:1.5rem 0 .4rem;font-size:1.1rem">Landing in 0.4.x — full <code>7zz</code> CLI parity</h3>
-  <p class="sub" style="margin-bottom:.8rem">Built and on <code>main</code>, shipping in the next release.</p>
+  <h3 style="margin:1.5rem 0 .4rem;font-size:1.1rem">Shipped in 0.4.0 — full <code>7zz</code> CLI parity</h3>
+  <p class="sub" style="margin-bottom:.8rem">Genuine 1:1 coverage of what the bundled <code>7zz</code> can create on Linux. 0.4.0 also <strong>repairs Brotli creation</strong> — every <code>.br</code> and <code>.tar.br</code> written by v0.3.0 was corrupt, so recreate those files.</p>
   <ul class="road">
     <li><b>Complete hash calculator</b> — 13 digests (CRC-64, MD5, SHA-1/384, SHA3-512, BLAKE2sp, XXH32/64).</li>
     <li><b>Zip AES-256</b> — choose strong encryption over the weak ZipCrypto default.</li>
@@ -240,7 +252,7 @@
     <li><b>Standalone streams</b> — write a raw <code>.zst</code> / <code>.br</code> / <code>.lz4</code> file, not only <code>tar</code> + a compressor.</li>
   </ul>
 
-  <h3 style="margin:1.5rem 0 .4rem;font-size:1.1rem">In design — the headline 0.4.x feature</h3>
+  <h3 style="margin:1.5rem 0 .4rem;font-size:1.1rem">In design — the headline 0.5.x feature</h3>
   <ul class="road">
     <li><b>Batch-encrypt with a portable manifest</b> — compress a pile of folders, each into its own archive with a generated password, and write a portable manifest you keep in <em>your</em> vault (KeePassXC, Bitwarden, <code>pass</code>, a GPG file, the GNOME keyring). Hand it back later to batch-decrypt the whole set. Septima never touches a vault's API — the manifest is just a file, so every vault works by default. Sandbox-clean, built on your own tools.</li>
   </ul>
