@@ -43,6 +43,7 @@ fn every_stream_codec_round_trips_one_file() {
             dest_dir: dest.clone(),
             password: None,
             overwrite: OverwriteMode::default(),
+            entries: Vec::new(),
         };
         run_extract(&sevenzip_path(), &ereq, &new_cancel_token(), |_| {})
             .unwrap_or_else(|e| panic!("{codec}: extract failed: {e:?}"));
@@ -94,6 +95,7 @@ fn tar_brotli_with_threads_is_not_corrupt() {
         dest_dir: dest.clone(),
         password: None,
         overwrite: OverwriteMode::default(),
+        entries: Vec::new(),
     };
     run_extract(&sevenzip_path(), &ereq, &new_cancel_token(), |_| {})
         .expect("tar.br extract failed — corrupt stream");

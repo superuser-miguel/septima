@@ -2,7 +2,7 @@ use std::cell::RefCell;
 
 use adw::subclass::prelude::*;
 use gtk::prelude::*;
-use gtk::{gio, glib, pango, CompositeTemplate, TemplateChild};
+use gtk::{gdk, gio, glib, pango, CompositeTemplate, TemplateChild};
 
 use septima_engine::{ArchiveEntry, ArchiveListing};
 
@@ -10,6 +10,15 @@ use crate::entry_object::EntryObject;
 
 type DeleteCallback = Box<dyn Fn(Vec<String>)>;
 type RenameCallback = Box<dyn Fn(String)>;
+/// Given the selected in-archive paths, stage them as real files (extract to a
+/// scratch dir) and return those paths — or `None` to abort the drag.
+type DragExtractCallback = Box<dyn Fn(Vec<String>) -> Option<Vec<std::path::PathBuf>>>;
+
+/// Don't offer a drag that would stall the UI staging gigabytes — past this,
+/// the Extract button is the right tool. Directory entries list a size of 0,
+/// so a huge selected *folder* can slip past; the cap is a guard rail, not an
+/// accounting system.
+const DRAG_EXTRACT_CAP_BYTES: u64 = 512 * 1024 * 1024;
 
 mod imp {
     use super::*;
@@ -29,6 +38,7 @@ mod imp {
         pub model: OnceCell<gio::ListStore>,
         pub on_delete: RefCell<Option<DeleteCallback>>,
         pub on_rename: RefCell<Option<RenameCallback>>,
+        pub on_drag_extract: RefCell<Option<DragExtractCallback>>,
     }
 
     #[glib::object_subclass]
@@ -70,6 +80,32 @@ mod imp {
             view.append_column(&text_column(&gettext("Method"), false, |e| e.method.clone().unwrap_or_default()));
             view.append_column(&text_column(&gettext("Modified"), false, short_time));
             view.append_column(&text_column(&gettext("CRC"), false, |e| e.crc.clone().unwrap_or_default()));
+
+            // Drag entries out of the archive: the window-side handler stages
+            // the selection as real files (an on-the-spot extract) and the
+            // drop hands them to the receiver — GNOME Files, a desktop, any
+            // app that takes files. Returning no provider quietly aborts.
+            let drag = gtk::DragSource::new();
+            drag.set_actions(gdk::DragAction::COPY);
+            drag.connect_prepare(glib::clone!(
+                #[weak(rename_to = imp)]
+                self,
+                #[upgrade_or]
+                None,
+                move |_, _, _| {
+                    let (paths, total) = imp.obj().selected_entries();
+                    if paths.is_empty() || total > DRAG_EXTRACT_CAP_BYTES {
+                        return None;
+                    }
+                    let staged = imp.on_drag_extract.borrow().as_ref().and_then(|cb| cb(paths))?;
+                    let files: Vec<gio::File> =
+                        staged.iter().map(gio::File::for_path).collect();
+                    Some(gdk::ContentProvider::for_value(
+                        &gdk::FileList::from_array(&files).to_value(),
+                    ))
+                }
+            ));
+            self.column_view.add_controller(drag);
         }
     }
 
@@ -141,15 +177,27 @@ impl SeptimaArchiveView {
 
     /// In-archive paths of the currently selected entries.
     fn selected_paths(&self) -> Vec<String> {
+        self.selected_entries().0
+    }
+
+    /// Selected in-archive paths plus their total listed size (directory
+    /// entries list 0 — their children count only when selected themselves).
+    fn selected_entries(&self) -> (Vec<String>, u64) {
         let Some(selection) = self.imp().column_view.model().and_downcast::<gtk::MultiSelection>() else {
-            return Vec::new();
+            return (Vec::new(), 0);
         };
         let bitset = selection.selection();
-        (0..bitset.size())
+        let mut total = 0u64;
+        let paths = (0..bitset.size())
             .filter_map(|i| selection.item(bitset.nth(i as u32)))
             .filter_map(|obj| obj.downcast::<EntryObject>().ok())
-            .map(|obj| obj.entry().path.clone())
-            .collect()
+            .map(|obj| {
+                let entry = obj.entry();
+                total += entry.size;
+                entry.path.clone()
+            })
+            .collect();
+        (paths, total)
     }
 
     /// Register the handler run when the user asks to delete the current
@@ -162,6 +210,16 @@ impl SeptimaArchiveView {
     /// (single-entry) selection. Called with the entry's in-archive path.
     pub fn connect_rename_requested<F: Fn(String) + 'static>(&self, f: F) {
         self.imp().on_rename.replace(Some(Box::new(f)));
+    }
+
+    /// Register the drag-out handler: given the selected in-archive paths, it
+    /// stages them as real files and returns those paths (`None` aborts the
+    /// drag). Runs synchronously inside the drag gesture's prepare.
+    pub fn connect_drag_extract<F>(&self, f: F)
+    where
+        F: Fn(Vec<String>) -> Option<Vec<std::path::PathBuf>> + 'static,
+    {
+        self.imp().on_drag_extract.replace(Some(Box::new(f)));
     }
 }
 

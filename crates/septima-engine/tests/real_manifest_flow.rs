@@ -88,6 +88,7 @@ fn extract_from_manifest(dir: &Path, manifest_text: &str) {
             dest_dir: dest.clone(),
             password: Some(entry.password.clone()),
             overwrite: OverwriteMode::default(),
+            entries: Vec::new(),
         };
         run_extract(&sevenzip_path(), &req, &new_cancel_token(), |_| {}).unwrap();
         let extracted = dest.join(&entry.source).join("data.txt");

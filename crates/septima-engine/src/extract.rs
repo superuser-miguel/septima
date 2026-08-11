@@ -69,6 +69,9 @@ pub struct ExtractRequest {
     pub dest_dir: PathBuf,
     pub password: Option<String>,
     pub overwrite: OverwriteMode,
+    /// In-archive paths to extract; empty = everything. A directory entry
+    /// extracts its whole subtree (7-Zip prefix semantics). Drives drag-out.
+    pub entries: Vec<String>,
 }
 
 impl ExtractRequest {
@@ -78,6 +81,7 @@ impl ExtractRequest {
             dest_dir: dest_dir.into(),
             password: None,
             overwrite: OverwriteMode::default(),
+            entries: Vec::new(),
         }
     }
 }
@@ -151,6 +155,7 @@ fn run_extract_once(
     cmd.args(extra)
         .arg("--")
         .arg(&req.archive)
+        .args(&req.entries)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -259,6 +264,9 @@ fn extract_compressed_tar(
         .arg("-y")
         .arg(req.overwrite.flag())
         .arg(format!("-o{}", req.dest_dir.display()))
+        // Subset selection applies to the inner tar; with -si the non-option
+        // args are entry patterns, not an archive name.
+        .args(&req.entries)
         .stdin(Stdio::from(tar_stream))
         .stdout(Stdio::null())
         .stderr(Stdio::piped())

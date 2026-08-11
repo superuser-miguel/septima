@@ -58,6 +58,7 @@ fn try_extract(archive: &std::path::Path, dest: &std::path::Path, pw: Option<&st
         dest_dir: dest.to_path_buf(),
         password: pw.map(String::from),
         overwrite: OverwriteMode::default(),
+        entries: Vec::new(),
     };
     run_extract(&sevenzip_path(), &req, &new_cancel_token(), |_| {})
 }

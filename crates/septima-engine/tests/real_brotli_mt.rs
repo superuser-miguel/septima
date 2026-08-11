@@ -56,6 +56,7 @@ fn extract_to(archive: &Path, dest: &Path) -> Result<(), septima_engine::EngineE
         dest_dir: dest.to_path_buf(),
         password: None,
         overwrite: OverwriteMode::default(),
+        entries: Vec::new(),
     };
     run_extract(&sevenzip_path(), &req, &new_cancel_token(), |_| {})
 }

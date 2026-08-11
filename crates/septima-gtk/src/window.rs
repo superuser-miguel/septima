@@ -172,6 +172,17 @@ mod imp {
                 obj,
                 move |path| obj.rename_entry(path)
             ));
+            self.archive_view.connect_drag_extract(glib::clone!(
+                #[weak]
+                obj,
+                #[upgrade_or]
+                None,
+                move |entries| obj.extract_for_drag(entries)
+            ));
+
+            // Whatever a previous session staged for drag-out is disposable
+            // by definition — the drops it fed either happened or never will.
+            let _ = std::fs::remove_dir_all(drag_staging_base());
         }
     }
 
@@ -731,6 +742,7 @@ impl SeptimaWindow {
             dest_dir: dest.clone(),
             password,
             overwrite: OverwriteMode::default(),
+            entries: Vec::new(),
         };
 
         std::thread::spawn(move || {
@@ -787,6 +799,45 @@ impl SeptimaWindow {
                 }
             }
         });
+    }
+
+    /// Drag-out backing: synchronously extract `entries` from the open
+    /// archive into a fresh staging dir and return the staged paths, which
+    /// become the drag's file list. Synchronous on purpose — the content
+    /// provider must exist when the gesture starts, and the view caps the
+    /// selection size so the stall stays unnoticeable. The staging dir lives
+    /// in the app cache, whose path is identical inside and outside the
+    /// sandbox, so receivers can read the files with or without the
+    /// FileTransfer portal.
+    fn extract_for_drag(&self, entries: Vec<String>) -> Option<Vec<PathBuf>> {
+        let archive = self.imp().archive_path.borrow().clone()?;
+        let password = self.imp().archive_password.borrow().clone();
+        let dest = drag_staging_base().join(format!("drag-{}", glib::monotonic_time()));
+        std::fs::create_dir_all(&dest).ok()?;
+        let mut req = ExtractRequest::new(archive, dest.clone());
+        req.password = password;
+        req.entries = entries.clone();
+        let outcome = septima_engine::run_extract(
+            &septima_engine::sevenzip_path(),
+            &req,
+            &septima_engine::new_cancel_token(),
+            |_| {},
+        );
+        match outcome {
+            Ok(()) => {
+                let staged: Vec<PathBuf> =
+                    entries.iter().map(|e| dest.join(e)).filter(|p| p.exists()).collect();
+                (!staged.is_empty()).then_some(staged)
+            }
+            Err(err) => {
+                let _ = std::fs::remove_dir_all(&dest);
+                self.show_toast(&format!(
+                    "{} {err}",
+                    gettext("Couldn't stage the dragged entries:")
+                ));
+                None
+            }
+        }
     }
 
     fn finish_job(&self, row: &SeptimaProgressRow) {
@@ -1561,6 +1612,13 @@ fn n_skipped(n: usize) -> String {
         n as u32,
     )
     .replacen("{}", &n.to_string(), 1)
+}
+
+/// Where dragged-out entries are staged before the receiver copies them.
+/// Inside the Flatpak, `XDG_CACHE_HOME` is `~/.var/app/<id>/cache` — the same
+/// path the host sees — so even a plain-URI receiver can read the files.
+fn drag_staging_base() -> PathBuf {
+    glib::user_cache_dir().join("septima-dnd")
 }
 
 /// Whether `path` sits under the document portal's FUSE mount
