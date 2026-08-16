@@ -14,10 +14,11 @@ codec-tuning controls no other Linux archive manager exposes.
 It is an **archive tool, not a file manager**. It never links or vendors 7-Zip
 code: a UI-free engine crate supervises the `7zz` binary as a subprocess.
 
-> Status: **v0.4.0**, and past the awkward stage. Browse, extract, create with
+> Status: **v0.5.0**, and past the awkward stage. Browse, extract, create with
 > full tuning, batch operations and in-place editing all work today in a
 > sandboxed Flatpak, with 1:1 coverage of what the bundled `7zz` can create on
-> Linux. See the [roadmap](#roadmap).
+> Linux — plus **batch encryption with a portable passwords file**. See the
+> [roadmap](#roadmap).
 
 <p align="center">
   <img src="docs/screenshots/codec-menu.png" alt="Septima's Add-to-Archive dialog with the modern-codec method menu open — LZMA2, Zstandard, Brotli, Fast-LZMA2, LZ4, LZ5, Lizard and more" width="640">
@@ -45,6 +46,10 @@ Where Septima aims to *win*, not just match:
   `-m0=bcj` folklore the Windows tool makes you learn.
 - **Transparent modern tarballs** — create, browse, and extract a real
   `.tar.zst` / `.tar.xz` in one gesture, both ways.
+- **Batch encryption you can actually manage** — a pile of folders, each in its
+  own archive under its own generated password, with a portable passwords file
+  that hands the whole set back to you later. No vault API, no lock-in: it's
+  just a file.
 
 ## Features
 
@@ -73,6 +78,16 @@ Where Septima aims to *win*, not just match:
   own folder, with one shared password for encrypted sets.
 - **Batch compress** — stage several items and create a separate archive for
   each, saved next to it.
+- **Batch encrypt with a passwords file** — flip *Unique password per archive*
+  in batch mode and every archive gets its own random 64-character password,
+  recorded in a **passwords file** (JSON) you save wherever you keep secrets.
+  Protect it with a password of its own (`gpg -c`, standard OpenPGP) or leave it
+  plain — chosen *before* the run, so a protected run never writes plaintext to
+  disk. Open that file in Septima later and it offers to **extract the whole
+  set**, each archive with its recorded password, with a per-entry picker.
+- **Drag entries out to extract** — select rows in an open archive and drag them
+  into Files (or anywhere that takes files); they arrive extracted, folders
+  included with their subtree.
 - **Edit an archive in place** — delete or rename entries, plus a one-click
   **Test Archive** with the same live progress as extract.
 - **Post-extract actions** — "Show in Files", and an optional
@@ -180,7 +195,7 @@ meson compile -C builddir
 
 ## Roadmap
 
-### Shipped (through v0.4.0)
+### Shipped (through v0.5.0)
 
 - [x] **Browse & extract** — any archive `7zz` reads, with live progress, cancel
       and password support.
@@ -247,22 +262,51 @@ and the detection design in
 [the write-up](https://superuser-miguel.github.io/septima/blog/2026-07-27-brotli-mmt-corruption.html).
 `.tar.br` / `.tar.lz5` / `.tar.liz` are transparently browsable again too.
 
-### In design — the headline 0.5.x feature
+### New in v0.5.0 — batch encryption with a portable passwords file
 
-- **Batch-encrypt with a portable manifest** — compress a pile of files/folders,
-  each into its own archive with a **freshly generated password**, and write a
-  **portable manifest** (a CSV that doubles as an integrity record). You store
-  that manifest wherever *you* keep secrets — KeePassXC, Bitwarden, `pass`, a
-  GPG-encrypted file, the GNOME keyring — and later hand it back to Septima to
-  **batch-decrypt** the whole set. Septima never talks to a vault's API; the
-  manifest is just a file, so every vault is compatible by default. Sandbox-clean
-  and built on your own tools. (Engine foundation already landed.)
+The headline feature: encrypt *a pile of things* without inventing a password
+per item or reusing one across all of them.
+
+- [x] **Unique password per archive** — in batch mode ("create a separate
+      archive for each item"), every archive gets its own 64-character password
+      drawn from the kernel CSPRNG, and the set is recorded in a **passwords
+      file** you save where you like.
+- [x] **The passwords file is just a file** — readable JSON with one entry per
+      archive: name, what it was made from, the password, its SHA-256, when it
+      was written, and the cipher in plain words ("7z, AES-256, encrypted
+      headers") — the thing nobody remembers six months later. Keep it in
+      KeePassXC, Bitwarden, `pass`, a vault, or a drawer. Septima never talks to
+      a password manager's API, so every one of them works by default.
+- [x] **Optional password protection for the file itself** — standard symmetric
+      OpenPGP via the runtime's `gpg -c`: no keys, no keyring, no host access,
+      and any `gpg` anywhere opens it. Chosen **before** the run, so a protected
+      run never leaves a plaintext moment on disk; declining shows a plain-words
+      warning instead of silently writing secrets next to the archives.
+- [x] **Crash-safe ordering** — all passwords are written atomically *before*
+      the first archive is created, and the file is rewritten (temp + rename)
+      after each archive completes. No archive can exist whose password doesn't.
+- [x] **The other half: batch decrypt** — open a passwords file with the Open
+      button, by dropping it in, or from the command line, and Septima offers to
+      extract every archive it lists with its recorded password. A per-entry
+      picker with select-all/clear (and a filter past ten rows) means you can
+      take just the two you need; missing archives and empty passwords are
+      skipped loudly, and only basenames are trusted, so a hand-edited
+      `../evil` can't walk out of the folder.
+- [x] **Drag-out to extract** — the missing half of drag and drop: select
+      entries in an open archive, drag them into Files, and they arrive
+      extracted. Directories bring their subtree.
+- [x] Presets now capture the encryption method, the checksum-file switch and
+      the batch password choices, instead of dropping them.
 
 ### Later
 
-- [ ] **Drag-out to extract** — drag entries out of an open archive to a folder
-      to extract them (needs a drag source with on-demand extraction; drag-*out*
-      support under Wayland / portals is the open question).
+- [ ] **Encrypt the passwords file to a GPG key** — a third choice next to plain
+      and password-protected: `gpg -e -r <key>`, so there's nothing to remember
+      at write time. Only ever touches the *public* key, so the sandbox stays
+      clean; the design work is the key picker.
+- [ ] **Archive naming patterns in batch mode** — a prefix/suffix (or obfuscated)
+      naming row, with the passwords file keeping the association back to the
+      original item.
 - [ ] **Promote key Advanced switches to real controls** — symlink handling
       (`-snl`), word size / fast bytes (`-mfb`), update modes (`-u`).
 - [ ] **Free-space check** — show available space at the extract destination

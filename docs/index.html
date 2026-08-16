@@ -4,15 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Septima — modern-codec 7z archiver for Linux</title>
-<meta name="description" content="A GNOME-native GTK4 front-end for 7-Zip ZS: browse, extract, and create archives with modern codecs (Zstandard, Brotli, Fast-LZMA2) and a real compression-tuning UI.">
+<meta name="description" content="A GNOME-native GTK4 front-end for 7-Zip ZS: browse, extract, and create archives with modern codecs (Zstandard, Brotli, Fast-LZMA2), a real compression-tuning UI, and batch encryption with a portable passwords file.">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Septima — modern-codec 7z archiver for Linux">
-<meta property="og:description" content="A GNOME-native front-end for 7-Zip ZS: browse, extract, and create archives with Zstandard, Brotli and Fast-LZMA2, and a real compression-tuning UI no other Linux archiver offers.">
+<meta property="og:description" content="A GNOME-native front-end for 7-Zip ZS: modern codecs, a real compression-tuning UI no other Linux archiver offers, and batch encryption with a portable passwords file.">
 <meta property="og:url" content="https://superuser-miguel.github.io/septima/">
 <meta property="og:image" content="https://superuser-miguel.github.io/septima/screenshots/codec-menu.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Septima — modern-codec 7z archiver for Linux">
-<meta name="twitter:description" content="A GNOME-native front-end for 7-Zip ZS: browse, extract, and create archives with Zstandard, Brotli and Fast-LZMA2, and a real compression-tuning UI no other Linux archiver offers.">
+<meta name="twitter:description" content="A GNOME-native front-end for 7-Zip ZS: modern codecs, a real compression-tuning UI no other Linux archiver offers, and batch encryption with a portable passwords file.">
 <meta name="twitter:image" content="https://superuser-miguel.github.io/septima/screenshots/codec-menu.png">
 <style>
   :root {
@@ -111,13 +111,15 @@
       <rect x="30" y="40" width="12" height="14" rx="3" fill="#3b3a9e"/>
     </g>
   </svg>
-  <span class="badge">Early, but working</span>
+  <span class="badge">v0.5.0 — batch encryption is here</span>
   <h1>Septima</h1>
   <p class="tagline">The archiver that actually speaks modern-codec 7z.</p>
   <p class="lede">
     A GNOME-native front-end for <strong>7-Zip ZS</strong> — browse, extract, and
     create archives with <strong>Zstandard, Brotli and Fast-LZMA2</strong>, and a
-    real compression-tuning interface no other Linux archiver offers.
+    real compression-tuning interface no other Linux archiver offers. Now with
+    <strong>batch encryption</strong>: a pile of folders, one generated password
+    each, and a portable passwords file that opens the whole set back up.
   </p>
   <div class="btns">
     <a class="btn primary" href="https://superuser-miguel.github.io/septima-repo/septima.flatpakref">Install (auto-updating)</a>
@@ -215,6 +217,22 @@
       <h3>Batch compress</h3>
       <p>Stage several files or folders and create a separate archive for each one, saved right next to it.</p>
     </div>
+    <div class="card">
+      <h3>Batch encrypt, one password each</h3>
+      <p>Every archive in a batch gets its own random 64-character password, recorded in a <strong>passwords file</strong> you keep wherever you keep secrets — no vault API, no lock-in.</p>
+    </div>
+    <div class="card">
+      <h3>…and the whole set back</h3>
+      <p>Open that passwords file later — button, drag, or command line — and Septima extracts every archive it lists with its recorded password. Or tick just the two you need.</p>
+    </div>
+    <div class="card">
+      <h3>Protect the passwords file</h3>
+      <p>Leave it as readable JSON, or give it a password of its own — standard OpenPGP via <code>gpg -c</code>, so any <code>gpg</code> anywhere opens it. Chosen before the run, so a protected run never writes plaintext.</p>
+    </div>
+    <div class="card">
+      <h3>Drag entries out to extract</h3>
+      <p>Select rows in an open archive and drag them into Files — they arrive extracted, folders with their whole subtree.</p>
+    </div>
   </div>
 </section>
 
@@ -239,7 +257,18 @@
 
 <section class="wrap">
   <h2>Roadmap</h2>
-  <p class="sub">Honest about where it's headed. <strong>v0.4.0 is out now</strong>, and it completes <code>7zz</code> CLI parity. (Read the deep-dive: <a href="blog/">the Septima blog</a>.)</p>
+  <p class="sub">Honest about where it's headed. <strong>v0.5.0 is out now</strong> — batch encryption with a portable passwords file. (Read the deep-dives on <a href="blog/">the Septima blog</a>.)</p>
+
+  <h3 style="margin:1.5rem 0 .4rem;font-size:1.1rem">Shipped in 0.5.0 — batch encryption with a portable passwords file</h3>
+  <p class="sub" style="margin-bottom:.8rem">Encrypt a <em>pile</em> of things without inventing a password per item or reusing one across all of them. <a href="blog/2026-08-16-batch-encrypt-passwords-file.html">How it works, and why the file is just a file →</a></p>
+  <ul class="road">
+    <li><b>Unique password per archive</b> — batch mode gives every archive its own 64-character password from the kernel CSPRNG.</li>
+    <li><b>A passwords file, not a vault integration</b> — readable JSON recording each archive, what it was made from, its password, its SHA-256, and the cipher in plain words. Keep it in KeePassXC, Bitwarden, <code>pass</code>, or a drawer.</li>
+    <li><b>Optional protection for the file itself</b> — symmetric OpenPGP (<code>gpg -c</code>): no keys, no keyring, no host access. Chosen before the run, so a protected run never leaves plaintext on disk.</li>
+    <li><b>Crash-safe</b> — every password is on disk before the first archive is created; the file is rewritten atomically as each one completes.</li>
+    <li><b>Batch decrypt</b> — hand the file back and Septima extracts the set, each with its recorded password, with a per-entry picker for taking only some.</li>
+    <li><b>Drag-out to extract</b> — drag entries from an open archive into Files and they arrive extracted.</li>
+  </ul>
 
   <h3 style="margin:1.5rem 0 .4rem;font-size:1.1rem">Shipped in 0.4.0 — full <code>7zz</code> CLI parity</h3>
   <p class="sub" style="margin-bottom:.8rem">Genuine 1:1 coverage of what the bundled <code>7zz</code> can create on Linux. 0.4.0 also <strong>repairs Brotli creation</strong> — every <code>.br</code> and <code>.tar.br</code> written by v0.3.0 was corrupt, so recreate those files.</p>
@@ -252,14 +281,10 @@
     <li><b>Standalone streams</b> — write a raw <code>.zst</code> / <code>.br</code> / <code>.lz4</code> file, not only <code>tar</code> + a compressor.</li>
   </ul>
 
-  <h3 style="margin:1.5rem 0 .4rem;font-size:1.1rem">In design — the headline 0.5.x feature</h3>
-  <ul class="road">
-    <li><b>Batch-encrypt with a portable manifest</b> — compress a pile of folders, each into its own archive with a generated password, and write a portable manifest you keep in <em>your</em> vault (KeePassXC, Bitwarden, <code>pass</code>, a GPG file, the GNOME keyring). Hand it back later to batch-decrypt the whole set. Septima never touches a vault's API — the manifest is just a file, so every vault works by default. Sandbox-clean, built on your own tools.</li>
-  </ul>
-
   <h3 style="margin:1.5rem 0 .4rem;font-size:1.1rem">Later</h3>
   <ul class="road">
-    <li><b>Drag-out to extract</b> — drag entries out of an open archive (dropping one <em>in</em> already works).</li>
+    <li><b>Encrypt the passwords file to a GPG key</b> — <code>gpg -e -r &lt;key&gt;</code> alongside the password mode, so there's nothing to remember at write time. Only ever touches the <em>public</em> key.</li>
+    <li><b>Archive naming patterns in batch mode</b> — prefix, suffix or obfuscated names, with the passwords file keeping the association back to the original item.</li>
     <li><b>Nautilus integration</b> — right-click "Extract Here" / "Compress…" in GNOME Files, like File Roller.</li>
     <li><b>Visual polish</b> — custom styling and a bespoke app icon.</li>
   </ul>
