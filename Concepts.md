@@ -472,6 +472,41 @@ happens wherever the secret key lives, with the user's normal pinentry.
   password; key-mode = recoverable only where the secret key is. Both are
   the user's call, not ours.
 
+### Bug/UX: batch completion toasts pile up (noted 2026-08-16)
+
+**Observed by the user during a large batch encrypt.** Every finished archive
+raises its own toast (`window.rs`, the `Job::Done(Ok(()))` arm: *"Created
+&lt;path&gt;"*). `AdwToastOverlay` shows toasts **one at a time**, several
+seconds each, so a 50-item batch queues 50 of them — the toasts are still
+marching past long after the work finished, and the last ones are pure noise.
+
+It is worse than one-per-archive in two cases:
+
+- **"Generate a checksum file" doubles it** — each archive adds a second toast
+  (*"Wrote x.sha256"*), so 50 items ≈ 100 toasts.
+- **Failures are modal.** A failed job calls `show_error`, i.e. a dialog per
+  failure. A batch that fails on many items is unusable, not just noisy.
+
+**Design direction (not built):** the per-archive toast is right for a single
+archive and wrong for a batch, so branch on the run, not on a count threshold —
+any run of ≥ 2 archives suppresses per-archive toasts and raises **one summary
+toast when the whole batch finishes**: *"Created 50 archives"*, or *"48
+created, 2 failed"* when some didn't. Notes for whoever builds it:
+
+- Needs a **completion counter shared by the jobs** — each job currently owns
+  an independent async task that `break`s on `Job::Done`, so nothing today
+  knows "this was the last one". A shared `Rc<Cell<usize>>` remaining-count
+  (decremented in `finish_job`) is enough; the manifest path already has a
+  serialized writer that could hang the summary off its final rewrite.
+- **Failures should collect, not interrupt** — one dialog at the end listing
+  what failed, rather than a modal per item mid-run.
+- The summary toast is the natural home for a **"Show in Files"** action
+  pointing at the output folder (the per-archive toasts have no action today),
+  and for the batch case it should mention the folder, since the individual
+  paths no longer scroll past.
+- Keep the passwords-file toast separate — it is one per run already, and it
+  is the one users actually need to see.
+
 ### Phased plan (if pursued)
 
 1. Password generator (engine) + redaction check.
