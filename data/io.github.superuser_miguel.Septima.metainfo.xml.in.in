@@ -39,6 +39,21 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.5.0" date="2026-08-16">
+      <description>
+        <p>Batch encryption with a portable passwords file, and drag-out extraction.</p>
+        <ul>
+          <li>Batch encrypt — when you create a separate archive for each item, Septima can give every archive its own random 64-character password and record them in a passwords file you keep wherever you keep secrets.</li>
+          <li>The passwords file is plain, readable JSON, or protected with a password of its own (standard OpenPGP, so any gpg can open it). You choose before the run starts, so a protected run never writes plaintext to disk.</li>
+          <li>Open a passwords file in Septima later — with the Open button, by dropping it in, or from the command line — and it offers to extract every archive it lists, each with its recorded password, into its own folder. Pick all of them or just the ones you want.</li>
+          <li>Every password is written to disk before the first archive is created, and the file is rewritten after each one completes, so an interrupted run never leaves an archive whose password was lost.</li>
+          <li>Drag entries out of an open archive into Files — or any app that accepts files — and they arrive extracted. Dragging a folder brings its whole subtree.</li>
+          <li>Fixed: saved presets now remember the encryption method, the checksum-file switch, and the batch password choices, instead of quietly dropping them.</li>
+          <li>Fixed: in batch mode, archive names come from the items themselves, so the archive-name field is greyed out rather than looking like it still applies.</li>
+          <li>Fixed: batch archives are no longer written next to files opened through the file chooser, where they would land in a portal directory instead of a folder you can find.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-08-10">
       <description>
         <p>Repairs Brotli archive creation, and completes 7-Zip CLI parity for what the bundled engine can write.</p>
