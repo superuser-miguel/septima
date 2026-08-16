@@ -1,7 +1,14 @@
 # Septima — Concepts
 
 _Design sketches and feature ideas, pre-decision. Not a roadmap; nothing here is
-committed to being built. Last updated 2026-07-25._
+committed to being built. Last updated 2026-08-16._
+
+> **Status note (2026-08-16):** the batch-encrypt section below is no longer a
+> sketch — it **shipped in v0.5.0**. It is kept as the design record, since the
+> reasoning (why no vault integration, why passwords are written before the
+> first archive, why symmetric-only GPG) is what the follow-on ideas build on.
+> The two "Future" subsections near the end — archive naming patterns and
+> public-key protection — are the parts still unbuilt.
 
 ---
 
@@ -385,8 +392,9 @@ which is the natural first slice.
 **Built the same day, on the `batch-encrypt` branch** — write side (dialog
 controls, passwords-first ordering, serialized atomic rewrites) and read side
 (open a `.json`/`.json.gpg`/`.csv` → batch-extract with recorded passwords),
-with `real_manifest_flow.rs` covering the loop end to end. Interactive UI
-testing is what remains before it ships.
+with `real_manifest_flow.rs` covering the loop end to end. **Shipped in v0.5.0
+on 2026-08-16** (tag `5c7b3c6`), together with drag-out-to-extract; the branch
+was fast-forwarded into `main` and deleted.
 
 Talked through with the user; these are decisions, not options:
 
