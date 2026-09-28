@@ -14,7 +14,7 @@ codec-tuning controls no other Linux archive manager exposes.
 It is an **archive tool, not a file manager**. It never links or vendors 7-Zip
 code: a UI-free engine crate supervises the `7zz` binary as a subprocess.
 
-> Status: **v0.5.0**, and past the awkward stage. Browse, extract, create with
+> Status: **v0.5.1**, and past the awkward stage. Browse, extract, create with
 > full tuning, batch operations and in-place editing all work today in a
 > sandboxed Flatpak, with 1:1 coverage of what the bundled `7zz` can create on
 > Linux — plus **batch encryption with a portable passwords file**. See the
@@ -195,7 +195,7 @@ meson compile -C builddir
 
 ## Roadmap
 
-### Shipped (through v0.5.0)
+### Shipped (through v0.5.1)
 
 - [x] **Browse & extract** — any archive `7zz` reads, with live progress, cancel
       and password support.
@@ -297,6 +297,25 @@ per item or reusing one across all of them.
       extracted. Directories bring their subtree.
 - [x] Presets now capture the encryption method, the checksum-file switch and
       the batch password choices, instead of dropping them.
+
+### Fixed in v0.5.1 — batches that finish quietly
+
+- [x] **One notice per batch, not one per archive** — a batch of 50 used to
+      queue 50 notices (100 with checksum files on), still scrolling past long
+      after the work was done. Now a batch ends with one summary — *"Extracted
+      48 archives · 2 failed"* — with a Show in Files button.
+- [x] **Failures collected, not interrupting** — one dialog at the end lists
+      what failed and why, instead of an error pop-up per archive mid-run.
+- [x] **One password question for a batch extract** — encrypted archives in a
+      batch are held until the rest finish, then Septima asks once for all of
+      them (a wrong password asks again; Cancel skips them).
+- [x] **No password box by default** — the batch-extract dialog hides the
+      password field behind a "These archives are password-protected" switch,
+      so a batch of ordinary archives no longer looks like it wants one.
+- [x] **Same-name items no longer collide** — `photos.zip` + `photos.7z` in one
+      batch extract to `photos/` and `photos_2/` instead of overwriting each
+      other; `report.txt` + `report.pdf` compress to `report.7z` and
+      `report_2.7z` instead of two jobs writing one file.
 
 ### Later
 
