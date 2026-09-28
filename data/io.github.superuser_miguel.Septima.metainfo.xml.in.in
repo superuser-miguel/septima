@@ -39,6 +39,18 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.5.1" date="2026-09-28">
+      <description>
+        <p>Batches now finish quietly, with one summary instead of a notice per archive.</p>
+        <ul>
+          <li>Creating or extracting several archives at once ends with a single summary notice, such as “Extracted 48 archives · 2 failed”, with a button to show the folder.</li>
+          <li>Problems in a batch are collected into one dialog at the end instead of an error pop-up for each archive.</li>
+          <li>Encrypted archives in a batch extract are held until the rest finish, then Septima asks once for their password. A wrong password asks again; Cancel skips them.</li>
+          <li>The batch extract dialog no longer shows a password field unless you say the archives are password-protected.</li>
+          <li>Fixed: archives with the same name in one batch no longer overwrite each other. photos.zip and photos.7z extract to photos and photos_2, and report.txt and report.pdf compress to report.7z and report_2.7z.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-08-16">
       <description>
         <p>Batch encryption with a portable passwords file, and drag-out extraction.</p>
