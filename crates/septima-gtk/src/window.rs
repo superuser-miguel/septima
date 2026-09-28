@@ -13,6 +13,7 @@ use septima_engine::{
 };
 
 use crate::archive_view::SeptimaArchiveView;
+use crate::batch_run::{BatchKind, BatchRun, Outcome};
 use crate::create_dialog::{CreateSettings, SeptimaCreateDialog};
 use crate::progress_row::SeptimaProgressRow;
 
@@ -528,16 +529,15 @@ impl SeptimaWindow {
             if response != "extract" {
                 return;
             }
-            for (check, archive, password) in checks.iter() {
-                if !check.is_active() {
-                    continue;
-                }
-                let dest = sibling_extract_dir(archive);
+            let picked: Vec<_> = checks.iter().filter(|(check, _, _)| check.is_active()).collect();
+            let dests = sibling_extract_dirs(picked.iter().map(|(_, archive, _)| archive.as_path()));
+            for ((_, archive, password), dest) in picked.into_iter().zip(dests) {
                 window.start_extract(
                     archive.clone(),
                     dest,
                     Some(password.clone()),
                     delete_after.is_active(),
+                    None,
                 );
             }
         });
@@ -546,7 +546,10 @@ impl SeptimaWindow {
 
     /// Confirm, then extract every archive in `files` into a new sibling
     /// folder next to itself (e.g. `photos.zip` -> `photos/`) — one Extract
-    /// job per archive, run independently, no per-archive prompts.
+    /// job per archive, run independently. With two or more they share a
+    /// [`BatchRun`]: no per-archive toasts, dialogs or password prompts, just
+    /// one password prompt for any encrypted leftovers and one summary at the
+    /// end (see `finish_batch`).
     fn confirm_batch_extract(&self, files: Vec<gio::File>) {
         let skipped = files.len();
         let archives: Vec<PathBuf> = files
@@ -564,14 +567,34 @@ impl SeptimaWindow {
             return;
         }
 
-        // These batches usually share one password, so offer a single field
-        // applied to every archive — no need to retype it per archive. An
-        // archive with a different (or no) password falls back to the named
-        // per-archive prompt in start_extract.
+        // Encrypted batches usually share one password, so offer a single
+        // field applied to every archive — but only behind a check, since an
+        // always-visible field read as demanding a password. Leaving it off
+        // loses nothing: archives that turn out encrypted (or don't open with
+        // this password) are gathered into one prompt at the end of the round.
+        let protected = gtk::CheckButton::builder()
+            .label(gettext("These archives are password-protected"))
+            .build();
         let password_entry = gtk::PasswordEntry::builder()
             .show_peek_icon(true)
-            .placeholder_text(gettext("Password (only if encrypted)"))
+            .activates_default(true)
+            .placeholder_text(gettext("Password"))
+            .margin_top(6)
             .build();
+        let password_revealer = gtk::Revealer::builder()
+            .transition_type(gtk::RevealerTransitionType::SlideDown)
+            .child(&password_entry)
+            .build();
+        {
+            let password_entry = password_entry.clone();
+            let password_revealer = password_revealer.clone();
+            protected.connect_toggled(move |check| {
+                password_revealer.set_reveal_child(check.is_active());
+                if check.is_active() {
+                    password_entry.grab_focus();
+                }
+            });
+        }
         let delete_after = gtk::CheckButton::builder()
             .label(gettext("Delete the archives after extracting"))
             .build();
@@ -579,7 +602,13 @@ impl SeptimaWindow {
             .orientation(gtk::Orientation::Vertical)
             .spacing(12)
             .build();
-        extra.append(&password_entry);
+        // Its own unspaced box, so the hidden revealer adds no gap.
+        let password_box = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .build();
+        password_box.append(&protected);
+        password_box.append(&password_revealer);
+        extra.append(&password_box);
         extra.append(&delete_after);
 
         let body = if skipped > 0 {
@@ -607,10 +636,22 @@ impl SeptimaWindow {
                 return;
             }
             let pw = password_entry.text().to_string();
-            let password = (!pw.is_empty()).then_some(pw);
-            for archive in &archives {
-                let dest = sibling_extract_dir(archive);
-                window.start_extract(archive.clone(), dest, password.clone(), delete_after.is_active());
+            let password = (protected.is_active() && !pw.is_empty()).then_some(pw);
+            let run = (archives.len() >= 2).then(|| {
+                Rc::new(RefCell::new(
+                    BatchRun::new(BatchKind::Extract, archives.len())
+                        .with_delete_after(delete_after.is_active()),
+                ))
+            });
+            let dests = sibling_extract_dirs(archives.iter().map(PathBuf::as_path));
+            for (archive, dest) in archives.iter().zip(dests) {
+                window.start_extract(
+                    archive.clone(),
+                    dest,
+                    password.clone(),
+                    delete_after.is_active(),
+                    run.clone(),
+                );
             }
         });
         dialog.present(Some(self));
@@ -650,7 +691,7 @@ impl SeptimaWindow {
                     // Dev/test hook: extract without the folder portal.
                     if crate::config::PROFILE == "Devel" {
                         if let Some(dir) = std::env::var_os("SEPTIMA_AUTO_EXTRACT") {
-                            window.start_extract(archive_path, PathBuf::from(dir), password, false);
+                            window.start_extract(archive_path, PathBuf::from(dir), password, false, None);
                         }
                     }
                 }
@@ -718,13 +759,24 @@ impl SeptimaWindow {
                     dest.clone(),
                     password.clone(),
                     delete_after.is_active(),
+                    None,
                 );
             }
         });
         dialog.present(Some(self));
     }
 
-    fn start_extract(&self, archive: PathBuf, dest: PathBuf, password: Option<String>, delete_after: bool) {
+    /// Extract `archive` into `dest`. With `batch`, this job reports its
+    /// outcome to the run instead of speaking for itself: no toast, no error
+    /// dialog, and an encrypted archive is held for the end-of-round prompt.
+    fn start_extract(
+        &self,
+        archive: PathBuf,
+        dest: PathBuf,
+        password: Option<String>,
+        delete_after: bool,
+        batch: Option<Rc<RefCell<BatchRun>>>,
+    ) {
         let name = file_name(&archive);
         let row = SeptimaProgressRow::new(&format!("{}: {name}", gettext("Extracting")));
         let imp = self.imp();
@@ -754,31 +806,69 @@ impl SeptimaWindow {
 
         let window = self.clone();
         glib::spawn_future_local(async move {
+            let mut settled = false;
             while let Ok(message) = receiver.recv().await {
                 match message {
                     Job::Progress(p) => row.set_progress(p.percent, p.current_file.as_deref()),
                     Job::Done(result) => {
                         window.finish_job(&row);
-                        match result {
-                            Ok(()) => {
-                                window.show_extracted_toast(&dest);
+                        match (result, &batch) {
+                            (Ok(()), _) => {
+                                if batch.is_none() {
+                                    window.show_folder_toast(
+                                        &format!("{} {}", gettext("Extracted to"), dest.display()),
+                                        Some(&dest),
+                                    );
+                                }
+                                let done = Outcome::Done { output: dest.clone() };
                                 if delete_after {
+                                    // A batch job is recorded only once the
+                                    // delete has settled, so its warning makes
+                                    // the report.
                                     let archive = archive.clone();
                                     let window = window.clone();
+                                    let batch = batch.clone();
                                     glib::spawn_future_local(async move {
-                                        let outcome =
-                                            gio::spawn_blocking(move || septima_engine::delete_archive(&archive))
-                                                .await;
-                                        if !matches!(outcome, Ok(Ok(()))) {
-                                            window.show_toast(&gettext(
+                                        let delete_path = archive.clone();
+                                        let outcome = gio::spawn_blocking(move || {
+                                            septima_engine::delete_archive(&delete_path)
+                                        })
+                                        .await;
+                                        let deleted = matches!(outcome, Ok(Ok(())));
+                                        match &batch {
+                                            Some(run) => {
+                                                if !deleted {
+                                                    run.borrow_mut().warn(
+                                                        &archive,
+                                                        &gettext("extracted, but the archive couldn't be deleted"),
+                                                    );
+                                                }
+                                                window.record_batch(run, &archive, done);
+                                            }
+                                            None if !deleted => window.show_toast(&gettext(
                                                 "Extracted, but the archive couldn't be deleted.",
-                                            ));
+                                            )),
+                                            None => {}
                                         }
                                     });
+                                } else if let Some(run) = &batch {
+                                    window.record_batch(run, &archive, done);
                                 }
                             }
-                            Err(EngineError::Cancelled) => {} // silent
-                            Err(EngineError::PasswordRequired) => {
+                            (Err(EngineError::Cancelled), None) => {} // silent
+                            (Err(EngineError::Cancelled), Some(run)) => {
+                                window.record_batch(run, &archive, Outcome::Cancelled);
+                            }
+                            // Held for the one end-of-round prompt.
+                            (Err(EngineError::PasswordRequired), Some(run)) => {
+                                let outcome = Outcome::NeedsPassword { dest: dest.clone() };
+                                window.record_batch(run, &archive, outcome);
+                            }
+                            (Err(err), Some(run)) => {
+                                let outcome = Outcome::Failed { message: err.to_string() };
+                                window.record_batch(run, &archive, outcome);
+                            }
+                            (Err(EngineError::PasswordRequired), None) => {
                                 let retry = window.clone();
                                 let (archive, dest) = (archive.clone(), dest.clone());
                                 let body = gettext("“{}” is encrypted. Enter its password to extract.")
@@ -789,14 +879,19 @@ impl SeptimaWindow {
                                         dest.clone(),
                                         Some(pw),
                                         delete_after,
+                                        None,
                                     )
                                 });
                             }
-                            Err(err) => window.show_error(&err.to_string()),
+                            (Err(err), None) => window.show_error(&err.to_string()),
                         }
+                        settled = true;
                         break;
                     }
                 }
+            }
+            if !settled {
+                window.worker_died(&row, &archive, batch.as_ref());
             }
         });
     }
@@ -848,8 +943,96 @@ impl SeptimaWindow {
         }
     }
 
+    /// A job's worker thread ended without reporting (a panic in the
+    /// engine). Clear its row, and in a batch count it as failed — otherwise
+    /// the round never ends and the rest of the batch never reports.
+    fn worker_died(&self, row: &SeptimaProgressRow, archive: &Path, batch: Option<&Rc<RefCell<BatchRun>>>) {
+        self.finish_job(row);
+        let message = gettext("the job stopped unexpectedly");
+        match batch {
+            Some(run) => self.record_batch(run, archive, Outcome::Failed { message }),
+            None => self.show_error(&format!("{}: {message}", file_name(archive))),
+        }
+    }
+
+    /// Record one batch job's outcome; the round's last one ends it.
+    fn record_batch(&self, run: &Rc<RefCell<BatchRun>>, archive: &Path, outcome: Outcome) {
+        let last = run.borrow_mut().record(archive, outcome);
+        if last {
+            self.finish_batch(run.clone());
+        }
+    }
+
+    /// End of a batch round. Encrypted leftovers get one password prompt —
+    /// Unlock retries them all with it as a new round of the same run, Cancel
+    /// skips them — and only once none are pending does the run speak: one
+    /// summary toast, plus one dialog if anything failed or warned.
+    fn finish_batch(&self, run: Rc<RefCell<BatchRun>>) {
+        debug_assert!(run.borrow().is_finished());
+        let pending = run.borrow().pending_passwords();
+        if !pending.is_empty() {
+            let names: Vec<String> = pending.iter().map(|p| file_name(&p.archive)).collect();
+            let body = format!("{}\n\n{}", n_encrypted_body(names.len()), name_list(&names, 3));
+            let window = self.clone();
+            let unlock_run = run.clone();
+            let cancel_window = self.clone();
+            self.prompt_password_or_cancel(
+                &body,
+                move |pw| {
+                    let retry = unlock_run.borrow_mut().begin_password_retry();
+                    let delete_after = unlock_run.borrow().delete_after();
+                    if retry.is_empty() {
+                        window.finish_batch(unlock_run.clone());
+                        return;
+                    }
+                    for job in retry {
+                        window.start_extract(
+                            job.archive,
+                            job.dest,
+                            Some(pw.clone()),
+                            delete_after,
+                            Some(unlock_run.clone()),
+                        );
+                    }
+                },
+                move || {
+                    run.borrow_mut().skip_pending();
+                    cancel_window.finish_batch(run.clone());
+                },
+            );
+            return;
+        }
+
+        let (summary, folder, report, failed) = {
+            let run = run.borrow();
+            (run.summary(), run.common_folder(), run.report(), run.has_failures())
+        };
+        if let Some(summary) = summary {
+            self.show_folder_toast(&summary, folder.as_deref());
+        }
+        if let Some(report) = report {
+            // Warnings alone (a checksum file, a delete) aren't failures.
+            let heading = if failed {
+                gettext("Some Archives Failed")
+            } else {
+                gettext("Some Archives Had Problems")
+            };
+            self.show_alert(&heading, &report);
+        }
+    }
+
     /// Ask for a password; `on_password` runs with the entered text on Unlock.
     fn prompt_password<F: Fn(String) + 'static>(&self, body: &str, on_password: F) {
+        self.prompt_password_or_cancel(body, on_password, || {});
+    }
+
+    /// `prompt_password` with a cancel path: `on_cancel` runs on Cancel, and
+    /// on Escape or closing the dialog, which report as Cancel too.
+    fn prompt_password_or_cancel<F, C>(&self, body: &str, on_password: F, on_cancel: C)
+    where
+        F: Fn(String) + 'static,
+        C: Fn() + 'static,
+    {
         let dialog = adw::AlertDialog::new(Some(&gettext("Password Required")), Some(body));
         dialog.add_response("cancel", &gettext("Cancel"));
         dialog.add_response("unlock", &gettext("Unlock"));
@@ -866,6 +1049,8 @@ impl SeptimaWindow {
         dialog.connect_response(None, move |_, response| {
             if response == "unlock" {
                 on_password(entry.text().to_string());
+            } else {
+                on_cancel();
             }
         });
         dialog.present(Some(self));
@@ -908,7 +1093,7 @@ impl SeptimaWindow {
                 Some(output) => {
                     let write_checksum = settings.write_checksum;
                     let inputs = settings.inputs.clone();
-                    window.start_compress(compression_request(&settings, inputs, output), write_checksum, None)
+                    window.start_compress(compression_request(&settings, inputs, output), write_checksum, None, None)
                 }
                 None => window.show_toast(&gettext("That location can't be written to directly.")),
             },
@@ -955,13 +1140,21 @@ impl SeptimaWindow {
                 window.choose_batch_destination(settings.clone(), items.clone(), ext.clone());
                 return;
             }
-            for item in &items {
-                let Some(stem) = item.file_stem() else {
-                    continue;
-                };
-                let output = item.with_file_name(format!("{}.{ext}", stem.to_string_lossy()));
-                let req = compression_request(&settings, vec![item.clone()], output);
-                window.start_compress(req, settings.write_checksum, None);
+            // Numbered like the picked-folder path: `a.txt` + `a.pdf` would
+            // otherwise both write `a.7z`, two 7zz processes on one file.
+            let mut taken = std::collections::HashSet::new();
+            let reqs: Vec<CompressionRequest> = items
+                .iter()
+                .filter_map(|item| {
+                    let stem = item.file_stem()?;
+                    let dir = item.parent()?;
+                    let output = unique_output(dir, &stem.to_string_lossy(), &ext, &mut taken);
+                    Some(compression_request(&settings, vec![item.clone()], output))
+                })
+                .collect();
+            let run = compress_run(reqs.len());
+            for req in reqs {
+                window.start_compress(req, settings.write_checksum, None, run.clone());
             }
         });
         dialog.present(Some(self));
@@ -984,14 +1177,18 @@ impl SeptimaWindow {
                         window.start_batch_with_manifest(settings, items, ext, dir);
                     } else {
                         let mut taken = std::collections::HashSet::new();
-                        for item in &items {
-                            let Some(stem) = item.file_stem() else {
-                                continue;
-                            };
-                            let output =
-                                unique_output(&dir, &stem.to_string_lossy(), &ext, &mut taken);
-                            let req = compression_request(&settings, vec![item.clone()], output);
-                            window.start_compress(req, settings.write_checksum, None);
+                        let reqs: Vec<CompressionRequest> = items
+                            .iter()
+                            .filter_map(|item| {
+                                let stem = item.file_stem()?;
+                                let output =
+                                    unique_output(&dir, &stem.to_string_lossy(), &ext, &mut taken);
+                                Some(compression_request(&settings, vec![item.clone()], output))
+                            })
+                            .collect();
+                        let run = compress_run(reqs.len());
+                        for req in reqs {
+                            window.start_compress(req, settings.write_checksum, None, run.clone());
                         }
                     }
                 }
@@ -1105,10 +1302,16 @@ impl SeptimaWindow {
                 }
             });
 
+            let run = compress_run(jobs.len());
             for (item, output, password) in jobs {
                 let mut req = compression_request(&settings, vec![item], output);
                 req.password = Some(password);
-                window.start_compress(req, settings.write_checksum, Some((state.clone(), nudge.clone())));
+                window.start_compress(
+                    req,
+                    settings.write_checksum,
+                    Some((state.clone(), nudge.clone())),
+                    run.clone(),
+                );
             }
         });
     }
@@ -1118,6 +1321,7 @@ impl SeptimaWindow {
         req: CompressionRequest,
         write_checksum: bool,
         manifest: Option<(Rc<BatchManifest>, async_channel::Sender<()>)>,
+        batch: Option<Rc<RefCell<BatchRun>>>,
     ) {
         let output = req.output.clone();
         let row = SeptimaProgressRow::new(&format!("{}: {}", gettext("Creating"), file_name(&output)));
@@ -1148,6 +1352,7 @@ impl SeptimaWindow {
 
         let window = self.clone();
         glib::spawn_future_local(async move {
+            let mut settled = false;
             while let Ok(message) = receiver.recv().await {
                 match message {
                     Job::Progress(p) => row.set_progress(p.percent, p.current_file.as_deref()),
@@ -1155,11 +1360,13 @@ impl SeptimaWindow {
                         window.finish_job(&row);
                         match result {
                             Ok(()) => {
-                                window.show_toast(&format!(
-                                    "{} {}",
-                                    gettext("Created"),
-                                    output.display()
-                                ));
+                                if batch.is_none() {
+                                    window.show_toast(&format!(
+                                        "{} {}",
+                                        gettext("Created"),
+                                        output.display()
+                                    ));
+                                }
                                 // Batch-with-manifest: record this archive's
                                 // sha256 and rewrite the passwords file. The
                                 // password itself was persisted before the job
@@ -1201,34 +1408,66 @@ impl SeptimaWindow {
                                         let _ = nudge.try_send(());
                                     });
                                 }
+                                let done = Outcome::Done { output: output.clone() };
                                 if write_checksum {
+                                    // A batch job is recorded only once the
+                                    // checksum file has settled: success is
+                                    // silent, failure a warning in the report.
                                     let output = output.clone();
                                     let window = window.clone();
                                     let sevenzip = sevenzip_for_checksum.clone();
+                                    let batch = batch.clone();
                                     glib::spawn_future_local(async move {
+                                        let checksum_output = output.clone();
                                         let outcome = gio::spawn_blocking(move || {
-                                            septima_engine::write_checksum_file(&sevenzip, &output)
+                                            septima_engine::write_checksum_file(&sevenzip, &checksum_output)
                                         })
                                         .await;
-                                        match outcome {
-                                            Ok(Ok(checksum_path)) => window.show_toast(&format!(
+                                        match (outcome, &batch) {
+                                            (Ok(Ok(_)), Some(run)) => {
+                                                window.record_batch(run, &output, done);
+                                            }
+                                            (_, Some(run)) => {
+                                                run.borrow_mut().warn(
+                                                    &output,
+                                                    &gettext("created, but the checksum file couldn't be written"),
+                                                );
+                                                window.record_batch(run, &output, done);
+                                            }
+                                            (Ok(Ok(checksum_path)), None) => window.show_toast(&format!(
                                                 "{} {}",
                                                 gettext("Wrote"),
                                                 file_name(&checksum_path)
                                             )),
-                                            _ => window.show_toast(&gettext(
+                                            (_, None) => window.show_toast(&gettext(
                                                 "Created, but the checksum file couldn't be written.",
                                             )),
                                         }
                                     });
+                                } else if let Some(run) = &batch {
+                                    window.record_batch(run, &output, done);
                                 }
                             }
-                            Err(EngineError::Cancelled) => {}
-                            Err(err) => window.show_error(&err.to_string()),
+                            Err(EngineError::Cancelled) => {
+                                if let Some(run) = &batch {
+                                    window.record_batch(run, &output, Outcome::Cancelled);
+                                }
+                            }
+                            Err(err) => match &batch {
+                                Some(run) => {
+                                    let outcome = Outcome::Failed { message: err.to_string() };
+                                    window.record_batch(run, &output, outcome);
+                                }
+                                None => window.show_error(&err.to_string()),
+                            },
                         }
+                        settled = true;
                         break;
                     }
                 }
+            }
+            if !settled {
+                window.worker_died(&row, &output, batch.as_ref());
             }
         });
     }
@@ -1455,11 +1694,16 @@ impl SeptimaWindow {
         self.imp().toast_overlay.add_toast(adw::Toast::new(message));
     }
 
-    /// The post-extract toast: destination path, plus a "Show in Files" button
-    /// that opens `dest` in the file manager via the OpenURI portal.
-    fn show_extracted_toast(&self, dest: &std::path::Path) {
+    /// A toast with `title`, plus — when there's a `folder` — a "Show in
+    /// Files" button that opens it in the file manager via the OpenURI
+    /// portal. Used after an extract and for a batch's summary.
+    fn show_folder_toast(&self, title: &str, folder: Option<&Path>) {
+        let Some(dest) = folder else {
+            self.show_toast(title);
+            return;
+        };
         let toast = adw::Toast::builder()
-            .title(format!("{} {}", gettext("Extracted to"), dest.display()))
+            .title(title)
             .button_label(gettext("Show in Files"))
             .build();
 
@@ -1470,7 +1714,7 @@ impl SeptimaWindow {
             let window_for_err = window.clone();
             launcher.launch(Some(&window), gio::Cancellable::NONE, move |result| {
                 if let Err(err) = result {
-                    window_for_err.show_toast(&err.message());
+                    window_for_err.show_toast(err.message());
                 }
             });
         });
@@ -1480,8 +1724,12 @@ impl SeptimaWindow {
 
     /// Show a full (possibly long) error in a dialog — toasts truncate.
     fn show_error(&self, message: &str) {
-        let dialog =
-            adw::AlertDialog::new(Some(&gettext("Something Went Wrong")), Some(message.trim()));
+        self.show_alert(&gettext("Something Went Wrong"), message);
+    }
+
+    /// A one-button dialog with `heading` and a (possibly long) `message`.
+    fn show_alert(&self, heading: &str, message: &str) {
+        let dialog = adw::AlertDialog::new(Some(heading), Some(message.trim()));
         dialog.add_response("close", &gettext("Close"));
         dialog.set_default_response(Some("close"));
         dialog.present(Some(self));
@@ -1614,6 +1862,37 @@ fn n_skipped(n: usize) -> String {
     .replacen("{}", &n.to_string(), 1)
 }
 
+/// Body of the end-of-round prompt for a batch's encrypted archives.
+fn n_encrypted_body(n: usize) -> String {
+    gettextrs::ngettext(
+        "{} archive is encrypted. Enter its password to extract it.",
+        "{} archives are encrypted. Enter their password to extract them.",
+        n as u32,
+    )
+    .replacen("{}", &n.to_string(), 1)
+}
+
+/// Up to `shown` names, comma-separated, then "and N more" for the rest —
+/// enough to recognise the batch without the dialog growing a scrollbar.
+fn name_list(names: &[String], shown: usize) -> String {
+    let head = names.iter().take(shown).cloned().collect::<Vec<_>>().join(", ");
+    let rest = names.len().saturating_sub(shown);
+    if rest == 0 {
+        return head;
+    }
+    // Named placeholders, count first: a file name may itself contain "{…}",
+    // and translators may need the two in the other order.
+    gettextrs::ngettext("{names} and {count} more", "{names} and {count} more", rest as u32)
+        .replacen("{count}", &rest.to_string(), 1)
+        .replacen("{names}", &head, 1)
+}
+
+/// The shared tally for a batch compress of `jobs` archives — `None` for a
+/// single one, which keeps its own toast and error dialog.
+fn compress_run(jobs: usize) -> Option<Rc<RefCell<BatchRun>>> {
+    (jobs >= 2).then(|| Rc::new(RefCell::new(BatchRun::new(BatchKind::Compress, jobs))))
+}
+
 /// Where dragged-out entries are staged before the receiver copies them.
 /// Inside the Flatpak, `XDG_CACHE_HOME` is `~/.var/app/<id>/cache` — the same
 /// path the host sees — so even a plain-URI receiver can read the files.
@@ -1631,13 +1910,15 @@ fn under_doc_portal(path: &Path) -> bool {
 
 /// A non-colliding output path in `dir`: `photos.7z`, then `photos_2.7z`, …
 /// Collisions happen when same-named items are staged from different folders,
-/// or the destination already holds an archive by that name (which `7zz a`
-/// would silently *update* rather than replace).
+/// when same-stem items share one (`a.txt` + `a.pdf`), or when the destination
+/// already holds an archive by that name (which `7zz a` would silently
+/// *update* rather than replace). `taken` holds full paths, so one set can
+/// serve a batch whose outputs land in several folders.
 fn unique_output(
     dir: &Path,
     stem: &str,
     ext: &str,
-    taken: &mut std::collections::HashSet<String>,
+    taken: &mut std::collections::HashSet<PathBuf>,
 ) -> PathBuf {
     let mut n = 1usize;
     loop {
@@ -1647,8 +1928,8 @@ fn unique_output(
             format!("{stem}_{n}.{ext}")
         };
         let candidate = dir.join(&name);
-        if !taken.contains(&name) && !candidate.exists() {
-            taken.insert(name);
+        if !taken.contains(&candidate) && !candidate.exists() {
+            taken.insert(candidate.clone());
             return candidate;
         }
         n += 1;
@@ -1757,9 +2038,31 @@ fn n_archives_create_pick_body(n: usize, with_manifest: bool) -> String {
     text.replacen("{}", &n.to_string(), 1)
 }
 
+/// Sibling extract folders for a run of archives, numbered within the run
+/// (`photos/`, `photos_2/`, …) so `photos.zip` and `photos.7z` don't land in
+/// one folder and overwrite each other. Only in-run clashes are numbered: an
+/// existing `photos/` is still extracted into, as a single archive would be.
+fn sibling_extract_dirs<'a>(archives: impl IntoIterator<Item = &'a Path>) -> Vec<PathBuf> {
+    let mut taken = std::collections::HashSet::new();
+    archives
+        .into_iter()
+        .map(|archive| {
+            let mut n = 1;
+            loop {
+                let dest = sibling_extract_dir_numbered(archive, n);
+                if taken.insert(dest.clone()) {
+                    return dest;
+                }
+                n += 1;
+            }
+        })
+        .collect()
+}
+
 /// Where a batch-extracted archive's contents land: a new folder next to it,
-/// named after the archive (`photos.zip` -> `photos/`, `data.tar.gz` -> `data/`).
-fn sibling_extract_dir(archive: &Path) -> PathBuf {
+/// named after the archive (`photos.zip` -> `photos/`, `data.tar.gz` -> `data/`),
+/// with `_n` appended for the `n`th clash (`n` = 1 is the plain name).
+fn sibling_extract_dir_numbered(archive: &Path, n: usize) -> PathBuf {
     let stem = archive
         .file_stem()
         .map(PathBuf::from)
@@ -1768,12 +2071,17 @@ fn sibling_extract_dir(archive: &Path) -> PathBuf {
         Some(ext) if ext.eq_ignore_ascii_case("tar") => stem.file_stem().map(PathBuf::from).unwrap_or(stem),
         _ => stem,
     };
-    archive.with_file_name(stem)
+    if n == 1 {
+        archive.with_file_name(stem)
+    } else {
+        archive.with_file_name(format!("{}_{n}", stem.to_string_lossy()))
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{archive_filename, unique_output};
+    use super::{archive_filename, name_list, sibling_extract_dirs, unique_output};
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn unique_output_numbers_collisions() {
@@ -1787,6 +2095,38 @@ mod tests {
         // A file already on disk is a collision too — 7zz would update it.
         assert_eq!(unique_output(&dir, "busy", "7z", &mut taken), dir.join("busy_2.7z"));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn unique_output_only_numbers_clashes_in_the_same_folder() {
+        let mut taken = std::collections::HashSet::new();
+        let (a, b) = (Path::new("/nonexistent-a"), Path::new("/nonexistent-b"));
+        assert_eq!(unique_output(a, "notes", "7z", &mut taken), a.join("notes.7z"));
+        assert_eq!(unique_output(b, "notes", "7z", &mut taken), b.join("notes.7z"));
+        assert_eq!(unique_output(a, "notes", "7z", &mut taken), a.join("notes_2.7z"));
+    }
+
+    #[test]
+    fn sibling_extract_dirs_number_same_stem_archives() {
+        let archives = ["/d/photos.zip", "/d/photos.7z", "/d/data.tar.gz", "/d/data.zip", "/e/photos.zip"]
+            .map(PathBuf::from);
+        let dests = sibling_extract_dirs(archives.iter().map(PathBuf::as_path));
+        assert_eq!(dests, ["/d/photos", "/d/photos_2", "/d/data", "/d/data_2", "/e/photos"].map(PathBuf::from));
+    }
+
+    #[test]
+    fn name_list_shows_a_few_then_counts_the_rest() {
+        let names: Vec<String> = ["a.zip", "b.7z", "c.zip", "d.zip", "e.zip"].map(String::from).into();
+        assert_eq!(name_list(&names[..1], 3), "a.zip");
+        assert_eq!(name_list(&names[..3], 3), "a.zip, b.7z, c.zip");
+        assert_eq!(name_list(&names, 3), "a.zip, b.7z, c.zip and 2 more");
+        assert_eq!(name_list(&[], 3), "");
+    }
+
+    #[test]
+    fn name_list_leaves_braces_in_file_names_alone() {
+        let names: Vec<String> = ["a{}.zip", "b.zip", "c.zip", "d.zip"].map(String::from).into();
+        assert_eq!(name_list(&names, 3), "a{}.zip, b.zip, c.zip and 1 more");
     }
 
     #[test]

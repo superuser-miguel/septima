@@ -474,6 +474,13 @@ happens wherever the secret key lives, with the user's normal pinentry.
 
 ### Bug/UX: batch completion toasts pile up (noted 2026-08-16)
 
+> **Fixed in 0.5.1 (2026-09-28)** along the lines below: `batch_run.rs` tallies
+> each ≥ 2-archive run; one summary toast (with Show in Files), one dialog
+> for failures and warnings, and — for batch extract — one end-of-round
+> password prompt instead of a modal per encrypted archive. Same release:
+> same-name outputs in one run are numbered (`photos/`, `photos_2/`;
+> `report.7z`, `report_2.7z`). The record below is kept as the design note.
+
 **Observed by the user during a large batch encrypt.** Every finished archive
 raises its own toast (`window.rs`, the `Job::Done(Ok(()))` arm: *"Created
 &lt;path&gt;"*). `AdwToastOverlay` shows toasts **one at a time**, several
