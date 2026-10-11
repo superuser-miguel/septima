@@ -82,6 +82,7 @@ mod imp {
         pub archive_path: RefCell<Option<PathBuf>>,
         /// Password the current archive was opened with (reused for extraction).
         pub archive_password: RefCell<Option<String>>,
+        pub archive_add_args: RefCell<Vec<String>>,
     }
 
     #[gtk::template_callbacks]
@@ -143,19 +144,23 @@ mod imp {
             // batch-extract them instead (see open_or_batch_extract).
             let drop = gtk::DropTarget::new(
                 gtk::gdk::FileList::static_type(),
-                gtk::gdk::DragAction::COPY,
+                gtk::gdk::DragAction::COPY | gtk::gdk::DragAction::MOVE,
             );
             drop.connect_drop(glib::clone!(
                 #[weak]
                 obj,
                 #[upgrade_or]
                 false,
-                move |_, value, _, _| {
+                move |target, value, _, _| {
                     if let Ok(list) = value.get::<gtk::gdk::FileList>() {
                         let files = list.files();
                         if !files.is_empty() {
                             obj.open_or_batch_extract(files);
-                            return true;
+                            // MOVE-only sources delete their originals once a drop is accepted; we only read them.
+                            let move_only = target
+                                .current_drop()
+                                .is_some_and(|d| !d.actions().contains(gtk::gdk::DragAction::COPY));
+                            return !move_only;
                         }
                     }
                     false
@@ -229,6 +234,10 @@ impl SeptimaWindow {
     /// batch-extract flow instead — one at a time isn't what someone picking
     /// several archives at once wants.
     fn open_or_batch_extract(&self, mut files: Vec<gio::File>) {
+        if self.imp().archive_path.borrow().is_some() {
+            self.add_to_open_archive(files);
+            return;
+        }
         match files.len() {
             0 => {}
             1 => self.open_file(files.remove(0)),
@@ -681,6 +690,7 @@ impl SeptimaWindow {
                     imp.extract_button.set_sensitive(true);
                     imp.archive_path.replace(Some(archive_path.clone()));
                     imp.archive_password.replace(password.clone());
+                    imp.archive_add_args.replace(listing.add_method_args());
                     imp.window_title.set_title(&file_name(&archive_path));
                     imp.window_title.set_subtitle(&format!(
                         "{} · {}",
@@ -933,6 +943,55 @@ impl SeptimaWindow {
                 None
             }
         }
+    }
+
+    fn add_to_open_archive(&self, files: Vec<gio::File>) {
+        let imp = self.imp();
+        let Some(archive) = imp.archive_path.borrow().clone() else {
+            return;
+        };
+        let password = imp.archive_password.borrow().clone();
+        let method_args = imp.archive_add_args.borrow().clone();
+        let inputs: Vec<PathBuf> = files.iter().filter_map(|f| f.path()).collect();
+        if inputs.is_empty() {
+            self.show_toast(&gettext("Those locations can't be read directly."));
+            return;
+        }
+
+        let row = SeptimaProgressRow::new(&format!("{} {}", gettext("Adding to"), file_name(&archive)));
+        imp.jobs_box.append(&row);
+        imp.jobs_revealer.set_reveal_child(true);
+        let cancel = septima_engine::new_cancel_token();
+        let cancel_ui = cancel.clone();
+        row.connect_cancel(move || cancel_ui.store(true, Ordering::Relaxed));
+
+        let window = self.clone();
+        let sevenzip = septima_engine::sevenzip_path();
+        glib::spawn_future_local(async move {
+            let (archive_job, password_job, count) = (archive.clone(), password.clone(), inputs.len());
+            let result = gio::spawn_blocking(move || {
+                septima_engine::run_add_inputs(
+                    &sevenzip,
+                    &archive_job,
+                    &inputs,
+                    &method_args,
+                    password_job.as_deref(),
+                    &cancel,
+                    |_| {},
+                )
+            })
+            .await;
+            window.finish_job(&row);
+            match result {
+                Ok(Ok(())) => {
+                    window.show_toast(&n_added(count));
+                    window.load_archive(archive, password);
+                }
+                Ok(Err(EngineError::Cancelled)) => window.load_archive(archive, password),
+                Ok(Err(err)) => window.show_error(&err.to_string()),
+                Err(_) => window.show_toast(&gettext("The add task failed.")),
+            }
+        });
     }
 
     fn finish_job(&self, row: &SeptimaProgressRow) {
@@ -1838,6 +1897,10 @@ fn n_files(n: usize) -> String {
 fn n_entries_body(n: usize) -> String {
     gettextrs::ngettext("Delete {} entry from this archive?", "Delete {} entries from this archive?", n as u32)
         .replacen("{}", &n.to_string(), 1)
+}
+
+fn n_added(n: usize) -> String {
+    gettextrs::ngettext("{} item added.", "{} items added.", n as u32).replacen("{}", &n.to_string(), 1)
 }
 
 fn n_deleted(n: usize) -> String {

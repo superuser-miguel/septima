@@ -41,6 +41,27 @@ impl ArchiveListing {
     pub fn total_size(&self) -> u64 {
         self.entries.iter().map(|e| e.size).sum()
     }
+
+    pub fn add_method_args(&self) -> Vec<String> {
+        let mut counts: Vec<(&str, usize)> = Vec::new();
+        for method in self.entries.iter().filter(|e| !e.is_dir).filter_map(|e| e.method.as_deref()) {
+            let name = method.split([':', ' ']).next().unwrap_or(method);
+            match counts.iter_mut().find(|(n, _)| *n == name) {
+                Some((_, c)) => *c += 1,
+                None => counts.push((name, 1)),
+            }
+        }
+        let Some((top, _)) = counts.into_iter().max_by_key(|&(_, c)| c) else {
+            return Vec::new();
+        };
+        match top {
+            "Store" | "Copy" => vec!["-mx=0".into()],
+            "Deflate64" | "BZip2" | "LZMA" | "PPMd" | "Zstd" if self.format.as_deref() == Some("zip") => {
+                vec![format!("-mm={top}")]
+            }
+            _ => Vec::new(),
+        }
+    }
 }
 
 /// Parse the technical listing produced by `7z l -slt`.
@@ -154,6 +175,12 @@ mod tests {
         assert_eq!(bin.method.as_deref(), Some("LZMA2:6k"));
         assert!(!bin.encrypted);
         assert!(bin.modified.is_some());
+    }
+
+    #[test]
+    fn add_method_follows_the_existing_entries() {
+        assert_eq!(parse_listing(LIST_ZIP).add_method_args(), ["-mx=0"]);
+        assert!(parse_listing(LIST_7Z).add_method_args().is_empty());
     }
 
     #[test]

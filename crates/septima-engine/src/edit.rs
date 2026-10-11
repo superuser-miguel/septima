@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::error::EngineError;
@@ -24,6 +24,30 @@ pub fn run_test(
     let child = cmd
         .arg("--")
         .arg(archive)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(EngineError::Spawn)?;
+    supervise(child, cancel, on_progress)
+}
+
+pub fn run_add_inputs(
+    sevenzip: &Path,
+    archive: &Path,
+    inputs: &[PathBuf],
+    method_args: &[String],
+    password: Option<&str>,
+    cancel: &CancelToken,
+    on_progress: impl FnMut(&ExtractProgress),
+) -> Result<(), EngineError> {
+    let mut cmd = Command::new(sevenzip);
+    cmd.arg("a").arg("-bsp1").arg("-bb1").arg("-y").args(method_args);
+    if let Some(password) = password {
+        cmd.arg(format!("-p{password}"));
+    }
+    cmd.arg("--").arg(archive).args(inputs);
+    let child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
