@@ -10,6 +10,7 @@ use crate::entry_object::EntryObject;
 
 type DeleteCallback = Box<dyn Fn(Vec<String>)>;
 type RenameCallback = Box<dyn Fn(String)>;
+type OpenCallback = Box<dyn Fn(ArchiveEntry)>;
 /// Given the selected in-archive paths, stage them as real files (extract to a
 /// scratch dir) and return those paths — or `None` to abort the drag.
 type DragExtractCallback = Box<dyn Fn(Vec<String>) -> Option<Vec<std::path::PathBuf>>>;
@@ -38,6 +39,7 @@ mod imp {
         pub model: OnceCell<gio::ListStore>,
         pub on_delete: RefCell<Option<DeleteCallback>>,
         pub on_rename: RefCell<Option<RenameCallback>>,
+        pub on_open: RefCell<Option<OpenCallback>>,
         pub on_drag_extract: RefCell<Option<DragExtractCallback>>,
     }
 
@@ -80,6 +82,17 @@ mod imp {
             view.append_column(&text_column(&gettext("Method"), false, |e| e.method.clone().unwrap_or_default()));
             view.append_column(&text_column(&gettext("Modified"), false, short_time));
             view.append_column(&text_column(&gettext("CRC"), false, |e| e.crc.clone().unwrap_or_default()));
+
+            self.column_view.connect_activate(glib::clone!(
+                #[weak(rename_to = imp)]
+                self,
+                move |view, position| {
+                    let entry = view.model().and_then(|m| m.item(position)).and_downcast::<EntryObject>();
+                    if let (Some(entry), Some(cb)) = (entry, imp.on_open.borrow().as_ref()) {
+                        cb(entry.entry().clone());
+                    }
+                }
+            ));
 
             // Drag entries out of the archive: the window-side handler stages
             // the selection as real files (an on-the-spot extract) and the
@@ -210,6 +223,10 @@ impl SeptimaArchiveView {
     /// (single-entry) selection. Called with the entry's in-archive path.
     pub fn connect_rename_requested<F: Fn(String) + 'static>(&self, f: F) {
         self.imp().on_rename.replace(Some(Box::new(f)));
+    }
+
+    pub fn connect_open_requested<F: Fn(ArchiveEntry) + 'static>(&self, f: F) {
+        self.imp().on_open.replace(Some(Box::new(f)));
     }
 
     /// Register the drag-out handler: given the selected in-archive paths, it

@@ -8,7 +8,7 @@ use adw::subclass::prelude::*;
 use gtk::{gio, glib, CompositeTemplate, TemplateChild};
 
 use septima_engine::{
-    CompressionRequest, EngineError, ExtractProgress, ExtractRequest, Manifest, ManifestEntry,
+    ArchiveEntry, CompressionRequest, EngineError, ExtractProgress, ExtractRequest, Manifest, ManifestEntry,
     OverwriteMode,
 };
 
@@ -172,6 +172,11 @@ mod imp {
                 #[weak]
                 obj,
                 move |path| obj.rename_entry(path)
+            ));
+            self.archive_view.connect_open_requested(glib::clone!(
+                #[weak]
+                obj,
+                move |entry| obj.open_entry(entry)
             ));
             self.archive_view.connect_drag_extract(glib::clone!(
                 #[weak]
@@ -933,6 +938,84 @@ impl SeptimaWindow {
                 None
             }
         }
+    }
+
+    fn open_entry(&self, entry: ArchiveEntry) {
+        if entry.is_dir {
+            return;
+        }
+        if !looks_executable(&entry) {
+            self.extract_and_open(entry.path);
+            return;
+        }
+        let dialog = adw::AlertDialog::new(
+            Some(&gettext("Open this file?")),
+            Some(&format!(
+                "{} {}",
+                file_name(Path::new(&entry.path)),
+                gettext("looks like a program or script. Only open it if you trust this archive.")
+            )),
+        );
+        dialog.add_response("cancel", &gettext("Cancel"));
+        dialog.add_response("open", &gettext("Open"));
+        dialog.set_response_appearance("open", adw::ResponseAppearance::Destructive);
+        dialog.set_default_response(Some("cancel"));
+        let window = self.clone();
+        dialog.connect_response(None, move |_, response| {
+            if response == "open" {
+                window.extract_and_open(entry.path.clone());
+            }
+        });
+        dialog.present(Some(self));
+    }
+
+    fn extract_and_open(&self, path: String) {
+        let imp = self.imp();
+        let Some(archive) = imp.archive_path.borrow().clone() else {
+            return;
+        };
+        let password = imp.archive_password.borrow().clone();
+        let dest = drag_staging_base().join(format!("open-{}", glib::monotonic_time()));
+        let target = dest.join(&path);
+
+        let row = SeptimaProgressRow::new(&format!("{} {}", gettext("Opening"), file_name(Path::new(&path))));
+        imp.jobs_box.append(&row);
+        imp.jobs_revealer.set_reveal_child(true);
+        let cancel = septima_engine::new_cancel_token();
+        let cancel_ui = cancel.clone();
+        row.connect_cancel(move || cancel_ui.store(true, Ordering::Relaxed));
+
+        let window = self.clone();
+        let sevenzip = septima_engine::sevenzip_path();
+        glib::spawn_future_local(async move {
+            let result = gio::spawn_blocking(move || {
+                std::fs::create_dir_all(&dest).map_err(EngineError::Io)?;
+                let mut req = ExtractRequest::new(archive, dest);
+                req.password = password;
+                req.entries = vec![path];
+                septima_engine::run_extract(&sevenzip, &req, &cancel, |_| {})
+            })
+            .await;
+            window.finish_job(&row);
+            match result {
+                Ok(Ok(())) if target.is_file() => {
+                    let parent = window.clone();
+                    gtk::FileLauncher::new(Some(&gio::File::for_path(&target))).launch(
+                        Some(&parent),
+                        gio::Cancellable::NONE,
+                        move |res| {
+                            if let Err(err) = res {
+                                window.show_toast(err.message());
+                            }
+                        },
+                    );
+                }
+                Ok(Ok(())) => window.show_toast(&gettext("That entry couldn't be extracted.")),
+                Ok(Err(EngineError::Cancelled)) => {}
+                Ok(Err(err)) => window.show_error(&err.to_string()),
+                Err(_) => window.show_toast(&gettext("The open task failed.")),
+            }
+        });
     }
 
     fn finish_job(&self, row: &SeptimaProgressRow) {
@@ -1900,6 +1983,22 @@ fn drag_staging_base() -> PathBuf {
     glib::user_cache_dir().join("septima-dnd")
 }
 
+fn looks_executable(entry: &ArchiveEntry) -> bool {
+    const EXTS: [&str; 12] = [
+        "exe", "bat", "cmd", "com", "msi", "scr", "ps1", "sh", "desktop", "appimage", "jar", "run",
+    ];
+    let ext = Path::new(&entry.path)
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    let owner_exec = entry
+        .attributes
+        .as_deref()
+        .and_then(|a| a.split_whitespace().last())
+        .is_some_and(|mode| mode.len() == 10 && matches!(mode.as_bytes()[3], b'x' | b's'));
+    owner_exec || EXTS.contains(&ext.as_str())
+}
+
 /// Whether `path` sits under the document portal's FUSE mount
 /// (`$XDG_RUNTIME_DIR/doc/…`). Writes to *siblings* of a granted item there
 /// land in the portal's private store, not in the real folder — so "save next
@@ -2080,8 +2179,22 @@ fn sibling_extract_dir_numbered(archive: &Path, n: usize) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{archive_filename, name_list, sibling_extract_dirs, unique_output};
+    use super::{archive_filename, looks_executable, name_list, sibling_extract_dirs, unique_output};
+    use septima_engine::ArchiveEntry;
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn executables_are_flagged_for_confirmation() {
+        let entry = |path: &str, attributes: Option<&str>| ArchiveEntry {
+            path: path.into(),
+            attributes: attributes.map(Into::into),
+            ..Default::default()
+        };
+        assert!(looks_executable(&entry("setup.EXE", None)));
+        assert!(looks_executable(&entry("run", Some("A -rwxr-xr-x"))));
+        assert!(!looks_executable(&entry("notes.txt", Some("A -rw-r--r--"))));
+        assert!(!looks_executable(&entry("notes.txt", None)));
+    }
 
     #[test]
     fn unique_output_numbers_collisions() {
