@@ -169,10 +169,10 @@ impl SeptimaArchiveView {
         ));
 
         let model = imp.model.get().unwrap();
-        model.remove_all();
-        for entry in &listing.entries {
-            model.append(&EntryObject::new(entry.clone()));
-        }
+        // One items-changed instead of one per row, which stalls on 100k+ entries.
+        let items: Vec<EntryObject> =
+            listing.entries.iter().map(|e| EntryObject::new(e.clone())).collect();
+        model.splice(0, model.n_items(), &items);
     }
 
     /// In-archive paths of the currently selected entries.

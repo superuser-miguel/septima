@@ -657,10 +657,28 @@ impl SeptimaWindow {
         dialog.present(Some(self));
     }
 
+    /// 7zz reports no progress while reading the directory, so the bar only pulses.
+    fn show_loading(&self, name: &str) -> adw::AlertDialog {
+        let bar = gtk::ProgressBar::new();
+        let dialog = adw::AlertDialog::new(Some(&gettext("Opening")), Some(name));
+        dialog.set_extra_child(Some(&bar));
+        dialog.present(Some(self));
+        let weak = dialog.downgrade();
+        glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+            if weak.upgrade().is_none() {
+                return glib::ControlFlow::Break;
+            }
+            bar.pulse();
+            glib::ControlFlow::Continue
+        });
+        dialog
+    }
+
     /// List `path` (optionally with `password`); on an encrypted archive, prompt
     /// for a password and retry. The working password is remembered so extraction
     /// doesn't ask again.
     fn load_archive(&self, path: PathBuf, password: Option<String>) {
+        let loading = self.show_loading(&file_name(&path));
         let window = self.clone();
         let sevenzip = septima_engine::sevenzip_path();
         let task_path = path.clone();
@@ -671,6 +689,7 @@ impl SeptimaWindow {
                 septima_engine::list_archive(&sevenzip, &task_path, task_password.as_deref())
             })
             .await;
+            loading.force_close();
 
             match result {
                 Ok(Ok(listing)) => {

@@ -50,10 +50,10 @@ fn main() -> glib::ExitCode {
     app.connect_activate(|app| present(&window_for(app)));
     app.connect_open(|app, files, _hint| {
         let window = window_for(app);
+        present(&window);
         if let Some(file) = files.first() {
             window.open_file(file.clone());
         }
-        present(&window);
     });
 
     app.run()
