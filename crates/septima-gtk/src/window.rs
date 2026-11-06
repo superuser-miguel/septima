@@ -153,10 +153,20 @@ mod imp {
                 move |_, value, _, _| {
                     if let Ok(list) = value.get::<gtk::gdk::FileList>() {
                         let files = list.files();
-                        if !files.is_empty() {
-                            obj.open_or_batch_extract(files);
-                            return true;
+                        if files.is_empty() {
+                            return false;
                         }
+                        // Entries dragged out of this archive are staged here; don't re-open them.
+                        let staging = drag_staging_base();
+                        let foreign: Vec<_> = files
+                            .iter()
+                            .filter(|f| !f.path().is_some_and(|p| p.starts_with(&staging)))
+                            .cloned()
+                            .collect();
+                        if !foreign.is_empty() {
+                            obj.open_or_batch_extract(foreign);
+                        }
+                        return true;
                     }
                     false
                 }
