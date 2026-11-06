@@ -62,7 +62,8 @@ mod imp {
             self.parent_constructed();
 
             let model = gio::ListStore::new::<EntryObject>();
-            let selection = gtk::MultiSelection::new(Some(model.clone()));
+            let sorted = gtk::SortListModel::new(Some(model.clone()), self.column_view.sorter());
+            let selection = gtk::MultiSelection::new(Some(sorted));
             selection.connect_selection_changed(glib::clone!(
                 #[weak(rename_to = imp)]
                 self,
@@ -72,14 +73,24 @@ mod imp {
             self.model.set(model).unwrap();
 
             let view = &*self.column_view;
-            view.append_column(&text_column(&gettext("Name"), true, |e| e.path.clone()));
-            view.append_column(&text_column(&gettext("Size"), false, |e| glib::format_size(e.size).to_string()));
+            view.append_column(&text_column(&gettext("Name"), true, |e| e.path.clone(), |a, b| {
+                a.path.to_lowercase().cmp(&b.path.to_lowercase())
+            }));
+            view.append_column(&text_column(&gettext("Size"), false, |e| glib::format_size(e.size).to_string(), |a, b| {
+                a.size.cmp(&b.size)
+            }));
             view.append_column(&text_column(&gettext("Packed"), false, |e| {
                 e.packed_size.map(|s| glib::format_size(s).to_string()).unwrap_or_default()
+            }, |a, b| a.packed_size.cmp(&b.packed_size)));
+            view.append_column(&text_column(&gettext("Method"), false, |e| e.method.clone().unwrap_or_default(), |a, b| {
+                a.method.cmp(&b.method)
             }));
-            view.append_column(&text_column(&gettext("Method"), false, |e| e.method.clone().unwrap_or_default()));
-            view.append_column(&text_column(&gettext("Modified"), false, short_time));
-            view.append_column(&text_column(&gettext("CRC"), false, |e| e.crc.clone().unwrap_or_default()));
+            view.append_column(&text_column(&gettext("Modified"), false, short_time, |a, b| {
+                a.modified.cmp(&b.modified)
+            }));
+            view.append_column(&text_column(&gettext("CRC"), false, |e| e.crc.clone().unwrap_or_default(), |a, b| {
+                a.crc.cmp(&b.crc)
+            }));
 
             // Drag entries out of the archive: the window-side handler stages
             // the selection as real files (an on-the-spot extract) and the
@@ -228,6 +239,7 @@ fn text_column(
     title: &str,
     expand: bool,
     getter: impl Fn(&ArchiveEntry) -> String + 'static,
+    cmp: impl Fn(&ArchiveEntry, &ArchiveEntry) -> std::cmp::Ordering + 'static,
 ) -> gtk::ColumnViewColumn {
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(|_, item| {
@@ -248,6 +260,10 @@ fn text_column(
     let column = gtk::ColumnViewColumn::new(Some(title), Some(factory));
     column.set_expand(expand);
     column.set_resizable(true);
+    column.set_sorter(Some(&gtk::CustomSorter::new(move |a, b| {
+        let (a, b) = (a.downcast_ref::<EntryObject>().unwrap(), b.downcast_ref::<EntryObject>().unwrap());
+        cmp(&a.entry(), &b.entry()).into()
+    })));
     column
 }
 
