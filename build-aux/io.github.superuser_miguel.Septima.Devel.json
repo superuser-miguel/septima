@@ -23,8 +23,8 @@
       "sources": [
         {
           "type": "archive",
-          "url": "https://github.com/mcmilk/7-Zip-zstd/archive/refs/tags/v26.02-v1.5.7-R2.tar.gz",
-          "sha256": "02a684ff8fd7fae110d30dddd4c55648061d3dceeeaefb1c9c20baed3a51795a"
+          "url": "https://github.com/mcmilk/7-Zip-zstd/archive/refs/tags/v26.05-v1.5.7-R1.tar.gz",
+          "sha256": "610b2948db0bdb398e318dfea1c27c438ac0fc05ca8171248f38506abb14a520"
         }
       ]
     },
