@@ -234,6 +234,12 @@
   details.table-view summary { cursor: pointer; color: var(--accent); font-size: .92rem; font-weight: 600; }
   details.table-view .tablewrap { margin-top: 10px; }
 
+  /* Keyboard */
+  .keys { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+  .keys div { padding: 14px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; color: var(--muted); font-size: .92rem; }
+  .keys span { display: block; color: var(--text); font-weight: 600; margin-bottom: 4px; }
+  .keys p { margin: 0; }
+
   /* Everything else */
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
 
@@ -281,6 +287,7 @@
   <nav>
     <a href="#try">Try it</a>
     <a href="#encrypt">Batch encryption</a>
+    <a class="opt" href="#keyboard">Keyboard</a>
     <a class="opt" href="#codecs">Codecs</a>
     <a class="opt" href="#roadmap">Roadmap</a>
     <a class="opt" href="blog/">Blog</a>
@@ -289,7 +296,7 @@
 </div>
 
 <header class="hero wrap" id="try">
-  <a class="pill" href="https://github.com/superuser-miguel/septima/releases/tag/v0.5.2"><span class="dot"></span>New in 0.5.2: 7-Zip ZS 26.05, with a brotli security fix</a>
+  <a class="pill" href="#keyboard"><span class="dot"></span>New in 0.6: keyboard shortcuts, and extracts that never replace your files without asking</a>
   <h1>Modern compression, <em>minus the folklore</em>.</h1>
   <p class="lede">
     Septima is a GNOME app for 7-Zip ZS. Zstandard, Brotli and Fast-LZMA2 inside real
@@ -396,6 +403,7 @@
       <ul class="points" style="margin-top:22px">
         <li><b>Problems collected, not interrupting.</b> Anything that failed is listed in one dialog at the end, instead of a pop-up per archive.</li>
         <li><b>One password question.</b> Encrypted archives wait until the rest finish, then Septima asks once. A wrong password asks again; Cancel skips them.</li>
+        <li><b>Nothing replaced by surprise.</b> If an archive's folder already holds files of the same name, Septima asks first: keep both, skip, or replace. Keep both is the default.</li>
         <li><b>Works the other way too.</b> Stage several files or folders and get a separate archive for each, saved right next to it.</li>
       </ul>
     </div>
@@ -416,6 +424,26 @@
         <li><b>Drag out to extract.</b> Select rows in an open archive and drag them into Files. They arrive extracted, folders with everything inside.</li>
       </ul>
     </div>
+  </div>
+</section>
+
+<section class="wrap" id="keyboard">
+  <span class="eyebrow">New in 0.6 · keyboard first</span>
+  <h2>Never reach for the mouse.</h2>
+  <p class="sub">
+    Everything you do often has a key. Press <kbd>Ctrl</kbd>+<kbd>?</kbd> in Septima for the full
+    list, or <kbd>F1</kbd> for <b>What Septima Can Do</b>: every format, method and 7zz switch it uses.
+    Delete and F2 act on the file list only, so they still work inside text fields.
+  </p>
+  <div class="keys">
+    <div><span><kbd>Ctrl</kbd>+<kbd>O</kbd> · <kbd>Ctrl</kbd>+<kbd>N</kbd></span><p>Open an archive · make a new one</p></div>
+    <div><span><kbd>Ctrl</kbd>+<kbd>E</kbd></span><p>Extract</p></div>
+    <div><span><kbd>Ctrl</kbd>+<kbd>T</kbd></span><p>Test the archive</p></div>
+    <div><span><kbd>Ctrl</kbd>+<kbd>H</kbd></span><p>Calculate checksums</p></div>
+    <div><span><kbd>Ctrl</kbd>+<kbd>A</kbd></span><p>Select every entry</p></div>
+    <div><span><kbd>F2</kbd> · <kbd>Delete</kbd></span><p>Rename · delete entries</p></div>
+    <div><span><kbd>Ctrl</kbd>+<kbd>W</kbd> · <kbd>Ctrl</kbd>+<kbd>Q</kbd></span><p>Close the archive · quit</p></div>
+    <div><span><kbd>F1</kbd> · <kbd>F10</kbd></span><p>What Septima Can Do · main menu</p></div>
   </div>
 </section>
 
@@ -462,22 +490,18 @@
   <ol class="phases">
     <li class="phase live">
       <span class="node"></span>
-      <h3>7-Zip ZS 26.05 <span class="status live">Live · 0.5.2</span></h3>
-      <p>Fixes a brotli decoder buffer overflow (CVE-2026-111497) and a use-after-free in single-file extraction, makes damaged archives report an error instead of extracting silently, and opens more brotli files without extra steps.</p>
+      <h3>Keyboard, help, and no silent overwrites <span class="status live">Live · 0.6</span></h3>
+      <ul>
+        <li><b>Extracting never replaces a file without asking.</b> Before 0.6 it did, silently. Now Septima checks first and asks only on a clash: keep both, skip, or replace.</li>
+        <li><b>Keyboard shortcuts</b> throughout, with the full list on <kbd>Ctrl</kbd>+<kbd>?</kbd>.</li>
+        <li><b>What Septima Can Do</b> on <kbd>F1</kbd>, generated from the code so it can't drift from it.</li>
+        <li>An <b>About</b> window with release notes and the exact 7-Zip ZS build inside.</li>
+      </ul>
     </li>
     <li class="phase live">
       <span class="node"></span>
-      <h3>Batches that behave <span class="status live">Live · 0.5.1</span></h3>
-      <p>One summary per batch, one password question, and no name clashes. Built on 0.5.0's batch encryption and drag-out extraction.</p>
-    </li>
-    <li class="phase next">
-      <span class="node"></span>
-      <h3>Keyboard and a proper About <span class="status next">Next · 0.6</span></h3>
-      <ul>
-        <li><b>Keyboard shortcuts</b> for opening, creating and closing archives, with a shortcuts window on <kbd>Ctrl</kbd>+<kbd>?</kbd>.</li>
-        <li>An <b>About</b> window with release notes and the exact 7-Zip ZS build inside.</li>
-        <li><b>What Septima Can Do</b>: a built-in guide to every feature.</li>
-      </ul>
+      <h3>7-Zip ZS 26.05 <span class="status live">Live · 0.5.2</span></h3>
+      <p>Fixes a brotli decoder buffer overflow (CVE-2026-111497) and a use-after-free in single-file extraction, makes damaged archives report an error instead of extracting silently, and opens more brotli files without extra steps.</p>
     </li>
     <li class="phase">
       <span class="node"></span>
@@ -486,6 +510,7 @@
         <li><b>Lock the passwords file to a GPG key</b>, so there's nothing to remember when you write it.</li>
         <li><b>Naming patterns in batch mode</b>: prefixes, suffixes or hidden names, with the passwords file keeping track.</li>
         <li><b>Files integration</b>: right-click "Extract Here" and "Compress…" in GNOME Files.</li>
+        <li><b>Newer ciphers</b>: XChaCha20-Poly1305 and the AES/XChaCha20 cascades, which the bundled 7-Zip ZS has had since 26.05.</li>
       </ul>
     </li>
   </ol>
