@@ -43,16 +43,24 @@ pub struct Digest {
     pub hex: String,
 }
 
-/// Compute `algos` (switch names) for a single file via `7zz h`.
-pub fn hash_file(sevenzip: &Path, file: &Path, algos: &[&str]) -> Result<Vec<Digest>, EngineError> {
+/// `7zz h` over one file for `algos`, not yet run. With `progress`, it streams
+/// progress (`-bsp1 -bb1`) for [`hash_file_progress`].
+pub(crate) fn hash_command(sevenzip: &Path, file: &Path, algos: &[&str], progress: bool) -> Command {
     let mut cmd = Command::new(sevenzip);
     cmd.arg("h");
+    if progress {
+        cmd.arg("-bsp1").arg("-bb1");
+    }
     for algo in algos {
         cmd.arg(format!("-scrc{algo}"));
     }
-    let output = cmd
-        .arg("--")
-        .arg(file)
+    cmd.arg("--").arg(file);
+    cmd
+}
+
+/// Compute `algos` (switch names) for a single file via `7zz h`.
+pub fn hash_file(sevenzip: &Path, file: &Path, algos: &[&str]) -> Result<Vec<Digest>, EngineError> {
+    let output = hash_command(sevenzip, file, algos, false)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -79,14 +87,7 @@ pub fn hash_file_progress(
     cancel: &CancelToken,
     mut on_progress: impl FnMut(u8),
 ) -> Result<Vec<Digest>, EngineError> {
-    let mut cmd = Command::new(sevenzip);
-    cmd.arg("h").arg("-bsp1").arg("-bb1");
-    for algo in algos {
-        cmd.arg(format!("-scrc{algo}"));
-    }
-    let mut child = cmd
-        .arg("--")
-        .arg(file)
+    let mut child = hash_command(sevenzip, file, algos, true)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

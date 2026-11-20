@@ -16,14 +16,7 @@ pub fn run_test(
     cancel: &CancelToken,
     on_progress: impl FnMut(&ExtractProgress),
 ) -> Result<(), EngineError> {
-    let mut cmd = Command::new(sevenzip);
-    cmd.arg("t").arg("-bsp1").arg("-bb1");
-    if let Some(password) = password {
-        cmd.arg(format!("-p{password}"));
-    }
-    let child = cmd
-        .arg("--")
-        .arg(archive)
+    let child = test_command(sevenzip, archive, password)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -43,16 +36,7 @@ pub fn run_delete(
     if entries.is_empty() {
         return Ok(());
     }
-    let mut cmd = Command::new(sevenzip);
-    cmd.arg("d");
-    if let Some(password) = password {
-        cmd.arg(format!("-p{password}"));
-    }
-    cmd.arg("--").arg(archive);
-    for entry in entries {
-        cmd.arg(entry);
-    }
-    run(cmd)
+    run(delete_command(sevenzip, archive, entries, password))
 }
 
 /// Rename entries in `archive` via `7zz rn`, given `(old_path, new_path)`
@@ -66,16 +50,7 @@ pub fn run_rename(
     if renames.is_empty() {
         return Ok(());
     }
-    let mut cmd = Command::new(sevenzip);
-    cmd.arg("rn");
-    if let Some(password) = password {
-        cmd.arg(format!("-p{password}"));
-    }
-    cmd.arg("--").arg(archive);
-    for (old, new) in renames {
-        cmd.arg(old).arg(new);
-    }
-    run(cmd)
+    run(rename_command(sevenzip, archive, renames, password))
 }
 
 /// Run `cmd` (stdin closed so a password prompt can't block) and map a
@@ -101,4 +76,48 @@ fn run(mut cmd: Command) -> Result<(), EngineError> {
         code: output.status.code(),
         stderr: stderr.into_owned(),
     })
+}
+
+/// `7zz t`, not yet run (see [`run_test`]).
+pub(crate) fn test_command(sevenzip: &Path, archive: &Path, password: Option<&str>) -> Command {
+    let mut cmd = Command::new(sevenzip);
+    cmd.arg("t").arg("-bsp1").arg("-bb1");
+    if let Some(password) = password {
+        cmd.arg(format!("-p{password}"));
+    }
+    cmd.arg("--").arg(archive);
+    cmd
+}
+
+/// `7zz d`, not yet run (see [`run_delete`]).
+pub(crate) fn delete_command(sevenzip: &Path, archive: &Path, entries: &[String], password: Option<&str>) -> Command {
+    let mut cmd = Command::new(sevenzip);
+    cmd.arg("d");
+    if let Some(password) = password {
+        cmd.arg(format!("-p{password}"));
+    }
+    cmd.arg("--").arg(archive);
+    for entry in entries {
+        cmd.arg(entry);
+    }
+    cmd
+}
+
+/// `7zz rn`, not yet run (see [`run_rename`]).
+pub(crate) fn rename_command(
+    sevenzip: &Path,
+    archive: &Path,
+    renames: &[(String, String)],
+    password: Option<&str>,
+) -> Command {
+    let mut cmd = Command::new(sevenzip);
+    cmd.arg("rn");
+    if let Some(password) = password {
+        cmd.arg(format!("-p{password}"));
+    }
+    cmd.arg("--").arg(archive);
+    for (old, new) in renames {
+        cmd.arg(old).arg(new);
+    }
+    cmd
 }

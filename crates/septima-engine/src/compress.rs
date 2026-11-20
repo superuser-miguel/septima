@@ -229,6 +229,28 @@ pub fn run_add(
     cancel: &CancelToken,
     on_progress: impl FnMut(&ExtractProgress),
 ) -> Result<(), EngineError> {
+    let mut cmd = add_command(sevenzip, req);
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    if crate::supervise::debug_enabled() {
+        eprintln!("[septima] run_add: {}", debug_argv(&cmd));
+    }
+    // Snapshot before spawning so cancellation only ever deletes what this run
+    // created — adding to an existing archive must never destroy it.
+    let before = existing_output_paths(&req.output);
+    let child = cmd.spawn().map_err(EngineError::Spawn)?;
+    let result = supervise(child, cancel, on_progress);
+    if matches!(result, Err(EngineError::Cancelled)) {
+        remove_new_outputs(&req.output, &before);
+    }
+    result
+}
+
+/// The `7zz a` command for `req`, not yet run. Kept apart from [`run_add`] so
+/// the switch registry's test can read every argument it builds.
+pub(crate) fn add_command(sevenzip: &Path, req: &CompressionRequest) -> Command {
     let mut cmd = Command::new(sevenzip);
     cmd.arg("a")
         .arg("-bsp1")
@@ -260,22 +282,7 @@ pub fn run_add(
     for input in &req.inputs {
         cmd.arg(input);
     }
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    if crate::supervise::debug_enabled() {
-        eprintln!("[septima] run_add: {}", debug_argv(&cmd));
-    }
-    // Snapshot before spawning so cancellation only ever deletes what this run
-    // created — adding to an existing archive must never destroy it.
-    let before = existing_output_paths(&req.output);
-    let child = cmd.spawn().map_err(EngineError::Spawn)?;
-    let result = supervise(child, cancel, on_progress);
-    if matches!(result, Err(EngineError::Cancelled)) {
-        remove_new_outputs(&req.output, &before);
-    }
-    result
+    cmd
 }
 
 /// Every path that currently exists and that `7zz a` would own for this output:

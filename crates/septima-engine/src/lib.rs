@@ -23,9 +23,10 @@ mod manifest;
 mod measure;
 mod progress;
 mod supervise;
+pub mod switches;
 
 pub use capabilities::{filters, formats, stream_extension, Codec, Filter, Format};
-pub use command::{list_archive, sevenzip_path};
+pub use command::{list_archive, sevenzip_banner, sevenzip_path};
 pub use compress::{estimate_add_memory, run_add, run_tar_and_compress, CompressionRequest};
 pub use edit::{run_delete, run_rename, run_test};
 pub use hash::{hash_algorithms, hash_file, hash_file_progress, write_checksum_file, Digest, HashAlgo};

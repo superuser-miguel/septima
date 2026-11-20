@@ -184,8 +184,7 @@ pub fn aes256gcm_available() -> bool {
     use std::sync::OnceLock;
     static AVAILABLE: OnceLock<bool> = OnceLock::new();
     *AVAILABLE.get_or_init(|| {
-        std::process::Command::new(crate::command::sevenzip_path())
-            .arg("i")
+        info_command(&crate::command::sevenzip_path())
             .stdin(std::process::Stdio::null())
             .output()
             .map(|out| {
@@ -195,6 +194,13 @@ pub fn aes256gcm_available() -> bool {
             })
             .unwrap_or(false)
     })
+}
+
+/// `7zz i`: lists the formats and codecs this build supports.
+pub(crate) fn info_command(sevenzip: &std::path::Path) -> std::process::Command {
+    let mut cmd = std::process::Command::new(sevenzip);
+    cmd.arg("i");
+    cmd
 }
 
 /// Encryption methods offered for `format_id`, in menu order (default first).

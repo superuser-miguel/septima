@@ -15,12 +15,26 @@ pub fn sevenzip_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(crate::SEVENZIP_BIN))
 }
 
-/// List an archive's contents via `7z l -slt`.
-///
-/// stdin is closed so an encrypted archive returns promptly (7zz would otherwise
-/// block on an interactive password prompt); a missing/wrong password maps to
-/// [`EngineError::PasswordRequired`]. Pass `password` for archives with
-/// encrypted headers.
+/// The first line `7zz` prints when run bare — its name, version and build,
+/// e.g. `7-Zip (z) 26.02 ZS v1.5.7 R2 (x64) : Copyright …`. For the About
+/// window's troubleshooting info; `None` if the binary can't be run.
+pub fn sevenzip_banner(sevenzip: &Path) -> Option<String> {
+    let output = banner_command(sevenzip)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    banner_line(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// `7zz` with no arguments: it prints its banner and usage, and exits.
+pub(crate) fn banner_command(sevenzip: &Path) -> Command {
+    Command::new(sevenzip)
+}
+
+fn banner_line(stdout: &str) -> Option<String> {
+    stdout.lines().map(str::trim).find(|l| !l.is_empty()).map(str::to_owned)
+}
+
 /// Whether `path` is a compressed tarball (`.tar.zst`, `.tgz`, …) that must be
 /// descended into two layers to show its files.
 pub fn is_compressed_tar(path: &Path) -> bool {
@@ -79,6 +93,12 @@ pub(crate) fn should_retry_brotli(archive: &Path, err: &EngineError) -> bool {
     brotli_retry_flag(archive).is_some() && matches!(err, EngineError::SevenZip { .. })
 }
 
+/// List an archive's contents via `7z l -slt`.
+///
+/// stdin is closed so an encrypted archive returns promptly (7zz would otherwise
+/// block on an interactive password prompt); a missing/wrong password maps to
+/// [`EngineError::PasswordRequired`]. Pass `password` for archives with
+/// encrypted headers.
 pub fn list_archive(
     sevenzip: &Path,
     archive: &Path,
@@ -98,14 +118,8 @@ pub fn list_archive(
     }
 }
 
-/// One `7zz l -slt` attempt, with an optional extra flag (see
-/// [`brotli_retry_flag`]).
-fn list_archive_once(
-    sevenzip: &Path,
-    archive: &Path,
-    password: Option<&str>,
-    extra: Option<&str>,
-) -> Result<ArchiveListing, EngineError> {
+/// The `7zz l -slt` command, not yet run (see [`list_archive_once`]).
+pub(crate) fn list_command(sevenzip: &Path, archive: &Path, password: Option<&str>, extra: Option<&str>) -> Command {
     let mut cmd = Command::new(sevenzip);
     cmd.arg("l").arg("-slt");
     if let Some(password) = password {
@@ -114,9 +128,27 @@ fn list_archive_once(
     if let Some(extra) = extra {
         cmd.arg(extra);
     }
-    let output = cmd
-        .arg("--")
-        .arg(archive)
+    cmd.arg("--").arg(archive);
+    cmd
+}
+
+/// Lists the tar arriving on stdin: the inner half of listing a compressed
+/// tarball, after [`crate::extract::decompress_tar_command`].
+pub(crate) fn list_tar_stdin_command(sevenzip: &Path) -> Command {
+    let mut cmd = Command::new(sevenzip);
+    cmd.arg("l").arg("-slt").arg("-si").arg("-ttar");
+    cmd
+}
+
+/// One `7zz l -slt` attempt, with an optional extra flag (see
+/// [`brotli_retry_flag`]).
+fn list_archive_once(
+    sevenzip: &Path,
+    archive: &Path,
+    password: Option<&str>,
+    extra: Option<&str>,
+) -> Result<ArchiveListing, EngineError> {
+    let output = list_command(sevenzip, archive, password, extra)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -160,12 +192,7 @@ fn list_compressed_tar_once(
     archive: &Path,
     extra: Option<&str>,
 ) -> Result<ArchiveListing, EngineError> {
-    let mut decompress = Command::new(sevenzip)
-        .arg("x")
-        .arg("-so")
-        .args(extra)
-        .arg("--")
-        .arg(archive)
+    let mut decompress = crate::extract::decompress_tar_command(sevenzip, archive, extra, false)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -173,11 +200,7 @@ fn list_compressed_tar_once(
         .map_err(EngineError::Spawn)?;
 
     let stdout = decompress.stdout.take().expect("piped stdout");
-    let output = Command::new(sevenzip)
-        .arg("l")
-        .arg("-slt")
-        .arg("-si")
-        .arg("-ttar")
+    let output = list_tar_stdin_command(sevenzip)
         .stdin(Stdio::from(stdout))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -216,9 +239,19 @@ fn list_compressed_tar_once(
 
 #[cfg(test)]
 mod tests {
-    use super::{brotli_retry_flag, is_compressed_tar, should_retry_brotli};
+    use super::{banner_line, brotli_retry_flag, is_compressed_tar, should_retry_brotli};
     use crate::error::EngineError;
     use std::path::Path;
+
+    #[test]
+    fn banner_is_the_first_non_blank_line() {
+        let out = "\n7-Zip (z) 26.02 ZS v1.5.7 R2 (x64) : Copyright (c) 1999- Igor Pavlov\n 64-bit locale=C\n";
+        assert_eq!(
+            banner_line(out).as_deref(),
+            Some("7-Zip (z) 26.02 ZS v1.5.7 R2 (x64) : Copyright (c) 1999- Igor Pavlov")
+        );
+        assert_eq!(banner_line("\n  \n"), None);
+    }
 
     #[test]
     fn standalone_brotli_retries_towards_the_threaded_format() {

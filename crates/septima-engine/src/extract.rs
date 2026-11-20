@@ -134,14 +134,8 @@ pub fn run_extract(
     }
 }
 
-/// One `7zz x` attempt, with an optional extra flag (see [`brotli_retry_flag`]).
-fn run_extract_once(
-    sevenzip: &Path,
-    req: &ExtractRequest,
-    cancel: &CancelToken,
-    on_progress: impl FnMut(&ExtractProgress),
-    extra: Option<&str>,
-) -> Result<(), EngineError> {
+/// The `7zz x` command for `req`, not yet run (see [`run_extract_once`]).
+pub(crate) fn extract_command(sevenzip: &Path, req: &ExtractRequest, extra: Option<&str>) -> Command {
     let mut cmd = Command::new(sevenzip);
     cmd.arg("x")
         .arg("-bsp1") // progress to stdout
@@ -152,11 +146,20 @@ fn run_extract_once(
     if let Some(password) = &req.password {
         cmd.arg(format!("-p{password}"));
     }
-    cmd.args(extra)
-        .arg("--")
-        .arg(&req.archive)
-        .args(&req.entries)
-        .stdin(Stdio::null())
+    cmd.args(extra).arg("--").arg(&req.archive).args(&req.entries);
+    cmd
+}
+
+/// One `7zz x` attempt, with an optional extra flag (see [`brotli_retry_flag`]).
+fn run_extract_once(
+    sevenzip: &Path,
+    req: &ExtractRequest,
+    cancel: &CancelToken,
+    on_progress: impl FnMut(&ExtractProgress),
+    extra: Option<&str>,
+) -> Result<(), EngineError> {
+    let mut cmd = extract_command(sevenzip, req, extra);
+    cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -232,6 +235,34 @@ fn prune_empty_dirs(dir: &Path) {
     }
 }
 
+/// The outer half of a compressed tarball: `7zz x -so` writes the decompressed
+/// tar to stdout. With `progress`, it also reports progress on stderr
+/// (`-bsp2`, so stdout stays the tar stream) — extract wants that, list doesn't.
+pub(crate) fn decompress_tar_command(sevenzip: &Path, archive: &Path, extra: Option<&str>, progress: bool) -> Command {
+    let mut cmd = Command::new(sevenzip);
+    cmd.arg("x").arg("-so");
+    if progress {
+        cmd.arg("-bsp2").arg("-bb1");
+    }
+    cmd.args(extra).arg("--").arg(archive);
+    cmd
+}
+
+/// The inner half: `7zz x -si -ttar` unpacks the tar arriving on stdin.
+pub(crate) fn untar_command(sevenzip: &Path, req: &ExtractRequest) -> Command {
+    let mut cmd = Command::new(sevenzip);
+    cmd.arg("x")
+        .arg("-si")
+        .arg("-ttar")
+        .arg("-y")
+        .arg(req.overwrite.flag())
+        .arg(format!("-o{}", req.dest_dir.display()))
+        // Subset selection applies to the inner tar; with -si the non-option
+        // args are entry patterns, not an archive name.
+        .args(&req.entries);
+    cmd
+}
+
 /// Extract a compressed tar to `dest_dir` by piping the decompressed outer
 /// stream into `7zz x -si -ttar` — so the files land, not the intermediate tar.
 /// Decompression progress arrives on the first process's stderr (`-bsp2`).
@@ -242,14 +273,7 @@ fn extract_compressed_tar(
     mut on_progress: impl FnMut(&ExtractProgress),
     extra: Option<&str>,
 ) -> Result<(), EngineError> {
-    let mut decompress = Command::new(sevenzip)
-        .arg("x")
-        .arg("-so")
-        .arg("-bsp2") // progress to stderr, so stdout stays the tar stream
-        .arg("-bb1")
-        .args(extra)
-        .arg("--")
-        .arg(&req.archive)
+    let mut decompress = decompress_tar_command(sevenzip, &req.archive, extra, true)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -257,16 +281,7 @@ fn extract_compressed_tar(
         .map_err(EngineError::Spawn)?;
     let tar_stream = decompress.stdout.take().expect("piped stdout");
 
-    let mut untar = Command::new(sevenzip)
-        .arg("x")
-        .arg("-si")
-        .arg("-ttar")
-        .arg("-y")
-        .arg(req.overwrite.flag())
-        .arg(format!("-o{}", req.dest_dir.display()))
-        // Subset selection applies to the inner tar; with -si the non-option
-        // args are entry patterns, not an archive name.
-        .args(&req.entries)
+    let mut untar = untar_command(sevenzip, req)
         .stdin(Stdio::from(tar_stream))
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
