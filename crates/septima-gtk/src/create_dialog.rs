@@ -1025,3 +1025,90 @@ fn non_ellipsizing_factory() -> gtk::SignalListItemFactory {
     });
     factory
 }
+
+/// The website's command builder (`docs/index.html`) runs on a copy of the
+/// create dialog's choices. This test keeps that copy honest: it renders what
+/// the copy must be, from the same tables the dialog uses, and fails if the
+/// page's `septima-caps` block differs. The failure prints the block to paste.
+#[cfg(test)]
+mod site_caps_tests {
+    use super::*;
+
+    fn esc(s: &str) -> String {
+        s.replace('\\', "\\\\").replace('"', "\\\"")
+    }
+
+    fn codec_json(c: &Codec) -> String {
+        format!(
+            r#"{{"id":"{}","label":"{}","min":{},"max":{},"def":{}}}"#,
+            esc(c.id),
+            esc(c.label),
+            c.level_min,
+            c.level_max,
+            c.default_level
+        )
+    }
+
+    /// The exact text the page must carry between its `septima-caps` tags.
+    pub(super) fn expected_site_caps() -> String {
+        let mut lines = vec!["{\"formats\":[".to_string()];
+        let fs: Vec<String> = formats()
+            .iter()
+            .map(|f| {
+                let codecs: Vec<String> = f.codecs.iter().map(codec_json).collect();
+                format!(
+                    r#"{{"id":"{}","label":"{}","ext":"{}","enc":{},"names":{},"solid":{},"codecs":[{}]}}"#,
+                    esc(f.id),
+                    esc(f.label),
+                    esc(f.extension),
+                    f.supports_encryption,
+                    f.supports_header_encryption,
+                    f.supports_solid,
+                    codecs.join(",")
+                )
+            })
+            .collect();
+        lines.push(fs.join(",\n"));
+        let filt: Vec<String> = filters()
+            .iter()
+            .map(|f| format!(r#"{{"id":"{}","label":"{}"}}"#, esc(f.id), esc(f.label)))
+            .collect();
+        lines.push(format!("],\n\"filters\":[{}],", filt.join(",")));
+        let liz: Vec<String> =
+            LIZARD_FAMILIES.iter().map(|(l, b)| format!(r#"["{}",{}]"#, esc(l), b)).collect();
+        lines.push(format!("\"lizard\":[{}],", liz.join(",")));
+        let dict: Vec<String> = DICT_PRESETS
+            .iter()
+            .map(|(l, a, b)| {
+                format!(
+                    r#"["{}",{},{}]"#,
+                    esc(l),
+                    a.map_or("null".into(), |a| format!("\"{a}\"")),
+                    b.map_or("null".into(), |b| b.to_string())
+                )
+            })
+            .collect();
+        lines.push(format!("\"dict\":[{}],", dict.join(",")));
+        let vols: Vec<String> = VOLUME_PRESETS
+            .iter()
+            .map(|(l, a)| format!(r#"["{}",{}]"#, esc(l), a.map_or("null".into(), |a| format!("\"{a}\""))))
+            .collect();
+        lines.push(format!("\"volumes\":[{}]}}", vols.join(",")));
+        lines.join("\n")
+    }
+
+    #[test]
+    fn website_command_builder_matches_the_dialog() {
+        let page = include_str!("../../../docs/index.html");
+        let open = r#"<script type="application/json" id="septima-caps">"#;
+        let start = page.find(open).expect("docs/index.html has no septima-caps block") + open.len();
+        let end = start + page[start..].find("</script>").expect("unclosed septima-caps block");
+        let expected = expected_site_caps();
+        assert_eq!(
+            page[start..end].trim(),
+            expected,
+            "docs/index.html's command builder has drifted from the create dialog. \
+             Replace its septima-caps block with:\n{expected}\n"
+        );
+    }
+}

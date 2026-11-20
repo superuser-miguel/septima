@@ -3,300 +3,878 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Septima — modern-codec 7z archiver for Linux</title>
-<meta name="description" content="A GNOME-native GTK4 front-end for 7-Zip ZS: browse, extract, and create archives with modern codecs (Zstandard, Brotli, Fast-LZMA2), a real compression-tuning UI, and batch encryption with a portable passwords file.">
+<title>Septima — modern compression for GNOME</title>
+<meta name="description" content="A GNOME app for 7-Zip ZS: Zstandard, Brotli and Fast-LZMA2 inside real .7z, every setting as a control, and batch encryption with one password per archive and a portable passwords file.">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Septima — modern-codec 7z archiver for Linux">
-<meta property="og:description" content="A GNOME-native front-end for 7-Zip ZS: modern codecs, a real compression-tuning UI no other Linux archiver offers, and batch encryption with a portable passwords file.">
+<meta property="og:title" content="Septima — modern compression for GNOME">
+<meta property="og:description" content="Zstandard, Brotli and Fast-LZMA2 inside real .7z, every setting as a control, and batch encryption with one password per archive.">
 <meta property="og:url" content="https://superuser-miguel.github.io/septima/">
-<meta property="og:image" content="https://superuser-miguel.github.io/septima/screenshots/codec-menu.png">
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Septima — modern-codec 7z archiver for Linux">
-<meta name="twitter:description" content="A GNOME-native front-end for 7-Zip ZS: modern codecs, a real compression-tuning UI no other Linux archiver offers, and batch encryption with a portable passwords file.">
-<meta name="twitter:image" content="https://superuser-miguel.github.io/septima/screenshots/codec-menu.png">
 <style>
   :root {
-    --bg: #f6f6fb; --surface: #ffffff; --text: #1c1b22; --muted: #5c5b66;
-    --border: #e4e3ee; --accent: #4b53d6; --accent-2: #3b3a9e;
-    --ok: #2e9e5b; --no: #c7c6d2;
+    --bg: #f6f6fb; --surface: #ffffff; --surface-2: #efeff8; --text: #1c1b22; --muted: #5c5b66;
+    --border: #e2e1ed; --accent: #4b53d6; --accent-2: #3b3a9e; --on-accent: #ffffff;
+    --live: #2e8f57; --next: #b06d00; --later: #6d6c7a;
+    --code-bg: #1d1c2b; --code-text: #e6e6f2; --code-dim: #8a89a3; --code-key: #a9b0ff; --code-val: #ffd28a;
+    --shadow: 0 20px 50px rgba(40, 38, 110, .14);
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s-other: #8f8e9c;
+    color-scheme: light;
   }
   @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #16151c; --surface: #1f1e28; --text: #ececf2; --muted: #a7a6b4;
-      --border: #2d2c39; --accent: #8b90f0; --accent-2: #5b6ee1;
-      --ok: #55d98a; --no: #45445a;
+    :root:not([data-theme="light"]) {
+      --bg: #14131a; --surface: #1d1c26; --surface-2: #181720; --text: #ececf2; --muted: #a7a6b4;
+      --border: #2d2c39; --accent: #8b90f0; --accent-2: #5b6ee1; --on-accent: #12111a;
+      --live: #55d98a; --next: #f0b54a; --later: #8f8e9e;
+      --code-bg: #0f0e15; --code-text: #e6e6f2; --code-dim: #77768e; --code-key: #a9b0ff; --code-val: #ffd28a;
+      --shadow: 0 20px 50px rgba(0, 0, 0, .45);
+      --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s-other: #8a899a;
+      color-scheme: dark;
     }
   }
+  :root[data-theme="dark"] {
+    --bg: #14131a; --surface: #1d1c26; --surface-2: #181720; --text: #ececf2; --muted: #a7a6b4;
+    --border: #2d2c39; --accent: #8b90f0; --accent-2: #5b6ee1; --on-accent: #12111a;
+    --live: #55d98a; --next: #f0b54a; --later: #8f8e9e;
+    --code-bg: #0f0e15; --code-text: #e6e6f2; --code-dim: #77768e; --code-key: #a9b0ff; --code-val: #ffd28a;
+    --shadow: 0 20px 50px rgba(0, 0, 0, .45);
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s-other: #8a899a;
+    color-scheme: dark;
+  }
   * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
   body {
     margin: 0; background: var(--bg); color: var(--text);
     font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   }
   a { color: var(--accent); }
-  .wrap { max-width: 880px; margin: 0 auto; padding: 0 20px; }
-  section { padding: 56px 0; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 16px; }
+  section.wrap { padding: 64px 16px; }
+  h2 { font-size: clamp(1.5rem, 4vw, 2rem); letter-spacing: -.015em; margin: 0 0 8px; line-height: 1.2; }
+  .sub { color: var(--muted); margin: 0 0 28px; max-width: 64ch; }
+  .eyebrow {
+    display: inline-block; font-size: .78rem; font-weight: 700; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--accent); margin-bottom: 10px;
+  }
+  code, kbd {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    background: color-mix(in srgb, var(--accent) 13%, transparent);
+    padding: 1px 6px; border-radius: 6px; font-size: .88em;
+  }
+  .points { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  .points li { color: var(--muted); font-size: .94rem; padding-left: 18px; position: relative; }
+  .points li::before { content: ""; position: absolute; left: 2px; top: .62em; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .points b { color: var(--text); font-weight: 600; }
+
+  /* Top bar */
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 18px 16px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; color: var(--text); text-decoration: none; }
+  .brand svg { width: 32px; height: 32px; flex: none; }
+  .top nav { display: flex; gap: 18px; font-size: .92rem; flex-wrap: wrap; justify-content: flex-end; }
+  .top nav a { color: var(--muted); text-decoration: none; }
+  .top nav a:hover { color: var(--text); }
+  @media (max-width: 640px) { .top nav .opt { display: none; } }
 
   /* Hero */
-  .hero { text-align: center; padding: 72px 0 48px; }
-  .icon {
-    width: 88px; height: 88px; border-radius: 22px; display: block; margin: 0 auto 22px;
-    box-shadow: 0 10px 30px rgba(59,58,158,.35);
+  .hero { padding: 36px 16px 24px; text-align: center; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 999px;
+    background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent);
+    font-size: .84rem; font-weight: 600; margin-bottom: 20px; text-decoration: none;
   }
-  h1 { font-size: 2.6rem; margin: 0 0 6px; letter-spacing: -.02em; }
-  .tagline { font-size: 1.25rem; color: var(--text); font-weight: 600; margin: 0 auto 14px; max-width: 32ch; }
-  .lede { color: var(--muted); max-width: 56ch; margin: 0 auto 26px; }
+  .pill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  h1 {
+    font-size: clamp(2.1rem, 7vw, 3.4rem); line-height: 1.08; letter-spacing: -.03em;
+    margin: 0 auto 16px; max-width: 17ch;
+  }
+  h1 em { font-style: normal; color: var(--accent); }
+  .lede { color: var(--muted); font-size: 1.1rem; max-width: 58ch; margin: 0 auto 28px; }
   .btns { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
   .btn {
-    display: inline-block; padding: 11px 20px; border-radius: 11px; text-decoration: none;
-    font-weight: 600; border: 1px solid var(--border);
+    display: inline-block; padding: 12px 22px; border-radius: 12px; text-decoration: none;
+    font-weight: 600; border: 1px solid var(--border); color: var(--text); background: var(--surface);
   }
-  .btn.primary { background: var(--accent); color: #fff; border-color: transparent; }
-  .badge {
-    display: inline-block; margin-bottom: 18px; padding: 4px 12px; border-radius: 999px;
-    background: color-mix(in srgb, var(--accent) 14%, transparent);
-    color: var(--accent); font-size: .82rem; font-weight: 600;
-  }
-  .shot {
-    display: block; max-width: 560px; width: 100%; height: auto; margin: 40px auto 0;
-    border: 1px solid var(--border); border-radius: 14px;
-    box-shadow: 0 20px 50px rgba(0,0,0,.25);
-  }
+  .btn.primary { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+  .note { color: var(--muted); font-size: .86rem; margin: 16px 0 0; }
 
-  h2 { font-size: 1.6rem; letter-spacing: -.01em; margin: 0 0 8px; }
-  .sub { color: var(--muted); margin: 0 0 26px; }
+  /* Panels shared by the demos */
+  .panel {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 18px;
+    box-shadow: var(--shadow); overflow: hidden; text-align: left;
+  }
+  .panel-head {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--surface-2);
+  }
+  .panel-head .label { font-size: .82rem; color: var(--muted); margin-right: auto; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; flex-wrap: wrap; }
+  .seg button { font: 600 .82rem/1 system-ui, sans-serif; padding: 8px 13px; border: 0; background: var(--surface); color: var(--muted); cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-  /* Comparison table */
-  .tablewrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 14px; }
-  table { width: 100%; border-collapse: collapse; min-width: 560px; background: var(--surface); }
-  th, td { padding: 13px 14px; text-align: center; border-bottom: 1px solid var(--border); }
+  /* Command builder */
+  .builder { margin: 44px auto 0; max-width: 860px; }
+  .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); background: var(--surface); }
+  .ctl { box-shadow: inset -1px -1px 0 var(--border); padding: 12px 16px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .ctl[hidden] { display: none; }
+  .ctl > span { font-size: .78rem; font-weight: 600; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
+  .ctl > span output { color: var(--text); font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .ctl select, .ctl input[type="number"] {
+    font: 500 .95rem system-ui, sans-serif; color: var(--text); background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 9px; padding: 7px 9px; width: 100%; min-width: 0;
+  }
+  .ctl input[type="range"] { width: 100%; accent-color: var(--accent); }
+  .ctl .range-ends { display: flex; justify-content: space-between; font-size: .72rem; color: var(--muted); }
+  .switch { display: flex; align-items: center; gap: 10px; font-size: .92rem; cursor: pointer; }
+  .switch input { width: 18px; height: 18px; accent-color: var(--accent); }
+  .switch[hidden] { display: none; }
+  .cmd {
+    background: var(--code-bg); color: var(--code-text); margin: 0; padding: 16px 18px;
+    font: .9rem/1.7 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    white-space: pre-wrap; overflow-wrap: break-word;
+  }
+  .cmd span { white-space: nowrap; }
+  .cmd .step { white-space: normal; }
+  .cmd .dim { color: var(--code-dim); }
+  .cmd .k { color: var(--code-key); }
+  .cmd .v { color: var(--code-val); }
+  .cmd .step { display: block; color: var(--code-dim); font-style: italic; }
+  .builder-foot { display: flex; gap: 8px 24px; flex-wrap: wrap; padding: 12px 16px; font-size: .86rem; color: var(--muted); border-top: 1px solid var(--border); }
+  .builder-foot b { color: var(--text); font-weight: 600; }
+
+  /* Comparison */
+  .tablewrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 12px 14px; text-align: center; border-bottom: 1px solid var(--border); }
   th:first-child, td:first-child { text-align: left; font-weight: 600; }
-  thead th { font-size: .8rem; color: var(--muted); font-weight: 600; }
+  thead th { font-size: .78rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
   tbody tr:last-child td { border-bottom: 0; }
   tr.me { background: color-mix(in srgb, var(--accent) 9%, transparent); }
   tr.me td:first-child { color: var(--accent); }
-  .y { color: var(--ok); font-weight: 700; }
-  .n { color: var(--no); }
+  .y { color: var(--live); font-weight: 700; }
+  .n { color: var(--muted); opacity: .6; }
+  .compare-table { min-width: 560px; }
 
-  /* Features */
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px; }
-  .card h3 { margin: 0 0 6px; font-size: 1.05rem; }
-  .card p { margin: 0; color: var(--muted); font-size: .95rem; }
+  /* Batch encryption */
+  .flow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: 22px; align-items: start; }
+  @media (max-width: 800px) { .flow { grid-template-columns: minmax(0, 1fr); } }
+  .items { list-style: none; margin: 0; padding: 8px; display: grid; gap: 6px; }
+  .item {
+    display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center;
+    padding: 9px 10px; border-radius: 10px; border: 1px solid var(--border); font-size: .93rem;
+  }
+  .item .ic { width: 22px; height: 22px; color: var(--muted); }
+  .item .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .st { font-size: .76rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+  .item.done { border-color: color-mix(in srgb, var(--live) 50%, var(--border)); }
+  .item.done .st { color: var(--live); }
+  .item.picked { background: color-mix(in srgb, var(--accent) 8%, transparent); border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
+  .item input { width: 18px; height: 18px; accent-color: var(--accent); margin: 0; }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding: 0 16px 16px; }
+  .actions .btn { padding: 9px 16px; font-size: .92rem; cursor: pointer; }
+  .actions .btn[disabled] { opacity: .45; cursor: default; }
+  .actions .msg { font-size: .86rem; color: var(--muted); }
+  .file { min-height: 320px; }
+  .file pre {
+    margin: 0; padding: 14px 16px; background: var(--code-bg); color: var(--code-text);
+    font: .78rem/1.65 ui-monospace, "SF Mono", Menlo, Consolas, monospace; overflow-x: auto; white-space: pre;
+    max-height: 420px; overflow-y: auto;
+  }
+  .file pre .k { color: var(--code-key); }
+  .file pre .v { color: var(--code-val); }
+  .file pre .dim { color: var(--code-dim); }
+  .file .empty { padding: 40px 20px; text-align: center; color: var(--muted); font-size: .94rem; }
+  .file-foot { padding: 10px 16px; border-top: 1px solid var(--border); font-size: .84rem; color: var(--muted); }
+  .steps-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-top: 30px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px; }
+  .card h3 { margin: 0 0 6px; font-size: 1rem; }
+  .card p { margin: 0; color: var(--muted); font-size: .92rem; }
+
+  /* Batch extract */
+  .toast {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    background: var(--code-bg); color: var(--code-text); border-radius: 14px; padding: 12px 14px 12px 18px;
+    box-shadow: var(--shadow); max-width: 520px; font-size: .95rem;
+  }
+  .toast span { margin-right: auto; }
+  .toast b { font-weight: 600; }
+  .toast .tbtn { font: 600 .86rem system-ui, sans-serif; color: var(--code-key); padding: 6px 10px; border-radius: 8px; background: color-mix(in srgb, var(--code-key) 14%, transparent); }
+  .clash { margin-top: 18px; }
+  .clash table { min-width: 0; }
+  .clash td, .clash th { text-align: left; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .88rem; font-weight: 400; }
+  .clash thead th { font-family: system-ui, sans-serif; }
+  .clash td.arrow { color: var(--muted); width: 1%; }
+  .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+  @media (max-width: 800px) { .two { grid-template-columns: minmax(0, 1fr); } }
+
+  /* Codec chart */
+  .viz { padding: 18px 16px 8px; }
+  .viz svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .viz .grid line { stroke: var(--border); }
+  .viz .axis text, .viz .tick { fill: var(--muted); font: 12px system-ui, sans-serif; }
+  .viz .axis-title { fill: var(--muted); font: 600 12px system-ui, sans-serif; }
+  .viz .lbl { fill: var(--text); font: 600 12px system-ui, sans-serif; }
+  .viz .lbl.minor { fill: var(--muted); font-weight: 500; }
+  .viz .dot { stroke: var(--surface); stroke-width: 2; }
+  .viz .hit { fill: transparent; cursor: pointer; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 4px 16px 0; font-size: .86rem; color: var(--text); list-style: none; margin: 0; }
+  .legend li { display: inline-flex; align-items: center; gap: 7px; }
+  .legend i { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
+  .legend i.pt { width: 9px; height: 9px; border-radius: 50%; }
+  .tip {
+    position: fixed; pointer-events: none; z-index: 10; background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-radius: 10px; padding: 8px 11px; font-size: .84rem; line-height: 1.45;
+    box-shadow: 0 10px 30px rgba(0,0,0,.18); opacity: 0; transition: opacity .1s; max-width: 240px;
+  }
+  .tip b { font-weight: 600; }
+  .tip .m { color: var(--muted); }
+  .viz-foot { padding: 10px 16px 14px; font-size: .84rem; color: var(--muted); border-top: 1px solid var(--border); margin-top: 8px; }
+  .data-table td, .data-table th { font-size: .88rem; padding: 8px 12px; text-align: right; font-variant-numeric: tabular-nums; }
+  .data-table td:first-child, .data-table th:first-child { text-align: left; }
+  details.table-view { margin-top: 14px; }
+  details.table-view summary { cursor: pointer; color: var(--accent); font-size: .92rem; font-weight: 600; }
+  details.table-view .tablewrap { margin-top: 10px; }
+
+  /* Everything else */
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
 
   /* Roadmap */
-  .road { list-style: none; padding: 0; margin: 0; color: var(--muted); }
-  .road li { padding: 8px 0; border-bottom: 1px solid var(--border); }
-  .road li:last-child { border: 0; }
-  .road b { color: var(--text); }
+  .phases { list-style: none; margin: 0; padding: 0; position: relative; }
+  .phases::before { content: ""; position: absolute; left: 15px; top: 8px; bottom: 8px; width: 2px; background: var(--border); }
+  .phase { position: relative; padding: 0 0 30px 48px; }
+  .phase:last-child { padding-bottom: 0; }
+  .phase .node { position: absolute; left: 6px; top: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--bg); border: 3px solid var(--later); }
+  .phase.live .node { border-color: var(--live); background: var(--live); }
+  .phase.next .node { border-color: var(--next); }
+  .phase h3 { margin: 0 0 4px; font-size: 1.12rem; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .phase p { margin: 0 0 8px; color: var(--muted); max-width: 66ch; }
+  .phase ul { margin: 0; padding-left: 18px; color: var(--muted); }
+  .phase li { margin: 3px 0; }
+  .status { font-size: .7rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; border: 1px solid currentColor; }
+  .status.live { color: var(--live); }
+  .status.next { color: var(--next); }
+  .status.later { color: var(--later); }
 
-  footer { border-top: 1px solid var(--border); color: var(--muted); font-size: .9rem; }
+  footer.wrap { border-top: 1px solid var(--border); color: var(--muted); font-size: .9rem; padding: 36px 16px 48px; }
   footer p { margin: 6px 0; }
-  code { background: color-mix(in srgb, var(--accent) 12%, transparent); padding: 1px 6px; border-radius: 6px; }
 </style>
 </head>
 <body>
 
-<header class="hero wrap">
-  <svg class="icon" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg" aria-label="Septima icon">
-    <defs>
-      <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0" stop-color="#5b6ee1"/><stop offset="1" stop-color="#3b3a9e"/>
-      </linearGradient>
-    </defs>
-    <rect x="8" y="8" width="112" height="112" rx="26" fill="url(#bg)"/>
-    <g transform="translate(28 30)">
-      <rect x="0" y="18" width="72" height="52" rx="7" fill="#fff"/>
-      <rect x="-4" y="6" width="80" height="20" rx="7" fill="#fff"/>
-      <rect x="32" y="6" width="8" height="64" fill="#c7cbe8"/>
-      <rect x="30" y="40" width="12" height="14" rx="3" fill="#3b3a9e"/>
-    </g>
-  </svg>
-  <span class="badge">v0.5.1 — batch encryption is here</span>
-  <h1>Septima</h1>
-  <p class="tagline">The archiver that actually speaks modern-codec 7z.</p>
+<div class="wrap top">
+  <a class="brand" href="./">
+    <svg viewBox="0 0 128 128" aria-hidden="true">
+      <defs>
+        <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#5b6ee1"/><stop offset="1" stop-color="#3b3a9e"/>
+        </linearGradient>
+      </defs>
+      <rect x="8" y="8" width="112" height="112" rx="26" fill="url(#bg)"/>
+      <g transform="translate(28 30)">
+        <rect x="0" y="18" width="72" height="52" rx="7" fill="#fff"/>
+        <rect x="-4" y="6" width="80" height="20" rx="7" fill="#fff"/>
+        <rect x="32" y="6" width="8" height="64" fill="#c7cbe8"/>
+        <rect x="30" y="40" width="12" height="14" rx="3" fill="#3b3a9e"/>
+      </g>
+    </svg>
+    Septima
+  </a>
+  <nav>
+    <a href="#try">Try it</a>
+    <a href="#encrypt">Batch encryption</a>
+    <a class="opt" href="#codecs">Codecs</a>
+    <a class="opt" href="#roadmap">Roadmap</a>
+    <a class="opt" href="blog/">Blog</a>
+    <a href="https://github.com/superuser-miguel/septima">GitHub</a>
+  </nav>
+</div>
+
+<header class="hero wrap" id="try">
+  <a class="pill" href="https://github.com/superuser-miguel/septima/releases/tag/v0.5.2"><span class="dot"></span>New in 0.5.2: 7-Zip ZS 26.05, with a brotli security fix</a>
+  <h1>Modern compression, <em>minus the folklore</em>.</h1>
   <p class="lede">
-    A GNOME-native front-end for <strong>7-Zip ZS</strong> — browse, extract, and
-    create archives with <strong>Zstandard, Brotli and Fast-LZMA2</strong>, and a
-    real compression-tuning interface no other Linux archiver offers. Now with
-    <strong>batch encryption</strong>: a pile of folders, one generated password
-    each, and a portable passwords file that opens the whole set back up.
+    Septima is a GNOME app for 7-Zip ZS. Zstandard, Brotli and Fast-LZMA2 inside real
+    <code>.7z</code>, every setting as a control instead of a switch you have to remember,
+    and batch encryption with one password per archive.
   </p>
   <div class="btns">
     <a class="btn primary" href="https://superuser-miguel.github.io/septima-repo/septima.flatpakref">Install (auto-updating)</a>
-    <a class="btn" href="https://github.com/superuser-miguel/septima">View on GitHub</a>
+    <a class="btn" href="#encrypt">See batch encryption</a>
   </div>
-  <p class="sub" style="margin-top:12px">Signed Flatpak repo — new releases arrive with <code>flatpak update</code>. Prefer a one-off file? <a href="https://github.com/superuser-miguel/septima/releases/latest">Download the .flatpak bundle</a>.</p>
-  <img class="shot" src="screenshots/codec-menu.png" alt="Septima's Add-to-Archive dialog with the modern-codec method menu open">
+  <p class="note">Free · Linux, as a signed Flatpak · new releases arrive with <code>flatpak update</code> · or <a href="https://github.com/superuser-miguel/septima/releases/latest">download the bundle</a></p>
+
+  <div class="panel builder">
+    <div class="panel-head">
+      <span class="label">Try it: pick settings and see the exact <code>7zz</code> command Septima runs.</span>
+      <div class="seg" role="group" aria-label="Format" id="fmt"></div>
+    </div>
+    <div class="controls">
+      <label class="ctl"><span>Codec</span><select id="codec"></select></label>
+      <label class="ctl" id="liz-ctl" hidden><span>Lizard family</span><select id="lizard"></select></label>
+      <label class="ctl" id="level-ctl"><span>Level <output id="level-out"></output></span>
+        <input type="range" id="level"><span class="range-ends"><span id="lmin"></span><span id="lmax"></span></span></label>
+      <label class="ctl" id="dict-ctl"><span>Dictionary</span><select id="dict"></select></label>
+      <label class="ctl" id="threads-ctl"><span>Threads</span><input type="number" id="threads" min="1" max="256"></label>
+      <label class="ctl" id="filter-ctl"><span>Filter (before the codec)</span><select id="filter"></select></label>
+      <label class="ctl" id="vol-ctl"><span>Split into volumes</span><select id="vol"></select></label>
+      <div class="ctl" id="opts-ctl"><span>Options</span>
+        <label class="switch" id="solid-sw"><input type="checkbox" id="solid"> Solid archive</label>
+        <label class="switch" id="enc-sw"><input type="checkbox" id="enc"> Password</label>
+        <label class="switch" id="names-sw"><input type="checkbox" id="names"> Encrypt file names</label>
+      </div>
+      <label class="ctl" id="cipher-ctl" hidden><span>Encryption</span><select id="cipher"></select></label>
+    </div>
+    <pre class="cmd" id="cmd" aria-live="polite"></pre>
+    <div class="builder-foot" id="foot"></div>
+  </div>
 </header>
 
-<section class="wrap">
-  <h2>Why Septima?</h2>
-  <p class="sub">Modern codecs, real tuning, and a native GNOME UI — a combination nothing else fills.</p>
+<section class="wrap" id="why">
+  <span class="eyebrow">Why Septima</span>
+  <h2>The codecs you want, in an app that feels like GNOME.</h2>
+  <p class="sub">File Roller and Ark are native but stop at the classic codecs. The 7-Zip ZS command line can do everything, if you know the switches. Septima is the space in between.</p>
   <div class="tablewrap">
-    <table>
-      <thead>
-        <tr>
-          <th></th><th>Modern codecs</th><th>Real tuning</th><th>GNOME-native</th><th>One-gesture <code>.tar.zst</code></th>
-        </tr>
-      </thead>
+    <table class="compare-table">
+      <thead><tr><th></th><th>Modern codecs</th><th>Real tuning</th><th>GNOME-native</th><th>One-step <code>.tar.zst</code></th><th>Batch encryption</th></tr></thead>
       <tbody>
-        <tr><td>File Roller / Ark</td><td class="n">✗</td><td class="n">✗</td><td class="y">✓</td><td class="n">✗</td></tr>
-        <tr><td>PeaZip</td><td class="n">~</td><td class="y">✓</td><td class="n">✗</td><td class="n">~</td></tr>
-        <tr><td>7-Zip CLI (<code>7zz</code>)</td><td class="y">✓</td><td class="y">✓</td><td class="n">✗</td><td class="n">✗</td></tr>
-        <tr class="me"><td>Septima</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
+        <tr><td>File Roller / Ark</td><td class="n">✗</td><td class="n">✗</td><td class="y">✓</td><td class="n">✗</td><td class="n">✗</td></tr>
+        <tr><td>PeaZip</td><td class="n">~</td><td class="y">✓</td><td class="n">✗</td><td class="n">~</td><td class="n">✗</td></tr>
+        <tr><td>7-Zip CLI (<code>7zz</code>)</td><td class="y">✓</td><td class="y">✓</td><td class="n">✗</td><td class="n">✗</td><td class="n">✗</td></tr>
+        <tr class="me"><td>Septima</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td><td class="y">✓</td></tr>
       </tbody>
     </table>
   </div>
 </section>
 
-<section class="wrap">
-  <h2>Features</h2>
-  <p class="sub">Everything driven by the bundled <code>7zz</code> — no host filesystem access, portals only.</p>
-  <div class="grid">
-    <div class="card">
-      <h3>The Add-to-Archive dialog</h3>
-      <p>Format × codec × level, with the level range reacting to the codec. Dictionary, solid mode, and threads — with a <strong>live memory estimate</strong>.</p>
+<section class="wrap" id="encrypt">
+  <span class="eyebrow">Batch encryption · since 0.5.0</span>
+  <h2>One password per archive. One file to get them all back.</h2>
+  <p class="sub">
+    Encrypt a pile of folders without inventing a password for each, or reusing one for all of them.
+    Every archive gets its own random password, and Septima writes them all into a
+    <b>passwords file</b> that you keep wherever you keep secrets.
+  </p>
+  <div class="flow">
+    <div class="panel">
+      <div class="panel-head"><span class="label" id="items-label">1 · Pick what to encrypt</span></div>
+      <ul class="items" id="items"></ul>
+      <div class="actions">
+        <button class="btn primary" type="button" id="do-encrypt">Encrypt 5 items</button>
+        <button class="btn" type="button" id="do-back" disabled>Hand the file back</button>
+        <span class="msg" id="enc-msg" aria-live="polite"></span>
+      </div>
     </div>
-    <div class="card">
-      <h3>Modern codecs, first-class</h3>
-      <p>Zstandard (1–22), Brotli, Fast-LZMA2, LZ4/LZ5, Lizard, plus LZMA2, PPMd, BZip2 — inside real <code>.7z</code>.</p>
+    <div class="panel file">
+      <div class="panel-head">
+        <span class="label" id="file-label">The passwords file</span>
+        <div class="seg" role="group" aria-label="File view">
+          <button type="button" id="view-json" aria-pressed="true">Readable JSON</button>
+          <button type="button" id="view-gpg" aria-pressed="false">Protected</button>
+        </div>
+      </div>
+      <div id="file-body"><p class="empty">Press <b>Encrypt</b> to see the file Septima writes.</p></div>
+      <div class="file-foot" id="file-foot">These passwords are generated in your browser the same way the app does it, and never leave this page.</div>
     </div>
-    <div class="card">
-      <h3>Architecture &amp; filter picker</h3>
-      <p>Delta, ARM64, ARM/ARMT, PPC, SPARC, RISC-V and BCJ2 alongside x86 BCJ — a real control, instead of the <code>-m0=bcj</code> folklore the Windows tool makes you learn.</p>
+  </div>
+  <div class="steps-row">
+    <div class="card"><h3>Truly random, every time</h3><p>64 characters from the kernel's random source for each archive, with no bias toward any letter. Nobody has to think one up.</p></div>
+    <div class="card"><h3>A file, not a vault plug-in</h3><p>Plain JSON with each archive, what it was made from, its password and the cipher in words. Keep it in KeePassXC, Bitwarden, <code>pass</code>, or a drawer.</p></div>
+    <div class="card"><h3>Protect the file too</h3><p>Optionally lock it with a password of its own using standard <code>gpg -c</code>, so any <code>gpg</code> anywhere opens it. Chosen before the run, so a protected run never writes plaintext.</p></div>
+    <div class="card"><h3>Safe if it stops halfway</h3><p>Every password is on disk before the first archive is created, and the file is rewritten safely as each one finishes.</p></div>
+  </div>
+  <p class="note" style="text-align:left">The whole design, and why the file is just a file: <a href="blog/2026-08-16-batch-encrypt-passwords-file.html">Batch encryption with a portable passwords file →</a></p>
+</section>
+
+<section class="wrap" id="batch">
+  <span class="eyebrow">Batches · 0.5.1</span>
+  <h2>Drop forty archives. Get one answer.</h2>
+  <div class="two">
+    <div>
+      <p class="sub" style="margin-bottom:20px">Select or drop a pile of archives and each one unpacks into its own new folder. Septima stays quiet while it works, then tells you once how it went.</p>
+      <div class="toast" role="img" aria-label="A summary notice: Extracted 48 archives, 2 failed, with a Show in Files button">
+        <span><b>Extracted 48 archives</b> · 2 failed</span><span class="tbtn">Show in Files</span>
+      </div>
+      <ul class="points" style="margin-top:22px">
+        <li><b>Problems collected, not interrupting.</b> Anything that failed is listed in one dialog at the end, instead of a pop-up per archive.</li>
+        <li><b>One password question.</b> Encrypted archives wait until the rest finish, then Septima asks once. A wrong password asks again; Cancel skips them.</li>
+        <li><b>Works the other way too.</b> Stage several files or folders and get a separate archive for each, saved right next to it.</li>
+      </ul>
     </div>
-    <div class="card">
-      <h3>Transparent modern tarballs</h3>
-      <p>Create a real <code>.tar.zst</code> / <code>.tar.xz</code> / <code>.tar.br</code> — or Lizard, LZ4 and LZ5 — in one gesture, with full compression control.</p>
-    </div>
-    <div class="card">
-      <h3>Raw single-file streams</h3>
-      <p>Write a bare <code>.zst</code>, <code>.br</code>, <code>.lz4</code>, <code>.lz5</code>, <code>.xz</code>, <code>.gz</code> or <code>.bz2</code> — not only <code>tar</code> plus a compressor.</p>
-    </div>
-    <div class="card">
-      <h3>Lizard, properly exposed</h3>
-      <p>Choose among Lizard's four method families (fastLZ4 / LIZv1, with or without Huffman) rather than guessing at one flat 10–49 slider.</p>
-    </div>
-    <div class="card">
-      <h3>Extract, safely</h3>
-      <p>Live progress and cancel, encrypted-archive password prompts, and split-volume output.</p>
-    </div>
-    <div class="card">
-      <h3>Real encryption choices</h3>
-      <p>AES-256 with optional encrypted file names for <code>.7z</code> — and AES-256 for zip instead of its weak ZipCrypto default.</p>
-    </div>
-    <div class="card">
-      <h3>Sandboxed by design</h3>
-      <p>A Flatpak that ships <code>7zz</code> and touches your files only through XDG portals — never the whole home directory.</p>
-    </div>
-    <div class="card">
-      <h3>Built-in checksum calculator</h3>
-      <p>13 digests — CRC-32/64, MD5, SHA-1, SHA-256/384/512, SHA3-256/512, BLAKE3, BLAKE2sp and XXH32/64 — with copy and verify-against-a-checksum.</p>
-    </div>
-    <div class="card">
-      <h3>Named tuning presets</h3>
-      <p>Save your codec/level/dictionary/threads setup once, reuse it on the next archive.</p>
-    </div>
-    <div class="card">
-      <h3>Post-extract actions</h3>
-      <p>Jump straight to the extracted files with "Show in Files", or opt in to delete the archive afterwards.</p>
-    </div>
-    <div class="card">
-      <h3>One-click checksum file</h3>
-      <p>Write a <code>.sha256</code> alongside a new archive — one line per volume part, for split archives.</p>
-    </div>
-    <div class="card">
-      <h3>Edit an archive in place</h3>
-      <p>Delete or rename entries directly, and verify integrity with a one-click "Test Archive".</p>
-    </div>
-    <div class="card">
-      <h3>Batch extract</h3>
-      <p>Select or drop several archives at once — each unpacks into its own new folder, and the batch ends with one summary. Encrypted ones are asked about once, together.</p>
-    </div>
-    <div class="card">
-      <h3>Batch compress</h3>
-      <p>Stage several files or folders and create a separate archive for each one, saved right next to it.</p>
-    </div>
-    <div class="card">
-      <h3>Batch encrypt, one password each</h3>
-      <p>Every archive in a batch gets its own random 64-character password, recorded in a <strong>passwords file</strong> you keep wherever you keep secrets — no vault API, no lock-in.</p>
-    </div>
-    <div class="card">
-      <h3>…and the whole set back</h3>
-      <p>Open that passwords file later — button, drag, or command line — and Septima extracts every archive it lists with its recorded password. Or tick just the two you need.</p>
-    </div>
-    <div class="card">
-      <h3>Protect the passwords file</h3>
-      <p>Leave it as readable JSON, or give it a password of its own — standard OpenPGP via <code>gpg -c</code>, so any <code>gpg</code> anywhere opens it. Chosen before the run, so a protected run never writes plaintext.</p>
-    </div>
-    <div class="card">
-      <h3>Drag entries out to extract</h3>
-      <p>Select rows in an open archive and drag them into Files — they arrive extracted, folders with their whole subtree.</p>
+    <div>
+      <p class="sub" style="margin-bottom:12px"><b style="color:var(--text)">Same names never overwrite each other.</b></p>
+      <div class="tablewrap clash">
+        <table>
+          <thead><tr><th>In the batch</th><th></th><th>Becomes</th></tr></thead>
+          <tbody>
+            <tr><td>photos.zip</td><td class="arrow">→</td><td>photos/</td></tr>
+            <tr><td>photos.7z</td><td class="arrow">→</td><td>photos_2/</td></tr>
+            <tr><td>report.txt</td><td class="arrow">→</td><td>report.7z</td></tr>
+            <tr><td>report.pdf</td><td class="arrow">→</td><td>report_2.7z</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <ul class="points" style="margin-top:22px">
+        <li><b>Drag out to extract.</b> Select rows in an open archive and drag them into Files. They arrive extracted, folders with everything inside.</li>
+      </ul>
     </div>
   </div>
 </section>
 
-<section class="wrap">
-  <h2>…and an escape hatch for power users</h2>
-  <p class="sub">The dialog covers the common knobs; the Advanced field passes any 7-Zip switch straight through.</p>
+<section class="wrap" id="codecs">
+  <span class="eyebrow">Measured, not claimed</span>
+  <h2>What the codecs actually do.</h2>
+  <p class="sub">
+    Every codec Septima offers, run through the 7-Zip ZS build that ships inside it, on the
+    same 212 MB of mixed real-world files. Up and to the right is better: smaller archives,
+    made faster. Hover a point for the numbers.
+  </p>
+  <div class="panel">
+    <ul class="legend" id="legend" style="padding-top:14px"></ul>
+    <div class="viz" id="viz"></div>
+    <div class="viz-foot" id="viz-foot"></div>
+  </div>
+  <details class="table-view">
+    <summary>Show the numbers as a table</summary>
+    <div class="tablewrap"><table class="data-table" id="data-table"></table></div>
+  </details>
+</section>
+
+<section class="wrap" id="more">
+  <span class="eyebrow">The rest of the toolkit</span>
+  <h2>Everything the command line can create.</h2>
+  <p class="sub">Septima covers what the bundled <code>7zz</code> can make on Linux, as controls rather than switches.</p>
   <div class="grid">
-    <div class="card">
-      <h3>Codec fine-tuning</h3>
-      <p><code>-mfb=273</code> word size · <code>-mmf=bt4</code> match finder · <code>-mo=32</code> PPMd order.</p>
-    </div>
-    <div class="card">
-      <h3>Architecture filters</h3>
-      <p><code>-m0=ARM64 -m1=lzma2</code> for ARM binaries · <code>-m0=Delta:4</code> for fixed-stride data.</p>
-    </div>
-    <div class="card">
-      <h3>Metadata &amp; storage</h3>
-      <p><code>-snl</code> keep symlinks · <code>-ms=100m</code> solid block size · <code>-mem=…</code> modern encryption.</p>
-    </div>
+    <div class="card"><h3>Tarballs in one step</h3><p>A real <code>.tar.zst</code>, <code>.tar.xz</code>, <code>.tar.br</code>, LZ4, LZ5 or Lizard tarball from one dialog, with full control of the compressor.</p></div>
+    <div class="card"><h3>Single-file streams</h3><p>Write a bare <code>.zst</code>, <code>.br</code>, <code>.lz4</code>, <code>.lz5</code>, <code>.xz</code>, <code>.gz</code> or <code>.bz2</code>.</p></div>
+    <div class="card"><h3>Filters as a menu</h3><p>ARM64, RISC-V, x86 BCJ/BCJ2, PowerPC, SPARC and Delta, picked from a list instead of learned as <code>-m0=</code> incantations.</p></div>
+    <div class="card"><h3>Checksums, 13 of them</h3><p>CRC, MD5, SHA-1/2/3, BLAKE3, BLAKE2sp and XXH, with copy and verify. Or write a <code>.sha256</code> next to a new archive.</p></div>
+    <div class="card"><h3>Edit and test in place</h3><p>Delete or rename entries inside an archive, and check its integrity with one click.</p></div>
+    <div class="card"><h3>Presets</h3><p>Save a codec, level, dictionary and thread setup once, and reuse it on the next archive.</p></div>
+    <div class="card"><h3>Strong encryption choices</h3><p>AES-256 with optional encrypted file names for <code>.7z</code>, and AES-256 for zip instead of its weak ZipCrypto default.</p></div>
+    <div class="card"><h3>Sandboxed</h3><p>A Flatpak that ships its own <code>7zz</code> and reaches your files only through the desktop's file portals, never your whole home folder.</p></div>
+    <div class="card"><h3>An escape hatch</h3><p>The Advanced field passes any 7-Zip switch straight through, like <code>-mfb=273</code> or <code>-snl</code>, for the cases a control doesn't cover.</p></div>
   </div>
 </section>
 
-<section class="wrap">
-  <h2>Roadmap</h2>
-  <p class="sub">Honest about where it's headed. <strong>v0.5.1 is out now</strong> — batch encryption with a portable passwords file, and batches that end with one summary instead of a notice per archive. (Read the deep-dives on <a href="blog/">the Septima blog</a>.)</p>
-
-  <h3 style="margin:1.5rem 0 .4rem;font-size:1.1rem">Shipped in 0.5.0 — batch encryption with a portable passwords file</h3>
-  <p class="sub" style="margin-bottom:.8rem">Encrypt a <em>pile</em> of things without inventing a password per item or reusing one across all of them. <a href="blog/2026-08-16-batch-encrypt-passwords-file.html">How it works, and why the file is just a file →</a></p>
-  <ul class="road">
-    <li><b>Unique password per archive</b> — batch mode gives every archive its own 64-character password from the kernel CSPRNG.</li>
-    <li><b>A passwords file, not a vault integration</b> — readable JSON recording each archive, what it was made from, its password, its SHA-256, and the cipher in plain words. Keep it in KeePassXC, Bitwarden, <code>pass</code>, or a drawer.</li>
-    <li><b>Optional protection for the file itself</b> — symmetric OpenPGP (<code>gpg -c</code>): no keys, no keyring, no host access. Chosen before the run, so a protected run never leaves plaintext on disk.</li>
-    <li><b>Crash-safe</b> — every password is on disk before the first archive is created; the file is rewritten atomically as each one completes.</li>
-    <li><b>Batch decrypt</b> — hand the file back and Septima extracts the set, each with its recorded password, with a per-entry picker for taking only some.</li>
-    <li><b>Drag-out to extract</b> — drag entries from an open archive into Files and they arrive extracted.</li>
-  </ul>
-
-  <h3 style="margin:1.5rem 0 .4rem;font-size:1.1rem">Shipped in 0.4.0 — full <code>7zz</code> CLI parity</h3>
-  <p class="sub" style="margin-bottom:.8rem">Genuine 1:1 coverage of what the bundled <code>7zz</code> can create on Linux. 0.4.0 also <strong>repairs Brotli creation</strong> — every <code>.br</code> and <code>.tar.br</code> written by v0.3.0 was corrupt, so recreate those files.</p>
-  <ul class="road">
-    <li><b>Complete hash calculator</b> — 13 digests (CRC-64, MD5, SHA-1/384, SHA3-512, BLAKE2sp, XXH32/64).</li>
-    <li><b>Zip AES-256</b> — choose strong encryption over the weak ZipCrypto default.</li>
-    <li><b>More format × codec combos</b> — XZ / Deflate64 in zip; Brotli / LZ4 / LZ5 / Lizard tarballs.</li>
-    <li><b>Architecture / filter picker</b> — Delta, ARM64, ARM/ARMT, PPC, SPARC, RISC-V, BCJ2 as a real control.</li>
-    <li><b>Lizard family × level</b> — expose Lizard's four method families, not one flat slider.</li>
-    <li><b>Standalone streams</b> — write a raw <code>.zst</code> / <code>.br</code> / <code>.lz4</code> file, not only <code>tar</code> + a compressor.</li>
-  </ul>
-
-  <h3 style="margin:1.5rem 0 .4rem;font-size:1.1rem">Later</h3>
-  <ul class="road">
-    <li><b>Encrypt the passwords file to a GPG key</b> — <code>gpg -e -r &lt;key&gt;</code> alongside the password mode, so there's nothing to remember at write time. Only ever touches the <em>public</em> key.</li>
-    <li><b>Archive naming patterns in batch mode</b> — prefix, suffix or obfuscated names, with the passwords file keeping the association back to the original item.</li>
-    <li><b>Nautilus integration</b> — right-click "Extract Here" / "Compress…" in GNOME Files, like File Roller.</li>
-    <li><b>Visual polish</b> — custom styling and a bespoke app icon.</li>
-  </ul>
+<section class="wrap" id="roadmap">
+  <span class="eyebrow">Roadmap</span>
+  <h2>Where Septima is going.</h2>
+  <p class="sub">Each step ships on its own. Fix releases keep the bundled 7-Zip ZS current in between.</p>
+  <ol class="phases">
+    <li class="phase live">
+      <span class="node"></span>
+      <h3>7-Zip ZS 26.05 <span class="status live">Live · 0.5.2</span></h3>
+      <p>Fixes a brotli decoder buffer overflow (CVE-2026-111497) and a use-after-free in single-file extraction, makes damaged archives report an error instead of extracting silently, and opens more brotli files without extra steps.</p>
+    </li>
+    <li class="phase live">
+      <span class="node"></span>
+      <h3>Batches that behave <span class="status live">Live · 0.5.1</span></h3>
+      <p>One summary per batch, one password question, and no name clashes. Built on 0.5.0's batch encryption and drag-out extraction.</p>
+    </li>
+    <li class="phase next">
+      <span class="node"></span>
+      <h3>Keyboard and a proper About <span class="status next">Next · 0.6</span></h3>
+      <ul>
+        <li><b>Keyboard shortcuts</b> for opening, creating and closing archives, with a shortcuts window on <kbd>Ctrl</kbd>+<kbd>?</kbd>.</li>
+        <li>An <b>About</b> window with release notes and the exact 7-Zip ZS build inside.</li>
+        <li><b>What Septima Can Do</b>: a built-in guide to every feature.</li>
+      </ul>
+    </li>
+    <li class="phase">
+      <span class="node"></span>
+      <h3>Later <span class="status later">Planned</span></h3>
+      <ul>
+        <li><b>Lock the passwords file to a GPG key</b>, so there's nothing to remember when you write it.</li>
+        <li><b>Naming patterns in batch mode</b>: prefixes, suffixes or hidden names, with the passwords file keeping track.</li>
+        <li><b>Files integration</b>: right-click "Extract Here" and "Compress…" in GNOME Files.</li>
+      </ul>
+    </li>
+  </ol>
 </section>
 
 <footer class="wrap">
-  <section>
-    <p><strong>Septima</strong> is free software, <strong>GPL-3.0-or-later</strong>.</p>
-    <p>Bundles <a href="https://github.com/mcmilk/7-Zip-zstd">7-Zip ZS</a> by Tino Reichardt (extending Igor Pavlov's 7-Zip) — bundled, not forked. Built with gtk4-rs, libadwaita, Blueprint and Meson.</p>
-    <p><a href="https://github.com/superuser-miguel/septima">github.com/superuser-miguel/septima</a></p>
-  </section>
+  <p><strong>Read more:</strong> <a href="blog/">The Septima blog</a> · <a href="blog/2026-08-16-batch-encrypt-passwords-file.html">Batch encryption</a> · <a href="https://github.com/superuser-miguel/septima/issues">Report a bug</a></p>
+  <p><strong>Septima</strong> is free software, <strong>GPL-3.0-or-later</strong>.</p>
+  <p>Bundles <a href="https://github.com/mcmilk/7-Zip-zstd">7-Zip ZS</a> by Tino Reichardt, extending Igor Pavlov's 7-Zip, unmodified. Built with gtk4-rs, libadwaita, Blueprint and Meson.</p>
+  <p><a href="https://github.com/superuser-miguel/septima">github.com/superuser-miguel/septima</a></p>
 </footer>
+
+<div class="tip" id="tip" role="status"></div>
+
+<!-- Copied from the app's create dialog. A test in crates/septima-gtk/src/create_dialog.rs
+     fails if this block drifts from the real tables, and prints the block to paste here. -->
+<script type="application/json" id="septima-caps">
+{"formats":[
+{"id":"7z","label":"7z","ext":"7z","enc":true,"names":true,"solid":true,"codecs":[{"id":"lzma2","label":"LZMA2","min":1,"max":9,"def":5},{"id":"lzma","label":"LZMA","min":1,"max":9,"def":5},{"id":"ppmd","label":"PPMd","min":1,"max":9,"def":6},{"id":"zstd","label":"Zstandard","min":1,"max":22,"def":3},{"id":"brotli","label":"Brotli","min":0,"max":11,"def":6},{"id":"flzma2","label":"Fast-LZMA2","min":1,"max":9,"def":6},{"id":"bzip2","label":"BZip2","min":1,"max":9,"def":5},{"id":"lz4","label":"LZ4","min":1,"max":12,"def":1},{"id":"lz5","label":"LZ5","min":1,"max":15,"def":1},{"id":"lizard","label":"Lizard","min":0,"max":9,"def":2},{"id":"deflate","label":"Deflate","min":1,"max":9,"def":5},{"id":"copy","label":"Store (no compression)","min":0,"max":0,"def":0}]},
+{"id":"zip","label":"Zip","ext":"zip","enc":true,"names":false,"solid":false,"codecs":[{"id":"deflate","label":"Deflate","min":1,"max":9,"def":5},{"id":"deflate64","label":"Deflate64","min":1,"max":9,"def":5},{"id":"zstd","label":"Zstandard","min":1,"max":22,"def":3},{"id":"xz","label":"xz","min":0,"max":9,"def":6},{"id":"lzma","label":"LZMA","min":1,"max":9,"def":5},{"id":"ppmd","label":"PPMd","min":1,"max":9,"def":6},{"id":"bzip2","label":"BZip2","min":1,"max":9,"def":5},{"id":"copy","label":"Store (no compression)","min":0,"max":0,"def":0}]},
+{"id":"tar","label":"Tar","ext":"tar","enc":false,"names":false,"solid":false,"codecs":[{"id":"copy","label":"Store (no compression)","min":0,"max":0,"def":0},{"id":"zstd","label":"Zstandard","min":1,"max":22,"def":3},{"id":"xz","label":"xz","min":0,"max":9,"def":6},{"id":"gzip","label":"gzip","min":1,"max":9,"def":6},{"id":"bzip2","label":"BZip2","min":1,"max":9,"def":5},{"id":"brotli","label":"Brotli","min":0,"max":11,"def":6},{"id":"lz4","label":"LZ4","min":1,"max":12,"def":1},{"id":"lz5","label":"LZ5","min":1,"max":15,"def":1},{"id":"lizard","label":"Lizard","min":0,"max":9,"def":2}]},
+{"id":"stream","label":"Single file (raw stream)","ext":"","enc":false,"names":false,"solid":false,"codecs":[{"id":"zstd","label":"Zstandard","min":1,"max":22,"def":3},{"id":"xz","label":"xz","min":0,"max":9,"def":6},{"id":"gzip","label":"gzip","min":1,"max":9,"def":6},{"id":"bzip2","label":"BZip2","min":1,"max":9,"def":5},{"id":"brotli","label":"Brotli","min":0,"max":11,"def":6},{"id":"lz4","label":"LZ4","min":1,"max":12,"def":1},{"id":"lz5","label":"LZ5","min":1,"max":15,"def":1}]}
+],
+"filters":[{"id":"","label":"None"},{"id":"BCJ","label":"Executables — x86 (BCJ)"},{"id":"BCJ2","label":"Executables — x86 (BCJ2)"},{"id":"ARM64","label":"Executables — ARM64"},{"id":"ARM","label":"Executables — ARM"},{"id":"ARMT","label":"Executables — ARM Thumb"},{"id":"PPC","label":"Executables — PowerPC"},{"id":"SPARC","label":"Executables — SPARC"},{"id":"RISCV","label":"Executables — RISC-V"},{"id":"Delta","label":"Delta (audio, tables, bitmaps)"}],
+"lizard":[["fastLZ4",10],["LIZv1",20],["fastLZ4 + Huffman",30],["LIZv1 + Huffman",40]],
+"dict":[["Auto",null,null],["1 MiB","1m",1048576],["4 MiB","4m",4194304],["16 MiB","16m",16777216],["64 MiB","64m",67108864],["256 MiB","256m",268435456],["1 GiB","1g",1073741824]],
+"volumes":[["Off",null],["25 MiB","25m"],["100 MiB","100m"],["700 MiB (CD)","700m"],["1 GiB","1g"],["4 GiB","4g"]]}
+</script>
+
+<!-- Codec benchmark: how it was measured is in "note", shown under the chart. -->
+<script type="application/json" id="bench">
+{"input_bytes":211957760,"note":"Measured 2026-11-20 with the 7zz inside Septima 0.5.2 (7-Zip ZS 26.05), as 7zz a -t7z -m0=<codec> -mx=<level> -mmt=12 on the Silesia corpus packed into one 212 MB tar (text, databases, executables, images, XML). One run each on an AMD Ryzen 5 5600H (6 cores, 12 threads), times include starting 7zz. 'Test' is the time for 7zz t to decompress and check the archive. Your files and machine will differ; the shape holds.","rows":[{"codec":"zstd","level":1,"bytes":73293027,"comp_s":0.205,"decomp_s":0.219},
+{"codec":"zstd","level":3,"bytes":66218019,"comp_s":0.31,"decomp_s":0.239},
+{"codec":"zstd","level":9,"bytes":59179595,"comp_s":1.483,"decomp_s":0.234},
+{"codec":"zstd","level":15,"bytes":57031474,"comp_s":8.624,"decomp_s":0.226},
+{"codec":"zstd","level":19,"bytes":52838652,"comp_s":29.157,"decomp_s":0.27},
+{"codec":"zstd","level":22,"bytes":52286398,"comp_s":127.138,"decomp_s":0.322},
+{"codec":"brotli","level":1,"bytes":73876526,"comp_s":0.152,"decomp_s":0.12},
+{"codec":"brotli","level":5,"bytes":59900752,"comp_s":1.49,"decomp_s":0.134},
+{"codec":"brotli","level":9,"bytes":57178665,"comp_s":12.487,"decomp_s":0.262},
+{"codec":"brotli","level":11,"bytes":50604246,"comp_s":55.456,"decomp_s":0.189},
+{"codec":"lzma2","level":1,"bytes":59098257,"comp_s":1.519,"decomp_s":0.351},
+{"codec":"lzma2","level":5,"bytes":49609833,"comp_s":23.648,"decomp_s":1.42},
+{"codec":"lzma2","level":9,"bytes":48687062,"comp_s":54.798,"decomp_s":2.215},
+{"codec":"flzma2","level":1,"bytes":59590933,"comp_s":1.83,"decomp_s":0.521},
+{"codec":"flzma2","level":6,"bytes":50229966,"comp_s":6.927,"decomp_s":0.833},
+{"codec":"flzma2","level":9,"bytes":48925872,"comp_s":9.297,"decomp_s":2.313},
+{"codec":"lz4","level":1,"bytes":100954742,"comp_s":0.142,"decomp_s":0.083},
+{"codec":"lz4","level":12,"bytes":77415957,"comp_s":2.66,"decomp_s":0.085},
+{"codec":"bzip2","level":9,"bytes":54204232,"comp_s":23.137,"decomp_s":2.349},
+{"codec":"deflate","level":9,"bytes":64711584,"comp_s":110.978,"decomp_s":0.737},
+{"codec":"ppmd","level":6,"bytes":49571466,"comp_s":17.753,"decomp_s":20.89}]}
+</script>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+/* ---------- Command builder ----------
+   Mirrors septima-engine's CompressionRequest::method_args and run_add, and the
+   create dialog's settings(): same argument order, same special cases. */
+(() => {
+  const CAPS = JSON.parse($("septima-caps").textContent);
+  const S = {
+    format: "7z", codec: "zstd", level: 3, lizard: 0, dict: 0,
+    threads: Math.min(Math.max(navigator.hardwareConcurrency || 8, 1), 256),
+    filter: 0, vol: 0, solid: false, enc: false, names: true, cipher: 0,
+  };
+  const CIPHERS = { "7z": [["AES-256 (standard)", null]], zip: [["AES-256", "AES256"], ["ZipCrypto (legacy)", null]] };
+  const fmt = () => CAPS.formats.find(f => f.id === S.format);
+  const codec = () => fmt().codecs.find(c => c.id === S.codec) || fmt().codecs[0];
+  const usesDict = c => ["lzma2", "lzma", "flzma2"].includes(c.id);
+  const STREAM_EXT = { zstd: "zst", xz: "xz", gzip: "gz", bzip2: "bz2", brotli: "br", lz4: "lz4", lz5: "lz5" };
+  const TAR_EXT = { zstd: "tar.zst", xz: "tar.xz", gzip: "tar.gz", bzip2: "tar.bz2", brotli: "tar.br", lz4: "tar.lz4", lz5: "tar.lz5", lizard: "tar.liz" };
+
+  // glib::format_size: decimal units, one decimal place.
+  function formatSize(b) {
+    const u = ["kB", "MB", "GB", "TB"]; let v = b, i = -1;
+    if (b < 1000) return `${b} bytes`;
+    while (v >= 1000 && i < u.length - 1) { v /= 1000; i++; }
+    return `${v.toFixed(1)} ${u[i]}`;
+  }
+  // septima_engine::estimate_add_memory
+  function memory(c, level, dictBytes, threads) {
+    if (!usesDict(c)) return null;
+    const mib = level <= 2 ? 1 : level <= 4 ? 4 : level <= 6 ? 16 : level <= 8 ? 32 : 64;
+    const dict = dictBytes ?? mib * 1024 * 1024;
+    return Math.max(threads, 1) * (Math.floor(dict * 21 / 2) + 16 * 1024 * 1024);
+  }
+
+  // method_args() for one request.
+  function methodArgs(r) {
+    if (r.format === "tar") return [];
+    const a = [];
+    const key = r.format === "zip" ? "-mm=" : "-m0=";
+    const filter = r.format === "7z" && r.codec !== "copy" ? r.filter : null;
+    if (r.codec) {
+      const name = r.codec === "copy" ? "Copy" : r.codec;
+      if (filter) { a.push(`-m0=${filter}`, `-m1=${name}`); } else a.push(key + name);
+    }
+    if (r.level != null) a.push(`-mx=${r.level}`);
+    if (r.dict) a.push((filter ? "-m1d=" : "-md=") + r.dict);
+    if (r.threads != null && r.format !== "brotli") a.push(`-mmt=${r.threads}`);
+    if (r.solid != null) a.push(`-ms=${r.solid ? "on" : "off"}`);
+    return a;
+  }
+  // run_add(): the full argv, as display tokens.
+  function argv(r) {
+    const t = [["7zz"], ["a"], ["-bsp1", "dim"], ["-bb1", "dim"], ["-y", "dim"], [`-t${r.format}`, "k"]];
+    methodArgs(r).forEach(x => t.push([x, "k"]));
+    if (r.password) {
+      t.push(["-p••••••••", "v"]);
+      if (r.names && r.format === "7z") t.push(["-mhe=on", "k"]);
+      if ((r.format === "zip" || r.format === "7z") && r.cipher) t.push([`-mem=${r.cipher}`, "k"]);
+    }
+    if (r.vol) t.push([`-v${r.vol}`, "k"]);
+    t.push(["--", "dim"], [r.output]);
+    r.inputs.forEach(i => t.push([i]));
+    return t;
+  }
+  const render = t => t.map(([s, c]) => c ? `<span class="${c}">${esc(s)}</span>` : esc(s)).join(" ");
+
+  function build() {
+    const f = fmt(), c = codec();
+    const store = c.id === "copy";
+    const level = store ? null : c.id === "lizard" ? CAPS.lizard[S.lizard][1] + S.level : S.level;
+    const dict = usesDict(c) ? CAPS.dict[S.dict][1] : null;
+    const vol = CAPS.volumes[S.vol][1];
+    const filterId = f.id === "7z" ? (CAPS.filters[S.filter].id || null) : null;
+    const pw = f.enc && S.enc;
+    let lines = [], notes = [];
+
+    if (f.id === "stream") {
+      // A raw stream is -t<codec> on one file: the codec is the format.
+      const out = `server.log.${STREAM_EXT[c.id]}`;
+      lines.push(render(argv({ format: c.id, level, threads: S.threads, output: out, inputs: ["server.log"] })));
+      if (c.id === "brotli") notes.push("No <b>-mmt</b> for a standalone brotli stream: Septima leaves it out on purpose.");
+    } else if (f.id === "tar" && !store) {
+      // Two steps: an uncompressed tar, then the compressor over it.
+      const out = `photos.${TAR_EXT[c.id]}`;
+      lines.push(`<span class="step"># Step 1: an uncompressed tar in a private temp folder</span>` +
+        render(argv({ format: "tar", output: "/tmp/septima-…/photos.tar", inputs: ["photos/"] })));
+      lines.push(`<span class="step"># Step 2: compress it into the final file</span>` +
+        render(argv({ format: c.id, level, threads: S.threads, vol, output: out, inputs: ["/tmp/septima-…/photos.tar"] })));
+      notes.push("A compressed tarball is two runs of <b>7zz</b>. Septima does both and cleans up the temp file.");
+    } else {
+      const out = `photos.${f.ext}`;
+      lines.push(render(argv({
+        format: f.id, codec: c.id, level, threads: S.threads, dict, filter: filterId,
+        solid: f.solid ? S.solid : null, vol, password: pw,
+        names: f.names && S.names, cipher: pw ? (CIPHERS[f.id] || [])[S.cipher]?.[1] : null,
+        output: vol ? `photos.${f.ext}` : out, inputs: ["photos/"],
+      })));
+      if (vol) notes.push(`Split output is written as <b>photos.${esc(f.ext)}.001</b>, <b>.002</b>, …`);
+      if (pw && f.id === "zip" && S.cipher === 1) notes.push("ZipCrypto is weak. It's there for old unzip tools; AES-256 is the default for a reason.");
+    }
+    $("cmd").innerHTML = lines.join("\n\n");
+
+    const mem = f.id === "stream" ? null : memory(c, level ?? 5, CAPS.dict[S.dict][2], S.threads);
+    const foot = [`<span><b>Dimmed</b> switches feed Septima's progress bar.</span>`];
+    foot.push(mem != null ? `<span>Estimated memory: <b>≈ ${formatSize(mem)}</b></span>`
+                          : `<span>Memory estimate: <b>—</b> (only shown where it's reliable)</span>`);
+    $("foot").innerHTML = foot.concat(notes.map(n => `<span>${n}</span>`)).join("");
+  }
+
+  function sync() {
+    const f = fmt();
+    if (!f.codecs.some(c => c.id === S.codec)) S.codec = f.codecs[0].id;
+    const c = codec();
+    // Format buttons
+    $("fmt").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.id === S.format)));
+    // Codec list
+    $("codec").innerHTML = f.codecs.map(x => `<option value="${x.id}">${esc(f.id === "tar" && x.id === "copy" ? "None (plain .tar)" : x.label)}</option>`).join("");
+    $("codec").value = c.id;
+    // Level
+    const store = c.id === "copy";
+    $("level-ctl").hidden = store;
+    const lv = $("level"); lv.min = c.min; lv.max = c.max;
+    if (S.level < c.min || S.level > c.max) S.level = c.def;
+    lv.value = S.level; $("lmin").textContent = c.min; $("lmax").textContent = c.max;
+    $("level-out").textContent = c.id === "lizard" ? `${S.level} (‑mx=${CAPS.lizard[S.lizard][1] + S.level})` : S.level;
+    $("liz-ctl").hidden = c.id !== "lizard";
+    $("dict-ctl").hidden = !usesDict(c) || f.id !== "7z" && f.id !== "zip";
+    $("threads-ctl").hidden = f.id === "tar" && store;
+    $("filter-ctl").hidden = f.id !== "7z";
+    $("filter").disabled = store;
+    $("vol-ctl").hidden = f.id === "stream";
+    // Options
+    $("opts-ctl").hidden = !f.solid && !f.enc;
+    $("solid-sw").hidden = !f.solid;
+    $("enc-sw").hidden = !f.enc;
+    $("names-sw").hidden = !(f.names && S.enc);
+    $("cipher-ctl").hidden = !(f.enc && S.enc);
+    const ciphers = CIPHERS[f.id] || [];
+    $("cipher").innerHTML = ciphers.map((x, i) => `<option value="${i}">${esc(x[0])}</option>`).join("");
+    if (S.cipher >= ciphers.length) S.cipher = 0;
+    $("cipher").value = S.cipher;
+    build();
+  }
+
+  // Wire up
+  $("fmt").innerHTML = CAPS.formats.map(f => `<button type="button" data-id="${f.id}">${esc(f.id === "stream" ? "Single file" : f.label)}</button>`).join("");
+  $("fmt").addEventListener("click", e => { const b = e.target.closest("button"); if (b) { S.format = b.dataset.id; sync(); } });
+  $("lizard").innerHTML = CAPS.lizard.map((x, i) => `<option value="${i}">${esc(x[0])}</option>`).join("");
+  $("dict").innerHTML = CAPS.dict.map((x, i) => `<option value="${i}">${esc(x[0])}</option>`).join("");
+  $("filter").innerHTML = CAPS.filters.map((x, i) => `<option value="${i}">${esc(x.label)}</option>`).join("");
+  $("vol").innerHTML = CAPS.volumes.map((x, i) => `<option value="${i}">${esc(x[0])}</option>`).join("");
+  $("threads").value = S.threads;
+  $("codec").addEventListener("change", e => { S.codec = e.target.value; S.level = codec().def; sync(); });
+  $("level").addEventListener("input", e => { S.level = +e.target.value; sync(); });
+  $("lizard").addEventListener("change", e => { S.lizard = +e.target.value; sync(); });
+  $("dict").addEventListener("change", e => { S.dict = +e.target.value; sync(); });
+  $("threads").addEventListener("input", e => { const v = parseInt(e.target.value, 10); if (v >= 1) { S.threads = Math.min(v, 256); build(); } });
+  $("filter").addEventListener("change", e => { S.filter = +e.target.value; sync(); });
+  $("vol").addEventListener("change", e => { S.vol = +e.target.value; sync(); });
+  $("solid").addEventListener("change", e => { S.solid = e.target.checked; sync(); });
+  $("enc").addEventListener("change", e => { S.enc = e.target.checked; sync(); });
+  $("names").checked = S.names;
+  $("names").addEventListener("change", e => { S.names = e.target.checked; sync(); });
+  $("cipher").addEventListener("change", e => { S.cipher = +e.target.value; sync(); });
+  sync();
+})();
+
+/* ---------- Batch encryption ----------
+   Same password recipe as septima_engine::generate_password: 64 characters from
+   A-Z a-z 0-9, rejection-sampled so no character is favoured. */
+(() => {
+  const ITEMS = ["Tax returns 2025", "Passport scans", "Family photos", "Contracts", "Medical records"];
+  const ALNUM = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  function password(len = 64) {
+    const n = ALNUM.length, limit = Math.floor(256 / n) * n; let out = "";
+    const buf = new Uint8Array(64);
+    while (out.length < len) {
+      crypto.getRandomValues(buf);
+      for (const b of buf) { if (b < limit) { out += ALNUM[b % n]; if (out.length === len) break; } }
+    }
+    return out;
+  }
+  let entries = null, picked = new Set(), mode = "encrypt", view = "json";
+  const now = () => new Date().toISOString().replace(/\.\d+Z$/, "Z");
+  const icon = '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+  const lock = '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>';
+
+  function json() {
+    const created = entries[0].created;
+    const kv = (k, v, last) => `      <span class="k">"${k}"</span>: <span class="v">${esc(JSON.stringify(v))}</span>${last ? "" : ","}`;
+    let s = `{\n  <span class="k">"septima_manifest"</span>: 1,\n  <span class="k">"septima"</span>: <span class="v">"0.5.2"</span>,\n  <span class="k">"created"</span>: <span class="v">"${created}"</span>,\n  <span class="k">"entries"</span>: [\n`;
+    s += entries.map(e => "    {\n" + [
+      kv("archive", e.archive), kv("source", e.source), kv("password", e.password),
+      kv("sha256", ""), kv("created", e.created), kv("encryption", e.encryption, true),
+    ].join("\n") + "\n    }").join(",\n");
+    return s + "\n  ]\n}";
+  }
+  function gpgView() {
+    return `<span class="dim"># passwords.json.gpg is binary OpenPGP, unreadable without its password.
+# Septima writes it with gpg --symmetric --cipher-algo AES256,
+# so you can open it anywhere gpg runs:</span>
+
+$ gpg -d passwords.json.gpg > passwords.json
+<span class="dim">gpg: AES256.CFB encrypted data
+gpg: encrypted with 1 passphrase</span>
+<span class="dim"># (gpg asks for the passphrase in its own pop-up)</span>
+
+<span class="dim"># Or hand passwords.json.gpg straight back to Septima,
+# which asks for the passphrase itself.</span>`;
+  }
+  function draw() {
+    const list = $("items");
+    if (mode === "encrypt") {
+      list.innerHTML = ITEMS.map((n, i) => `<li class="item${entries ? " done" : ""}">${entries ? lock : icon}<span class="nm">${esc(entries ? entries[i].archive : n)}</span><span class="st">${entries ? "Encrypted" : "Folder"}</span></li>`).join("");
+    } else {
+      list.innerHTML = entries.map((e, i) => `<li class="item${picked.has(i) ? " picked" : ""}"><input type="checkbox" data-i="${i}" ${picked.has(i) ? "checked" : ""} aria-label="Extract ${esc(e.archive)}"><span class="nm">${esc(e.archive)}</span><span class="st">${picked.has(i) ? "Extract" : "Skip"}</span></li>`).join("");
+    }
+    $("items-label").textContent = mode === "encrypt" ? (entries ? "2 · Five archives, five passwords" : "1 · Pick what to encrypt") : "3 · Open the file, tick what you need";
+    const body = $("file-body");
+    if (!entries) { body.innerHTML = `<p class="empty">Press <b>Encrypt</b> to see the file Septima writes.</p>`; }
+    else body.innerHTML = `<pre>${view === "json" ? json() : gpgView()}</pre>`;
+    $("file-label").textContent = view === "json" ? "passwords.json" : "passwords.json.gpg";
+    $("view-json").setAttribute("aria-pressed", String(view === "json"));
+    $("view-gpg").setAttribute("aria-pressed", String(view === "gpg"));
+    const btn = $("do-encrypt"), back = $("do-back");
+    if (mode === "encrypt") {
+      btn.textContent = entries ? "Start over" : "Encrypt 5 items";
+      back.disabled = !entries; back.textContent = "Hand the file back";
+    } else {
+      btn.textContent = "Start over";
+      back.disabled = picked.size === 0;
+      back.textContent = picked.size ? `Extract ${picked.size} of ${entries.length}` : "Tick some archives";
+    }
+  }
+  $("do-encrypt").addEventListener("click", () => {
+    if (entries) { entries = null; mode = "encrypt"; picked = new Set(); $("enc-msg").textContent = ""; draw(); return; }
+    const t = now();
+    entries = ITEMS.map(n => ({ archive: `${n}.7z`, source: n, password: password(), created: t, encryption: "7z, AES-256, encrypted headers" }));
+    $("enc-msg").textContent = "Done. Each archive has its own password.";
+    draw();
+  });
+  $("do-back").addEventListener("click", () => {
+    if (mode === "encrypt") { mode = "decrypt"; picked = new Set([1, 3]); $("enc-msg").textContent = "Septima read the file and found 5 archives."; draw(); return; }
+    $("enc-msg").textContent = `Extracted ${picked.size} archive${picked.size === 1 ? "" : "s"}, each with its recorded password.`;
+  });
+  $("items").addEventListener("change", e => {
+    const i = e.target.dataset.i; if (i == null) return;
+    e.target.checked ? picked.add(+i) : picked.delete(+i); $("enc-msg").textContent = ""; draw();
+  });
+  $("view-json").addEventListener("click", () => { view = "json"; draw(); });
+  $("view-gpg").addEventListener("click", () => { view = "gpg"; draw(); });
+  draw();
+})();
+
+/* ---------- Codec chart ---------- */
+(() => {
+  const B = JSON.parse($("bench").textContent);
+  // Three hues is the most a chart like this can tell apart for everyone; Fast-LZMA2
+  // shares LZMA2's hue (same family) and is told apart by a dashed line and hollow dots.
+  // Labels sit left of each line's slowest point, except Fast-LZMA2's (right, clear of PPMd).
+  const MAIN = [["zstd", "Zstandard", "--s1"], ["brotli", "Brotli", "--s2"], ["lzma2", "LZMA2", "--s3"], ["flzma2", "Fast-LZMA2", "--s3", true]];
+  const LABEL_RIGHT = new Set(["flzma2"]);
+  const OTHER = { lz4: "LZ4", bzip2: "BZip2", deflate: "Deflate", ppmd: "PPMd" };
+  const MB = B.input_bytes / 1e6;
+  const pts = B.rows.map(r => ({ ...r, speed: MB / r.comp_s, ratio: B.input_bytes / r.bytes }));
+  const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+  const W = 880, H = 440, m = { l: 56, r: 96, t: 16, b: 52 };
+  const xs = pts.map(p => p.speed), ys = pts.map(p => p.ratio);
+  const x0 = Math.log10(Math.min(...xs) / 6), x1 = Math.log10(Math.max(...xs) * 1.5);
+  const y0 = Math.floor(Math.min(...ys) * 2) / 2 - .25, y1 = Math.ceil(Math.max(...ys) * 2) / 2;
+  const X = v => m.l + (Math.log10(v) - x0) / (x1 - x0) * (W - m.l - m.r);
+  const Y = v => H - m.b - (v - y0) / (y1 - y0) * (H - m.t - m.b);
+
+  function draw() {
+    let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Compression ratio against compression speed for each codec and level">`;
+    s += `<g class="grid">`;
+    const xt = [1, 3, 10, 30, 100, 300, 1000, 3000].filter(v => Math.log10(v) >= x0 && Math.log10(v) <= x1);
+    xt.forEach(v => s += `<line x1="${X(v)}" x2="${X(v)}" y1="${m.t}" y2="${H - m.b}"/>`);
+    for (let v = Math.ceil(y0 * 2) / 2; v <= y1; v += .5) s += `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(v)}" y2="${Y(v)}"/>`;
+    s += `</g><g class="axis">`;
+    xt.forEach(v => s += `<text x="${X(v)}" y="${H - m.b + 18}" text-anchor="middle">${v >= 1000 ? v / 1000 + "k" : v}</text>`);
+    for (let v = Math.ceil(y0 * 2) / 2; v <= y1; v += .5) s += `<text x="${m.l - 8}" y="${Y(v) + 4}" text-anchor="end">${v.toFixed(1)}×</text>`;
+    s += `<text class="axis-title" x="${(m.l + W - m.r) / 2}" y="${H - 10}" text-anchor="middle">Compression speed, MB/s (log scale) →</text>`;
+    s += `<text class="axis-title" transform="translate(14 ${(m.t + H - m.b) / 2}) rotate(-90)" text-anchor="middle">Ratio (bigger is smaller files) →</text></g>`;
+    // Lines + dots for the main four
+    MAIN.forEach(([id, name, v, dashed]) => {
+      const p = pts.filter(q => q.codec === id).sort((a, b) => a.level - b.level);
+      if (!p.length) return;
+      const col = css(v);
+      s += `<polyline fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round"${dashed ? ' stroke-dasharray="6 5"' : ""} points="${p.map(q => `${X(q.speed)},${Y(q.ratio)}`).join(" ")}"/>`;
+      p.forEach(q => s += dashed
+        ? `<circle cx="${X(q.speed)}" cy="${Y(q.ratio)}" r="4.5" fill="${css("--surface")}" stroke="${col}" stroke-width="2"/>`
+        : `<circle class="dot" cx="${X(q.speed)}" cy="${Y(q.ratio)}" r="5" fill="${col}"/>`);
+      const top = p[p.length - 1], right = LABEL_RIGHT.has(id);
+      s += `<text class="lbl" x="${X(top.speed) + (right ? 9 : -9)}" y="${Y(top.ratio) + 4}" text-anchor="${right ? "start" : "end"}">${name}</text>`;
+    });
+    pts.filter(q => OTHER[q.codec]).forEach(q => {
+      s += `<circle class="dot" cx="${X(q.speed)}" cy="${Y(q.ratio)}" r="5" fill="${css("--s-other")}"/>`;
+      // PPMd and BZip2 sit among the lines: PPMd's label goes above it, BZip2's below.
+      const dy = { ppmd: -11, bzip2: 20 }[q.codec];
+      s += dy
+        ? `<text class="lbl minor" x="${X(q.speed)}" y="${Y(q.ratio) + dy}" text-anchor="middle">${OTHER[q.codec]} ${q.level}</text>`
+        : `<text class="lbl minor" x="${X(q.speed) + 9}" y="${Y(q.ratio) + 4}">${OTHER[q.codec]} ${q.level}</text>`;
+    });
+    pts.forEach((q, i) => s += `<circle class="hit" data-i="${i}" cx="${X(q.speed)}" cy="${Y(q.ratio)}" r="13"/>`);
+    $("viz").innerHTML = s + `</svg>`;
+  }
+  const name = id => (MAIN.find(m => m[0] === id) || [])[1] || OTHER[id];
+  $("legend").innerHTML = MAIN.map(([, n, v, d]) => `<li><i style="${d ? `background:repeating-linear-gradient(90deg,var(${v}) 0 5px,transparent 5px 8px)` : `background:var(${v})`}"></i>${n}</li>`).join("") +
+    `<li><i class="pt" style="background:var(--s-other)"></i>Other codecs</li>`;
+  const fmtS = s => s < 1 ? `${(s * 1000).toFixed(0)} ms` : `${s.toFixed(1)} s`;
+  const tip = $("tip");
+  $("viz").addEventListener("pointermove", e => {
+    const h = e.target.closest(".hit");
+    if (!h) { tip.style.opacity = 0; return; }
+    const q = pts[+h.dataset.i];
+    tip.innerHTML = `<b>${esc(name(q.codec))}, level ${q.level}</b><br>${q.ratio.toFixed(2)}× · ${(q.bytes / 1e6).toFixed(1)} MB<br>` +
+      `<span class="m">Compress</span> ${fmtS(q.comp_s)} <span class="m">(${q.speed.toFixed(0)} MB/s)</span><br><span class="m">Test (decompress)</span> ${fmtS(q.decomp_s)}`;
+    tip.style.opacity = 1;
+    const r = tip.getBoundingClientRect();
+    tip.style.left = Math.min(e.clientX + 14, innerWidth - r.width - 8) + "px";
+    tip.style.top = Math.max(e.clientY - r.height - 12, 8) + "px";
+  });
+  $("viz").addEventListener("pointerleave", () => tip.style.opacity = 0);
+  $("viz-foot").innerHTML = esc(B.note);
+  $("data-table").innerHTML = `<thead><tr><th>Codec</th><th>Level</th><th>Size (MB)</th><th>Ratio</th><th>Compress</th><th>MB/s</th><th>Test</th></tr></thead><tbody>` +
+    pts.map(q => `<tr><td>${esc(name(q.codec))}</td><td>${q.level}</td><td>${(q.bytes / 1e6).toFixed(1)}</td><td>${q.ratio.toFixed(2)}×</td><td>${fmtS(q.comp_s)}</td><td>${q.speed.toFixed(0)}</td><td>${fmtS(q.decomp_s)}</td></tr>`).join("") + `</tbody>`;
+  draw();
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+})();
+</script>
 
 </body>
 </html>
