@@ -14,10 +14,11 @@ codec-tuning controls no other Linux archive manager exposes.
 It is an **archive tool, not a file manager**. It never links or vendors 7-Zip
 code: a UI-free engine crate supervises the `7zz` binary as a subprocess.
 
-> Status: **v0.5.1**, and past the awkward stage. Browse, extract, create with
-> full tuning, batch operations and in-place editing all work today in a
-> sandboxed Flatpak, with 1:1 coverage of what the bundled `7zz` can create on
-> Linux — plus **batch encryption with a portable passwords file**. See the
+> Status: **v0.6.0**. Browse, extract, create with full tuning, batch
+> operations and in-place editing all work today in a sandboxed Flatpak, with
+> 1:1 coverage of what the bundled `7zz` can create on Linux, **batch
+> encryption with a portable passwords file**, keyboard shortcuts throughout,
+> and extracts that never replace your files without asking. See the
 > [roadmap](#roadmap).
 
 <p align="center">
@@ -57,7 +58,10 @@ Where Septima aims to *win*, not just match:
   in a details view: Name / Size / Packed / Method / Modified / CRC.
 - Open an archive from the file chooser, your file manager ("Open With"), or by
   **dropping it onto the window**.
-- Extract with **live progress, cancel, and password** support.
+- Extract with **live progress, cancel, and password** support — and **never
+  replace a file without asking**: when files of the same name are already in
+  the folder, choose *Keep both* (the default; new copies get a number),
+  *Skip* or *Replace*.
 - **Transparent nested browse + extract** — open a `.tar.zst` / `.tgz` /
   `.tar.br` and see the files inside, not the intermediate `.tar`.
 - **Create / Add to Archive** with full tuning:
@@ -100,6 +104,13 @@ Where Septima aims to *win*, not just match:
 - **Named compression presets** — save your tuning as a reusable preset.
 - **Staged input list** — Add Files / Add Folder across locations, with per-item
   remove, drag-and-drop, and a live count + total size of what's staged.
+- **Keyboard shortcuts** — Ctrl+O/N/W open, new, close; Ctrl+E extract;
+  Ctrl+T test; Ctrl+H checksums; F2 and Delete in the file list; F1 help;
+  Ctrl+? for the full list.
+- **What Septima Can Do** (F1) — every format and method with its levels, and
+  every `7zz` command and switch Septima sends with the control that sets it.
+  A test keeps it in step with the code, so it can't describe a switch the app
+  doesn't send.
 - Ships as a **Flatpak** with `7zz` bundled — **portals only, no host filesystem
   access** by design.
 
@@ -195,7 +206,7 @@ meson compile -C builddir
 
 ## Roadmap
 
-### Shipped (through v0.5.1)
+### Shipped (through v0.6.0)
 
 - [x] **Browse & extract** — any archive `7zz` reads, with live progress, cancel
       and password support.
@@ -317,6 +328,20 @@ per item or reusing one across all of them.
       other; `report.txt` + `report.pdf` compress to `report.7z` and
       `report_2.7z` instead of two jobs writing one file.
 
+### New in v0.6.0 — keyboard, help, and no silent overwrites
+
+- [x] **Extracting never replaces a file without asking** — before 0.6, an
+      extract into a folder that already held a file of the same name replaced
+      it silently. Septima now checks first and, only on a clash, asks: *Keep
+      both* (default), *Skip* or *Replace*. Batch extract asks when an
+      archive's folder already exists. *Skip* can't be combined with deleting
+      the archive afterwards, since the skipped files would go with it.
+- [x] **Keyboard shortcuts** throughout, listed on Ctrl+?. Delete and F2 act on
+      the file list only, so they still work inside text fields.
+- [x] **What Septima Can Do** (F1), generated from the code and kept honest by
+      a test.
+- [x] **About window** with release notes and the bundled 7-Zip ZS build.
+
 ### Later
 
 - [ ] **Encrypt the passwords file to a GPG key** — a third choice next to plain
@@ -331,9 +356,10 @@ per item or reusing one across all of them.
 - [ ] **Free-space check** — show available space at the extract destination
       before starting.
 - [ ] **Custom visual styling and app icon.**
-- [ ] **More encryption methods** — XChaCha20-Poly1305, AES+XChaCha20 and
-      friends via `-mem`, *blocked until* the bundled 7-Zip ZS ships them
-      ([mcmilk/7-Zip-zstd#505](https://github.com/mcmilk/7-Zip-zstd/pull/505)).
+- [ ] **More encryption methods** — XChaCha20-Poly1305 and the AES/XChaCha20
+      cascades via `-mem`. The bundled 7-Zip ZS has them since 26.05 (Septima
+      0.5.2, [mcmilk/7-Zip-zstd#505](https://github.com/mcmilk/7-Zip-zstd/pull/505));
+      what's left is offering them as choices.
 - [ ] **Nautilus (Files) integration** — right-click "Extract Here" / "Extract
       to…" / "Compress…", like File Roller's extension. *Not a pure app
       feature*: a Nautilus extension loads into Nautilus's own host process,

@@ -39,6 +39,17 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.6.0" date="2026-11-20">
+      <description>
+        <p>Extracting never replaces your files without asking, and Septima now works from the keyboard.</p>
+        <ul>
+          <li>Fixed: extracting into a folder that already held files with the same names replaced them without warning. Septima now checks first and, only when something would clash, asks whether to keep both (the new copies get a number), skip them, or replace them. Keep both is the default. Batch extract asks the same when an archive's folder already exists.</li>
+          <li>Keyboard shortcuts: Ctrl+E extract, Ctrl+T test, Ctrl+H checksums, F2 rename and Delete in the file list, F1 for help, and Ctrl+? for the full list.</li>
+          <li>What Septima Can Do (F1): every format and method with its levels, every 7zz command and switch Septima sends and what sets it, and a few things worth knowing.</li>
+          <li>An About window with release notes and the exact 7-Zip ZS build in use.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.5.2" date="2026-11-19">
       <description>
         <p>Updates the bundled 7-Zip ZS to 26.05 (v1.5.7, Release 1).</p>

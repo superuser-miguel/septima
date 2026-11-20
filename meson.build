@@ -1,6 +1,6 @@
 project(
   'septima',
-  version: '0.5.2',
+  version: '0.6.0',
   meson_version: '>= 0.60.0',
   license: 'GPL-3.0-or-later',
 )
@@ -16,7 +16,7 @@ gettext_package = 'septima'
 # environments fail early with a clear message.
 dependency('glib-2.0', version: '>= 2.66')
 dependency('gtk4', version: '>= 4.10')
-dependency('libadwaita-1', version: '>= 1.4')
+dependency('libadwaita-1', version: '>= 1.8')
 
 # Tools
 cargo = find_program('cargo', required: true)
