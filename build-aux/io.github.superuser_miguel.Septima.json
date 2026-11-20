@@ -53,8 +53,8 @@
           "//": "Release build source: the tagged release, pinned by tag + commit. Used to build the .flatpak bundle published on GitHub Releases. Local testing can use {type: dir, path: ..}.",
           "type": "git",
           "url": "https://github.com/superuser-miguel/septima.git",
-          "tag": "v0.5.2",
-          "commit": "641b3adcf373fe57b8b40e050e6a675086cd321c"
+          "tag": "v0.6.0",
+          "commit": "ff1ced89489843fa43560da5237fa0bb1ba59399"
         },
         "cargo-sources.json"
       ]
