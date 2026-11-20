@@ -7,5 +7,6 @@
     <file compressed="true">create_dialog.ui</file>
     <file compressed="true">hash_dialog.ui</file>
     <file compressed="true">style.css</file>
+    <file compressed="true">metainfo.xml</file>
   </gresource>
 </gresources>

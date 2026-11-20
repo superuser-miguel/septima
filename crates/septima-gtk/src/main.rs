@@ -1,12 +1,16 @@
 //! Septima — GTK4 / libadwaita frontend for 7-Zip ZS (`7zz`).
 
+mod about;
 mod archive_view;
 mod batch_run;
 mod create_dialog;
 mod entry_object;
 mod hash_dialog;
+mod help;
 mod preset;
 mod progress_row;
+#[cfg(feature = "shots")]
+mod shots;
 mod window;
 
 mod config {
@@ -44,10 +48,20 @@ fn main() -> glib::ExitCode {
         .flags(gio::ApplicationFlags::HANDLES_OPEN)
         .build();
 
-    app.set_accels_for_action("win.close-archive", &["<Ctrl>w"]);
+    for (action, accel, scope) in about::SHORTCUTS {
+        if *scope == about::Scope::App {
+            app.set_accels_for_action(action, &[*accel]);
+        }
+    }
+    setup_app_actions(&app);
 
     app.connect_startup(|_| load_css());
-    app.connect_activate(|app| present(&window_for(app)));
+    app.connect_activate(|app| {
+        let window = window_for(app);
+        present(&window);
+        #[cfg(feature = "shots")]
+        shots::maybe_start(app, &window);
+    });
     app.connect_open(|app, files, _hint| {
         let window = window_for(app);
         if let Some(file) = files.first() {
@@ -57,6 +71,22 @@ fn main() -> glib::ExitCode {
     });
 
     app.run()
+}
+
+fn setup_app_actions(app: &adw::Application) {
+    let about = gio::ActionEntry::builder("about")
+        .activate(|app: &adw::Application, _, _| about::show_about(&window_for(app)))
+        .build();
+    let shortcuts = gio::ActionEntry::builder("shortcuts")
+        .activate(|app: &adw::Application, _, _| about::show_shortcuts(&window_for(app)))
+        .build();
+    let capabilities = gio::ActionEntry::builder("capabilities")
+        .activate(|app: &adw::Application, _, _| help::present(&window_for(app)))
+        .build();
+    let quit = gio::ActionEntry::builder("quit")
+        .activate(|app: &adw::Application, _, _| app.quit())
+        .build();
+    app.add_action_entries([about, shortcuts, capabilities, quit]);
 }
 
 fn window_for(app: &adw::Application) -> SeptimaWindow {

@@ -56,12 +56,22 @@ pub struct BatchRun {
     /// Extract only: delete each archive once it's extracted. Held here, not
     /// passed along, so a password retry round honours the dialog's choice.
     delete_after: bool,
+    /// What to do with files already at a destination; reused by the
+    /// end-of-round password retry so it extracts the same way.
+    overwrite: septima_engine::OverwriteMode,
 }
 
 impl BatchRun {
     /// A run of `total` jobs, none finished yet.
     pub fn new(kind: BatchKind, total: usize) -> Self {
-        Self { kind, outstanding: total, records: Vec::new(), warnings: Vec::new(), delete_after: false }
+        Self {
+            kind,
+            outstanding: total,
+            records: Vec::new(),
+            warnings: Vec::new(),
+            delete_after: false,
+            overwrite: septima_engine::OverwriteMode::RenameExtracted,
+        }
     }
 
     /// Set the run's delete-after choice (Extract only).
@@ -72,6 +82,16 @@ impl BatchRun {
 
     pub fn delete_after(&self) -> bool {
         self.delete_after
+    }
+
+    /// Set what happens to files already at a destination (Extract only).
+    pub fn with_overwrite(mut self, overwrite: septima_engine::OverwriteMode) -> Self {
+        self.overwrite = overwrite;
+        self
+    }
+
+    pub fn overwrite(&self) -> septima_engine::OverwriteMode {
+        self.overwrite
     }
 
     /// True when at least one job failed outright — as opposed to a run whose
@@ -433,6 +453,14 @@ mod tests {
         let mut run = BatchRun::new(BatchKind::Compress, 1);
         run.record(Path::new("/a/x.7z"), Outcome::Failed { message: "disk full".into() });
         assert!(run.has_failures());
+    }
+
+    #[test]
+    fn overwrite_is_held_by_the_run_and_defaults_to_keep_both() {
+        use septima_engine::OverwriteMode;
+        assert_eq!(BatchRun::new(BatchKind::Extract, 2).overwrite(), OverwriteMode::RenameExtracted);
+        let run = BatchRun::new(BatchKind::Extract, 2).with_overwrite(OverwriteMode::Skip);
+        assert_eq!(run.overwrite(), OverwriteMode::Skip);
     }
 
     #[test]

@@ -16,6 +16,7 @@ use std::process::Command;
 const BASE_ID: &str = "io.github.superuser_miguel.Septima";
 const GRESOURCE_PREFIX: &str = "/io/github/superuser_miguel/Septima";
 const GETTEXT_PACKAGE: &str = "septima";
+const METAINFO_TEMPLATE: &str = "io.github.superuser_miguel.Septima.metainfo.xml.in.in";
 
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
@@ -44,7 +45,7 @@ fn main() {
     let pkgdatadir = match &meson_pkgdatadir {
         Some(dir) => dir.clone(),
         None => {
-            compile_resources(&data_dir, &out_dir);
+            compile_resources(&data_dir, &out_dir, &app_id);
             out_dir.to_string_lossy().into_owned()
         }
     };
@@ -67,6 +68,7 @@ fn main() {
     );
     println!("cargo:rerun-if-changed={}", data_dir.join("style.css").display());
     println!("cargo:rerun-if-changed={}", data_dir.join("resources.gresource.xml").display());
+    println!("cargo:rerun-if-changed={}", data_dir.join(METAINFO_TEMPLATE).display());
     for blp in blueprints(&data_dir) {
         println!("cargo:rerun-if-changed={}", blp.display());
     }
@@ -81,7 +83,7 @@ fn main() {
 }
 
 /// cargo-dev only: compile every Blueprint and bundle the gresource into OUT_DIR.
-fn compile_resources(data_dir: &Path, out_dir: &Path) {
+fn compile_resources(data_dir: &Path, out_dir: &Path, app_id: &str) {
     for blp in blueprints(data_dir) {
         let ui = out_dir.join(blp.file_stem().unwrap()).with_extension("ui");
         run(
@@ -94,6 +96,11 @@ fn compile_resources(data_dir: &Path, out_dir: &Path) {
         );
     }
     fs::copy(data_dir.join("style.css"), out_dir.join("style.css")).expect("copy style.css");
+    // The About window's source (untranslated under plain cargo — Meson merges
+    // translations; the fixed resource name is the same either way).
+    let metainfo = fs::read_to_string(data_dir.join(METAINFO_TEMPLATE)).expect("read metainfo template");
+    fs::write(out_dir.join("metainfo.xml"), metainfo.replace("@app-id@", app_id))
+        .expect("write metainfo.xml");
     let gresource_xml = out_dir.join("resources.gresource.xml");
     fs::copy(data_dir.join("resources.gresource.xml"), &gresource_xml)
         .expect("copy resources.gresource.xml");

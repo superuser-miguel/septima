@@ -61,6 +61,20 @@ mod imp {
         fn constructed(&self) {
             self.parent_constructed();
 
+            // Delete and F2 act on the list only while it has focus, so the
+            // same keys keep working in text fields (see about::Scope).
+            let keys = gtk::ShortcutController::new();
+            keys.set_scope(gtk::ShortcutScope::Local);
+            for (action, accel, scope) in crate::about::SHORTCUTS {
+                if *scope == crate::about::Scope::ArchiveList {
+                    keys.add_shortcut(gtk::Shortcut::new(
+                        gtk::ShortcutTrigger::parse_string(accel),
+                        Some(gtk::NamedAction::new(action)),
+                    ));
+                }
+            }
+            self.column_view.add_controller(keys);
+
             let model = gio::ListStore::new::<EntryObject>();
             let selection = gtk::MultiSelection::new(Some(model.clone()));
             selection.connect_selection_changed(glib::clone!(
@@ -121,7 +135,7 @@ mod imp {
         }
 
         #[template_callback]
-        fn on_delete_clicked(&self) {
+        pub(super) fn on_delete_clicked(&self) {
             let paths = self.obj().selected_paths();
             if let Some(cb) = self.on_delete.borrow().as_ref() {
                 cb(paths);
@@ -129,7 +143,7 @@ mod imp {
         }
 
         #[template_callback]
-        fn on_rename_clicked(&self) {
+        pub(super) fn on_rename_clicked(&self) {
             if let Some(path) = self.obj().selected_paths().into_iter().next() {
                 if let Some(cb) = self.on_rename.borrow().as_ref() {
                     cb(path);
@@ -198,6 +212,21 @@ impl SeptimaArchiveView {
             })
             .collect();
         (paths, total)
+    }
+
+    /// Delete the selection, as the Delete button does. Nothing when empty.
+    pub fn request_delete(&self) {
+        if !self.selected_paths().is_empty() {
+            self.imp().on_delete_clicked();
+        }
+    }
+
+    /// Rename the selected entry, as the Rename button does. Only with exactly
+    /// one entry selected — the button is insensitive otherwise.
+    pub fn request_rename(&self) {
+        if self.selected_paths().len() == 1 {
+            self.imp().on_rename_clicked();
+        }
     }
 
     /// Register the handler run when the user asks to delete the current

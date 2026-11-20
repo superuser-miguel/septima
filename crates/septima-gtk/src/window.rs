@@ -82,6 +82,9 @@ mod imp {
         pub archive_path: RefCell<Option<PathBuf>>,
         /// Password the current archive was opened with (reused for extraction).
         pub archive_password: RefCell<Option<String>>,
+        /// The open archive's files (not folders), in-archive paths: what an
+        /// extract would write, so clashes can be counted before it starts.
+        pub archive_files: RefCell<Vec<String>>,
     }
 
     #[gtk::template_callbacks]
@@ -135,8 +138,26 @@ mod imp {
             let test_archive = gio::ActionEntry::builder("test-archive")
                 .activate(|window: &super::SeptimaWindow, _, _| window.test_archive())
                 .build();
+            // Keyboard twins of the Open and New buttons (Ctrl+O, Ctrl+N).
+            let open = gio::ActionEntry::builder("open")
+                .activate(|window: &super::SeptimaWindow, _, _| window.open_archive_dialog())
+                .build();
+            let new_archive = gio::ActionEntry::builder("new-archive")
+                .activate(|window: &super::SeptimaWindow, _, _| window.new_archive_dialog())
+                .build();
+            // Keyboard twins of the Extract button and the list's Rename and
+            // Delete buttons (Ctrl+E, F2, Delete; see about::SHORTCUTS).
+            let extract = gio::ActionEntry::builder("extract")
+                .activate(|window: &super::SeptimaWindow, _, _| window.choose_destination_and_extract())
+                .build();
+            let rename = gio::ActionEntry::builder("rename-entry")
+                .activate(|window: &super::SeptimaWindow, _, _| window.imp().archive_view.request_rename())
+                .build();
+            let delete = gio::ActionEntry::builder("delete-entries")
+                .activate(|window: &super::SeptimaWindow, _, _| window.imp().archive_view.request_delete())
+                .build();
             let obj = self.obj();
-            obj.add_action_entries([checksums, close, test_archive]);
+            obj.add_action_entries([checksums, close, test_archive, open, new_archive, extract, rename, delete]);
             obj.set_archive_actions_enabled(false);
 
             // Drop an archive onto the window to open it; drop several to
@@ -470,13 +491,25 @@ impl SeptimaWindow {
             extra.append(&search);
         }
         extra.append(&scroller);
+        // Same rule as a batch extract: ask only when a folder they'd land in
+        // already exists. Counted over every extractable row, before picking.
+        let existing = sibling_extract_dirs(checks.iter().map(|(_, archive, _)| archive.as_path()))
+            .iter()
+            .filter(|d| folder_has_entries(d))
+            .count();
+        let choice = (existing > 0).then(|| ClashChoice::new(&delete_after));
+        if let Some(choice) = &choice {
+            extra.append(&choice.widget);
+        }
         extra.append(&delete_after);
 
+        let mut body = gettext("Choose which archives to extract — each uses its recorded password.");
+        if existing > 0 {
+            body = format!("{body}\n\n{}", n_existing_folders(existing));
+        }
         let dialog = adw::AlertDialog::builder()
             .heading(gettext("Extract From Passwords File"))
-            .body(gettext(
-                "Choose which archives to extract — each uses its recorded password.",
-            ))
+            .body(body)
             .extra_child(&extra)
             .build();
         dialog.add_response("cancel", &gettext("Cancel"));
@@ -531,11 +564,13 @@ impl SeptimaWindow {
             }
             let picked: Vec<_> = checks.iter().filter(|(check, _, _)| check.is_active()).collect();
             let dests = sibling_extract_dirs(picked.iter().map(|(_, archive, _)| archive.as_path()));
+            let overwrite = ClashChoice::mode_of(choice.as_ref());
             for ((_, archive, password), dest) in picked.into_iter().zip(dests) {
                 window.start_extract(
                     archive.clone(),
                     dest,
                     Some(password.clone()),
+                    overwrite,
                     delete_after.is_active(),
                     None,
                 );
@@ -609,17 +644,23 @@ impl SeptimaWindow {
         password_box.append(&protected);
         password_box.append(&password_revealer);
         extra.append(&password_box);
+        // Each archive gets a new folder — but one that already exists is
+        // extracted into, so ask only then.
+        let dests = sibling_extract_dirs(archives.iter().map(PathBuf::as_path));
+        let existing = dests.iter().filter(|d| folder_has_entries(d)).count();
+        let choice = (existing > 0).then(|| ClashChoice::new(&delete_after));
+        if let Some(choice) = &choice {
+            extra.append(&choice.widget);
+        }
         extra.append(&delete_after);
 
-        let body = if skipped > 0 {
-            format!(
-                "{} {}",
-                n_archives_body(archives.len()),
-                n_skipped(skipped)
-            )
-        } else {
-            n_archives_body(archives.len())
-        };
+        let mut body = n_archives_body(archives.len());
+        if skipped > 0 {
+            body = format!("{body} {}", n_skipped(skipped));
+        }
+        if existing > 0 {
+            body = format!("{body}\n\n{}", n_existing_folders(existing));
+        }
         let dialog = adw::AlertDialog::builder()
             .heading(gettext("Extract Archives"))
             .body(body)
@@ -637,18 +678,20 @@ impl SeptimaWindow {
             }
             let pw = password_entry.text().to_string();
             let password = (protected.is_active() && !pw.is_empty()).then_some(pw);
+            let overwrite = ClashChoice::mode_of(choice.as_ref());
             let run = (archives.len() >= 2).then(|| {
                 Rc::new(RefCell::new(
                     BatchRun::new(BatchKind::Extract, archives.len())
-                        .with_delete_after(delete_after.is_active()),
+                        .with_delete_after(delete_after.is_active())
+                        .with_overwrite(overwrite),
                 ))
             });
-            let dests = sibling_extract_dirs(archives.iter().map(PathBuf::as_path));
-            for (archive, dest) in archives.iter().zip(dests) {
+            for (archive, dest) in archives.iter().zip(dests.iter().cloned()) {
                 window.start_extract(
                     archive.clone(),
                     dest,
                     password.clone(),
+                    overwrite,
                     delete_after.is_active(),
                     run.clone(),
                 );
@@ -681,6 +724,9 @@ impl SeptimaWindow {
                     imp.extract_button.set_sensitive(true);
                     imp.archive_path.replace(Some(archive_path.clone()));
                     imp.archive_password.replace(password.clone());
+                    imp.archive_files.replace(
+                        listing.entries.iter().filter(|e| !e.is_dir).map(|e| e.path.clone()).collect(),
+                    );
                     imp.window_title.set_title(&file_name(&archive_path));
                     imp.window_title.set_subtitle(&format!(
                         "{} · {}",
@@ -691,7 +737,7 @@ impl SeptimaWindow {
                     // Dev/test hook: extract without the folder portal.
                     if crate::config::PROFILE == "Devel" {
                         if let Some(dir) = std::env::var_os("SEPTIMA_AUTO_EXTRACT") {
-                            window.start_extract(archive_path, PathBuf::from(dir), password, false, None);
+                            window.start_extract(archive_path, PathBuf::from(dir), password, OverwriteMode::Overwrite, false, None);
                         }
                     }
                 }
@@ -735,16 +781,30 @@ impl SeptimaWindow {
         });
     }
 
-    /// Offer "delete the archive afterwards" before starting the extract job.
-    fn confirm_extract(&self, archive: PathBuf, dest: PathBuf, password: Option<String>) {
+    /// Offer "delete the archive afterwards" before starting the extract job,
+    /// and — only when files of the same name are already in `dest` — ask what
+    /// should happen to them.
+    pub(crate) fn confirm_extract(&self, archive: PathBuf, dest: PathBuf, password: Option<String>) {
         let delete_after = gtk::CheckButton::builder()
             .label(gettext("Delete the archive after extracting"))
             .build();
+        let clashes = count_clashes(&dest, &self.imp().archive_files.borrow());
+        let extra = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(12).build();
+        let choice = (clashes > 0).then(|| ClashChoice::new(&delete_after));
+        if let Some(choice) = &choice {
+            extra.append(&choice.widget);
+        }
+        extra.append(&delete_after);
+        let body = if clashes > 0 {
+            n_clashing_files(clashes, &file_name(&dest))
+        } else {
+            gettext("Extract the contents of this archive to the chosen folder?")
+        };
 
         let dialog = adw::AlertDialog::builder()
             .heading(gettext("Extract Archive"))
-            .body(gettext("Extract the contents of this archive to the chosen folder?"))
-            .extra_child(&delete_after)
+            .body(body)
+            .extra_child(&extra)
             .build();
         dialog.add_response("cancel", &gettext("Cancel"));
         dialog.add_response("extract", &gettext("Extract"));
@@ -758,6 +818,7 @@ impl SeptimaWindow {
                     archive.clone(),
                     dest.clone(),
                     password.clone(),
+                    ClashChoice::mode_of(choice.as_ref()),
                     delete_after.is_active(),
                     None,
                 );
@@ -774,6 +835,7 @@ impl SeptimaWindow {
         archive: PathBuf,
         dest: PathBuf,
         password: Option<String>,
+        overwrite: OverwriteMode,
         delete_after: bool,
         batch: Option<Rc<RefCell<BatchRun>>>,
     ) {
@@ -793,7 +855,7 @@ impl SeptimaWindow {
             archive: archive.clone(),
             dest_dir: dest.clone(),
             password,
-            overwrite: OverwriteMode::default(),
+            overwrite,
             entries: Vec::new(),
         };
 
@@ -878,6 +940,7 @@ impl SeptimaWindow {
                                         archive.clone(),
                                         dest.clone(),
                                         Some(pw),
+                                        overwrite,
                                         delete_after,
                                         None,
                                     )
@@ -981,6 +1044,7 @@ impl SeptimaWindow {
                 move |pw| {
                     let retry = unlock_run.borrow_mut().begin_password_retry();
                     let delete_after = unlock_run.borrow().delete_after();
+                    let overwrite = unlock_run.borrow().overwrite();
                     if retry.is_empty() {
                         window.finish_batch(unlock_run.clone());
                         return;
@@ -990,6 +1054,7 @@ impl SeptimaWindow {
                             job.archive,
                             job.dest,
                             Some(pw.clone()),
+                            overwrite,
                             delete_after,
                             Some(unlock_run.clone()),
                         );
@@ -1677,13 +1742,14 @@ impl SeptimaWindow {
         imp.extract_button.set_sensitive(false);
         imp.archive_path.replace(None);
         imp.archive_password.replace(None);
+        imp.archive_files.replace(Vec::new());
         imp.window_title.set_title("Septima");
         imp.window_title.set_subtitle("");
         self.set_archive_actions_enabled(false);
     }
 
     fn set_archive_actions_enabled(&self, enabled: bool) {
-        for name in ["close-archive", "test-archive"] {
+        for name in ["close-archive", "test-archive", "extract", "rename-entry", "delete-entries"] {
             if let Some(action) = self.lookup_action(name).and_downcast::<gio::SimpleAction>() {
                 action.set_enabled(enabled);
             }
@@ -2038,6 +2104,99 @@ fn n_archives_create_pick_body(n: usize, with_manifest: bool) -> String {
     text.replacen("{}", &n.to_string(), 1)
 }
 
+/// What to do with files that already exist where an archive is extracted.
+/// Shown only when something would clash; Keep both is the default because
+/// it's the one choice that can't lose a file.
+struct ClashChoice {
+    widget: gtk::Box,
+    skip: gtk::CheckButton,
+    replace: gtk::CheckButton,
+}
+
+impl ClashChoice {
+    fn new(delete_after: &gtk::CheckButton) -> Self {
+        let radio = |text: &str| {
+            let label = gtk::Label::builder().label(text).wrap(true).xalign(0.0).build();
+            gtk::CheckButton::builder().child(&label).build()
+        };
+        let keep = radio(&gettext("Keep both — the new copies get a number, like report_1.txt"));
+        let skip = radio(&gettext("Skip — leave the existing files, and don't extract those"));
+        let replace = radio(&gettext("Replace the existing files"));
+        skip.set_group(Some(&keep));
+        replace.set_group(Some(&keep));
+        keep.set_active(true);
+
+        // Skip + delete-after would throw away the skipped files with the
+        // archive, so the two can't be picked together.
+        let delete_after = delete_after.clone();
+        skip.connect_toggled(move |skip| {
+            if skip.is_active() {
+                delete_after.set_active(false);
+            }
+            delete_after.set_sensitive(!skip.is_active());
+            delete_after.set_tooltip_text(
+                skip.is_active()
+                    .then(|| gettext("The skipped files would be lost with the archive"))
+                    .as_deref(),
+            );
+        });
+
+        let widget = gtk::Box::builder().orientation(gtk::Orientation::Vertical).spacing(6).build();
+        widget.append(&keep);
+        widget.append(&skip);
+        widget.append(&replace);
+        Self { widget, skip, replace }
+    }
+
+    fn mode(&self) -> OverwriteMode {
+        if self.replace.is_active() {
+            OverwriteMode::Overwrite
+        } else if self.skip.is_active() {
+            OverwriteMode::Skip
+        } else {
+            OverwriteMode::RenameExtracted
+        }
+    }
+
+    /// The mode to extract with. With no choice shown, nothing clashed when
+    /// the dialog opened; Keep both still guards anything that appears since.
+    fn mode_of(choice: Option<&Self>) -> OverwriteMode {
+        choice.map_or(OverwriteMode::RenameExtracted, Self::mode)
+    }
+}
+
+/// How many of `files` (in-archive paths) already exist under `dest`.
+fn count_clashes(dest: &Path, files: &[String]) -> usize {
+    files
+        .iter()
+        .filter(|f| dest.join(f.trim_start_matches('/')).symlink_metadata().is_ok())
+        .count()
+}
+
+/// Whether `dir` exists and has anything in it.
+fn folder_has_entries(dir: &Path) -> bool {
+    std::fs::read_dir(dir).map(|mut it| it.next().is_some()).unwrap_or(false)
+}
+
+fn n_clashing_files(n: usize, folder: &str) -> String {
+    gettextrs::ngettext(
+        "{} file in “{}” has the same name as one in this archive. What should happen to it?",
+        "{} files in “{}” have the same names as files in this archive. What should happen to them?",
+        n as u32,
+    )
+    .replacen("{}", &n.to_string(), 1)
+    .replacen("{}", folder, 1)
+}
+
+fn n_existing_folders(n: usize) -> String {
+    gettextrs::ngettext(
+        "{} of their folders already exists, so files in it could have the same names.",
+        "{} of their folders already exist, so files in them could have the same names.",
+        n as u32,
+    )
+    .replacen("{}", &n.to_string(), 1)
+}
+
 /// Sibling extract folders for a run of archives, numbered within the run
 /// (`photos/`, `photos_2/`, …) so `photos.zip` and `photos.7z` don't land in
 /// one folder and overwrite each other. Only in-run clashes are numbered: an
@@ -2080,7 +2239,7 @@ fn sibling_extract_dir_numbered(archive: &Path, n: usize) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{archive_filename, name_list, sibling_extract_dirs, unique_output};
+    use super::{archive_filename, count_clashes, folder_has_entries, name_list, sibling_extract_dirs, unique_output};
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -2104,6 +2263,29 @@ mod tests {
         assert_eq!(unique_output(a, "notes", "7z", &mut taken), a.join("notes.7z"));
         assert_eq!(unique_output(b, "notes", "7z", &mut taken), b.join("notes.7z"));
         assert_eq!(unique_output(a, "notes", "7z", &mut taken), a.join("notes_2.7z"));
+    }
+
+    #[test]
+    fn clashes_count_only_files_that_already_exist() {
+        let dir = std::env::temp_dir().join(format!("septima-clash-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("photos")).unwrap();
+        std::fs::write(dir.join("photos/beach.jpg"), b"old").unwrap();
+        std::fs::write(dir.join("notes.txt"), b"old").unwrap();
+        let files: Vec<String> =
+            ["photos/beach.jpg", "photos/sunset.jpg", "notes.txt", "/notes.txt", "new/readme.txt"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
+        // A leading slash is stripped, as 7zz does, so it still counts.
+        assert_eq!(count_clashes(&dir, &files), 3);
+        assert_eq!(count_clashes(&dir.join("elsewhere"), &files), 0);
+
+        assert!(folder_has_entries(&dir));
+        std::fs::create_dir_all(dir.join("empty")).unwrap();
+        assert!(!folder_has_entries(&dir.join("empty")), "an empty folder can't clash");
+        assert!(!folder_has_entries(&dir.join("missing")));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

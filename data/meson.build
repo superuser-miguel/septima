@@ -24,13 +24,47 @@ blueprints = custom_target(
   ],
 )
 
-# Bundle the gresource (window.ui from the build dir, style.css from the source
-# dir) and install it to pkgdatadir; the app loads it at runtime.
+# --- AppStream metainfo (D4) ---
+metainfo_conf = configuration_data()
+metainfo_conf.set('app-id', application_id)
+metainfo_in = configure_file(
+  input: 'io.github.superuser_miguel.Septima.metainfo.xml.in.in',
+  output: application_id + '.metainfo.xml.in',
+  configuration: metainfo_conf,
+)
+metainfo_file = i18n.merge_file(
+  input: metainfo_in,
+  output: application_id + '.metainfo.xml',
+  po_dir: '../po',
+  install: true,
+  install_dir: datadir / 'metainfo',
+)
+if appstreamcli.found()
+  test(
+    'validate-metainfo',
+    appstreamcli,
+    args: ['validate', '--no-net', '--explain', metainfo_file.full_path()],
+    depends: metainfo_file,
+  )
+endif
+
+# The About window reads the same metainfo (name, links, release notes) from
+# the gresource under a fixed name, whatever the profile's app id is.
+metainfo_resource = custom_target(
+  'metainfo-resource',
+  input: metainfo_file,
+  output: 'metainfo.xml',
+  command: ['cp', '@INPUT@', '@OUTPUT@'],
+)
+
+# Bundle the gresource (window.ui and metainfo.xml from the build dir,
+# style.css from the source dir) and install it to pkgdatadir; the app loads
+# it at runtime.
 gresources = gnome.compile_resources(
   'septima',
   'resources.gresource.xml',
   gresource_bundle: true,
-  dependencies: blueprints,
+  dependencies: [blueprints, metainfo_resource],
   source_dir: [meson.current_build_dir(), meson.current_source_dir()],
   install: true,
   install_dir: pkgdatadir,
@@ -58,30 +92,6 @@ if desktop_file_validate.found()
     desktop_file_validate,
     args: [desktop_file.full_path()],
     depends: desktop_file,
-  )
-endif
-
-# --- AppStream metainfo (D4) ---
-metainfo_conf = configuration_data()
-metainfo_conf.set('app-id', application_id)
-metainfo_in = configure_file(
-  input: 'io.github.superuser_miguel.Septima.metainfo.xml.in.in',
-  output: application_id + '.metainfo.xml.in',
-  configuration: metainfo_conf,
-)
-metainfo_file = i18n.merge_file(
-  input: metainfo_in,
-  output: application_id + '.metainfo.xml',
-  po_dir: '../po',
-  install: true,
-  install_dir: datadir / 'metainfo',
-)
-if appstreamcli.found()
-  test(
-    'validate-metainfo',
-    appstreamcli,
-    args: ['validate', '--no-net', '--explain', metainfo_file.full_path()],
-    depends: metainfo_file,
   )
 endif
 

@@ -20,6 +20,23 @@ menu primary_menu {
       action: "win.test-archive";
     }
   }
+
+  section {
+    item {
+      label: _("_What Septima Can Do");
+      action: "app.capabilities";
+    }
+
+    item {
+      label: _("_Keyboard Shortcuts");
+      action: "app.shortcuts";
+    }
+
+    item {
+      label: _("_About Septima");
+      action: "app.about";
+    }
+  }
 }
 
 template $SeptimaWindow: Adw.ApplicationWindow {
