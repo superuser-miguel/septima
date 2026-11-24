@@ -44,7 +44,29 @@ fn close_dialog(win: &SeptimaWindow) {
 
 const STEPS: &[Step] = &[
     ("main", |_, _| {}),
-    ("about", |app, _| app.activate_action("about", None)),
+    // A batch bigger than the cap: some rows running, the rest waiting.
+    ("batch-queue", |_, win| {
+        close_dialog(win);
+        if let Some(dir) = std::env::var_os("SEPTIMA_SHOTS_BATCH") {
+            win.shots_batch_extract(Path::new(&dir));
+            // Report again once the jobs have had time to spawn their 7zz.
+            let win = win.clone();
+            glib::timeout_add_local_once(Duration::from_millis(600), move || report_queue(&win, "batch-queue"));
+        }
+    }),
+    ("batch-cancel-all", |_, win| {
+        win.shots_cancel_all();
+        let win = win.clone();
+        glib::timeout_add_local_once(Duration::from_millis(600), move || report_queue(&win, "batch-cancel-all"));
+    }),
+    ("batch-report", |_, win| {
+        close_dialog(win);
+        win.shots_long_report();
+    }),
+    ("about", |app, win| {
+        close_dialog(win);
+        app.activate_action("about", None);
+    }),
     ("shortcuts", |app, win| {
         close_dialog(win);
         app.activate_action("shortcuts", None);
@@ -65,26 +87,32 @@ const STEPS: &[Step] = &[
         }
     }),
     ("extract-clash-skip", |_, win| click_radio(win, "Skip")),
-    // A batch bigger than the cap: some rows running, the rest waiting.
-    ("batch-queue", |_, win| {
+    // New Archive, part-way through: a few things staged, Zstandard picked.
+    ("create-dialog", |_, win| {
         close_dialog(win);
-        if let Some(dir) = std::env::var_os("SEPTIMA_SHOTS_BATCH") {
-            win.shots_batch_extract(Path::new(&dir));
-            // Report again once the jobs have had time to spawn their 7zz.
-            let win = win.clone();
-            glib::timeout_add_local_once(Duration::from_millis(600), move || report_queue(&win, "batch-queue"));
-        }
+        win.shots_create_dialog(sample_inputs(), "zstd", false);
     }),
-    ("batch-cancel-all", |_, win| {
-        win.shots_cancel_all();
-        let win = win.clone();
-        glib::timeout_add_local_once(Duration::from_millis(600), move || report_queue(&win, "batch-cancel-all"));
-    }),
-    ("batch-report", |_, win| {
+    ("create-dialog-2", |_, win| scroll_dialog(win, 0.85)),
+    ("create-dialog-3", |_, win| scroll_dialog(win, 50.0)),
+    // The same in batch mode, with a password per archive.
+    ("create-batch", |_, win| {
         close_dialog(win);
-        win.shots_long_report();
+        win.shots_create_dialog(sample_inputs(), "zstd", true);
     }),
+    ("create-batch-2", |_, win| scroll_dialog(win, 0.85)),
+    ("create-batch-3", |_, win| scroll_dialog(win, 50.0)),
 ];
+
+/// The folders under `SEPTIMA_SHOTS_INPUTS`, to stage in the create dialog.
+fn sample_inputs() -> Vec<PathBuf> {
+    let Some(dir) = std::env::var_os("SEPTIMA_SHOTS_INPUTS") else {
+        return Vec::new();
+    };
+    let mut v: Vec<PathBuf> =
+        std::fs::read_dir(dir).into_iter().flatten().filter_map(|e| e.ok().map(|e| e.path())).collect();
+    v.sort();
+    v
+}
 
 /// Print the queue's own count next to how many `7zz` this process really
 /// has running, so the cap can be checked from outside the gate's bookkeeping.

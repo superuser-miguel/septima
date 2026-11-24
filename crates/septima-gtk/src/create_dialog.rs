@@ -707,6 +707,18 @@ impl SeptimaCreateDialog {
     }
 
     /// Register the handler run when the user confirms (Create).
+    /// Dev-only (screenshots): pick a method, and optionally batch mode with
+    /// a password per archive.
+    #[cfg(feature = "shots")]
+    pub(crate) fn shots_set(&self, codec: &str, batch: bool) {
+        let imp = self.imp();
+        imp.codec_row.set_selected(codec_index(imp.current_format(), codec));
+        if batch {
+            imp.batch_row.set_active(true);
+            imp.generate_row.set_active(true);
+        }
+    }
+
     pub fn connect_create<F: Fn(&Self) + 'static>(&self, f: F) {
         self.imp().on_create.replace(Some(Box::new(f)));
     }

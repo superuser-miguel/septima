@@ -24,7 +24,7 @@ command -v mutter >/dev/null || { echo "mutter not found" >&2; exit 1; }
 WORK="$(mktemp -d "$TARGET_DIR/shots-run.XXXXXX")"
 # The runtime dir holds the compositor's socket, and a Unix socket path must fit
 # in 108 bytes, so it gets a short path of its own rather than one under $WORK.
-RUN="$(mktemp -d /tmp/septima-shots.XXXXXX)"
+RUN="$(mktemp -d /tmp/septima.XXXXXX)"
 mkdir -p "$WORK/cfg" "$WORK/data"
 chmod 700 "$RUN"
 cleanup() {
@@ -61,6 +61,14 @@ for n in 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16; do
     ln "$WORK/batch/holiday-photos-01.7z" "$WORK/batch/holiday-photos-$n.7z"
 done
 export SEPTIMA_SHOTS_BATCH="$WORK/batch"
+# A few folders to stage in the New Archive dialog.
+# They sit under a short neutral path, because the dialog shows each path.
+DEMO="$RUN/Documents"
+for d in "Tax 2025" "Holiday photos" "Project source" "Scanned letters"; do
+    mkdir -p "$DEMO/$d"
+    head -c 300000 /dev/urandom >"$DEMO/$d/data.bin"
+done
+export SEPTIMA_SHOTS_INPUTS="$DEMO"
 export SEPTIMA_SHOTS_DIR="$OUT" SEPTIMA_BIN="$BIN" GTK_A11Y=none
 unset DISPLAY WAYLAND_DISPLAY
 
@@ -81,7 +89,7 @@ dbus-run-session -- sh -c '
         sleep 0.1
     done
     status=0
-    GDK_BACKEND=wayland WAYLAND_DISPLAY=septima-shots timeout 60 "$SEPTIMA_BIN" || status=$?
+    GDK_BACKEND=wayland WAYLAND_DISPLAY=septima-shots timeout 120 "$SEPTIMA_BIN" || status=$?
     kill "$compositor" 2>/dev/null
     wait "$compositor" 2>/dev/null
     exit "$status"

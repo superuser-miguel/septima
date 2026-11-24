@@ -1100,6 +1100,16 @@ impl SeptimaWindow {
         }
     }
 
+    /// Dev-only (screenshots): the New Archive dialog with `inputs` staged and
+    /// the method at `codec`, as someone part-way through would have it.
+    #[cfg(feature = "shots")]
+    pub(crate) fn shots_create_dialog(&self, inputs: Vec<PathBuf>, codec: &str, batch: bool) {
+        let dialog = SeptimaCreateDialog::new();
+        dialog.add_inputs(inputs);
+        dialog.shots_set(codec, batch);
+        dialog.present(Some(self));
+    }
+
     /// Dev-only (screenshots): (limit, running, waiting) of the job queue.
     #[cfg(feature = "shots")]
     pub(crate) fn shots_queue_state(&self) -> (usize, usize, usize) {
