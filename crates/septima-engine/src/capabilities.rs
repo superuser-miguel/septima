@@ -157,11 +157,39 @@ const SEVENZ_AES_CBC: EncryptionMethod = EncryptionMethod {
     label: "AES-256 (standard)",
     detail: Some("Opens in any 7-Zip"),
 };
-// Only offered when the running 7zz reports the codec — see aes256gcm_available().
+// The four below came with 7-Zip ZS 26.05. Each is offered only when the
+// running 7zz lists it — see encryption_codec_available(). The ids are the
+// names `7zz i` prints, which `-mem=` accepts and the listing's Method column
+// shows, so one string serves all three. Descriptions say what each is and
+// where it opens; none is ranked against another.
+const SEVENZ_XCHACHA_POLY: EncryptionMethod = EncryptionMethod {
+    id: Some("XChaCha20-Poly1305"),
+    label: "XChaCha20-Poly1305",
+    detail: Some("Detects tampering. Opens in 7-Zip ZS 26.05 or newer, not stock 7-Zip."),
+};
+const SEVENZ_AXP: EncryptionMethod = EncryptionMethod {
+    id: Some("AES+XChaCha20-Poly1305"),
+    label: "AES + XChaCha20-Poly1305",
+    detail: Some("Two ciphers in layers; detects tampering. \
+                  Opens in 7-Zip ZS 26.05 or newer, not stock 7-Zip."),
+};
+const SEVENZ_AXA: EncryptionMethod = EncryptionMethod {
+    id: Some("AES+XChaCha20+Ascon"),
+    label: "AES + XChaCha20 + Ascon",
+    detail: Some("Two ciphers in layers; detects tampering with Ascon. \
+                  Opens in 7-Zip ZS 26.05 or newer, not stock 7-Zip."),
+};
+const SEVENZ_XAA: EncryptionMethod = EncryptionMethod {
+    id: Some("XChaCha20+AES+AEGIS"),
+    label: "XChaCha20 + AES + AEGIS",
+    detail: Some("Two ciphers in layers; detects tampering with AEGIS. \
+                  Opens in 7-Zip ZS 26.05 or newer, not stock 7-Zip."),
+};
+// Septima's own patch series; absent from every released 7zz.
 const SEVENZ_AES_GCM: EncryptionMethod = EncryptionMethod {
     id: Some("AES256GCM"),
     label: "AES-256-GCM + Argon2id",
-    detail: Some("Stronger: tamper-detecting, resists password cracking. \
+    detail: Some("Detects tampering; memory-hard password step. \
                   Septima extension — the archive opens only in Septima."),
 };
 const ZIP_AES: EncryptionMethod = EncryptionMethod {
@@ -175,25 +203,43 @@ const ZIP_CRYPTO: EncryptionMethod = EncryptionMethod {
     detail: Some("Weak, but reads on old tools"),
 };
 
+/// 7z methods that exist only in some `7zz` builds, in menu order.
+const SEVENZ_OPTIONAL: [EncryptionMethod; 5] =
+    [SEVENZ_XCHACHA_POLY, SEVENZ_AXP, SEVENZ_AXA, SEVENZ_XAA, SEVENZ_AES_GCM];
+
+/// The codec names in `7zz i` output. Its codec lines read
+/// `    EDF  6F10703 XChaCha20-Poly1305`: the name is the last word.
+fn codec_names(info_output: &str) -> Vec<String> {
+    info_output
+        .lines()
+        .filter_map(|line| line.split_whitespace().last())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Whether the `7zz` we will actually run lists the codec `name`.
+///
+/// `7zz i` is run once and cached. Any failure to run it is treated as "lists
+/// nothing", so optional methods simply don't appear.
+pub fn encryption_codec_available(name: &str) -> bool {
+    use std::sync::OnceLock;
+    static NAMES: OnceLock<Vec<String>> = OnceLock::new();
+    NAMES
+        .get_or_init(|| {
+            info_command(&crate::command::sevenzip_path())
+                .stdin(std::process::Stdio::null())
+                .output()
+                .map(|out| codec_names(&String::from_utf8_lossy(&out.stdout)))
+                .unwrap_or_default()
+        })
+        .iter()
+        .any(|n| n == name)
+}
+
 /// Whether the `7zz` we will actually run supports the AES-256-GCM + Argon2id
 /// method (the Septima patch series; absent from stock 7-Zip).
-///
-/// Probed once by parsing `7zz i`, then cached. Any failure to run the probe is
-/// treated as "not supported", so the option simply doesn't appear.
 pub fn aes256gcm_available() -> bool {
-    use std::sync::OnceLock;
-    static AVAILABLE: OnceLock<bool> = OnceLock::new();
-    *AVAILABLE.get_or_init(|| {
-        info_command(&crate::command::sevenzip_path())
-            .stdin(std::process::Stdio::null())
-            .output()
-            .map(|out| {
-                String::from_utf8_lossy(&out.stdout)
-                    .lines()
-                    .any(|line| line.split_whitespace().any(|w| w == "AES256GCM"))
-            })
-            .unwrap_or(false)
-    })
+    encryption_codec_available("AES256GCM")
 }
 
 /// `7zz i`: lists the formats and codecs this build supports.
@@ -203,22 +249,42 @@ pub(crate) fn info_command(sevenzip: &std::path::Path) -> std::process::Command 
     cmd
 }
 
-/// Encryption methods offered for `format_id`, in menu order (default first).
-///
-/// Empty for formats without encryption. The 7z list gains the GCM entry only
-/// when [`aes256gcm_available`] says the engine understands it.
-pub fn encryption_methods(format_id: &str) -> Vec<EncryptionMethod> {
+/// Every encryption method Septima knows for `format_id`, whether or not the
+/// running `7zz` has it. For naming a method that a preset or a passwords file
+/// mentions; menus use [`encryption_methods`].
+pub fn known_encryption_methods(format_id: &str) -> Vec<EncryptionMethod> {
     match format_id {
         "7z" => {
             let mut v = vec![SEVENZ_AES_CBC];
-            if aes256gcm_available() {
-                v.push(SEVENZ_AES_GCM);
-            }
+            v.extend(SEVENZ_OPTIONAL);
             v
         }
         "zip" => vec![ZIP_AES, ZIP_CRYPTO],
         _ => Vec::new(),
     }
+}
+
+/// Encryption methods offered for `format_id`, in menu order (default first).
+///
+/// Empty for formats without encryption. The 7z list gains each optional
+/// method only when [`encryption_codec_available`] says the engine has it.
+pub fn encryption_methods(format_id: &str) -> Vec<EncryptionMethod> {
+    known_encryption_methods(format_id)
+        .into_iter()
+        .filter(|m| match (format_id, m.id) {
+            ("7z", Some(id)) => encryption_codec_available(id),
+            _ => true,
+        })
+        .collect()
+}
+
+/// The display name of method `id` for `format_id` (`None` = the format's
+/// default), or `None` if Septima doesn't know it.
+pub fn encryption_label(format_id: &str, id: Option<&str>) -> Option<&'static str> {
+    known_encryption_methods(format_id)
+        .into_iter()
+        .find(|m| m.id == id)
+        .map(|m| m.label)
 }
 
 /// A pre-codec filter (`-m0=<id> -m1=<codec>`), for the create dialog's Filter
@@ -245,4 +311,45 @@ pub fn filters() -> &'static [Filter] {
         Filter { id: "RISCV", label: "Executables — RISC-V" },
         Filter { id: "Delta", label: "Delta (audio, tables, bitmaps)" },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codec_names_reads_the_last_word_of_each_line() {
+        let info = "Codecs:\n    EDF  6F10703 XChaCha20-Poly1305\n    EDF  6F10704 AES+XChaCha20-Poly1305\n    EDF  6F10701 7zAES\n";
+        let names = codec_names(info);
+        assert!(names.iter().any(|n| n == "XChaCha20-Poly1305"));
+        assert!(names.iter().any(|n| n == "AES+XChaCha20-Poly1305"));
+        // A cascade's name must not make its parts look available.
+        assert!(!names.iter().any(|n| n == "XChaCha20"));
+    }
+
+    #[test]
+    fn seven_zip_default_is_first_and_sends_no_method() {
+        let known = known_encryption_methods("7z");
+        assert_eq!(known[0].id, None);
+        assert_eq!(known[0].label, "AES-256 (standard)");
+        assert_eq!(known.len(), 6);
+    }
+
+    #[test]
+    fn labels_resolve_for_methods_this_7zz_may_lack() {
+        assert_eq!(encryption_label("7z", Some("XChaCha20+AES+AEGIS")), Some("XChaCha20 + AES + AEGIS"));
+        assert_eq!(encryption_label("7z", None), Some("AES-256 (standard)"));
+        assert_eq!(encryption_label("7z", Some("made-up")), None);
+        assert_eq!(encryption_label("tar", None), None);
+    }
+
+    #[test]
+    fn no_method_is_ranked_above_another() {
+        for m in known_encryption_methods("7z") {
+            let text = format!("{} {}", m.label, m.detail.unwrap_or("")).to_lowercase();
+            for word in ["stronger", "strongest", "recommended", "best", "safer"] {
+                assert!(!text.contains(word), "{:?} ranks itself with {word:?}", m.label);
+            }
+        }
+    }
 }

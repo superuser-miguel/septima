@@ -108,7 +108,7 @@ pub const SWITCHES: &[Switch] = &[
     s("-mhe=on", Exact, "Encrypt file names", "Encrypt file names",
       "Hides the list of files in a 7z archive until the password is given.", Create),
     s("-mem=", Prefix, "Encryption method", "Encryption",
-      "Picks the cipher: AES-256 for zip instead of its weak ZipCrypto default.", Create),
+      "Picks the cipher: AES-256 for zip instead of its weak ZipCrypto default, or one of the 7-Zip ZS ciphers for 7z instead of AES-256.", Create),
     s("-v", Prefix, "Split into volumes", "Split into volumes",
       "Writes the archive in parts of the chosen size: name.7z.001, .002, …", Create),
     // Extracting and opening

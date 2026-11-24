@@ -154,6 +154,133 @@ fn correct_password_extracts_every_variant() {
 
 // --- The specific cipher actually applied ---------------------------------
 
+// --- The 7-Zip ZS 26.05 ciphers --------------------------------------------
+//
+// Each is skipped when the `7zz` under test doesn't list it, so the suite
+// still passes against stock 7-Zip or an older ZS.
+
+const ZS_CIPHERS: [&str; 4] = [
+    "XChaCha20-Poly1305",
+    "AES+XChaCha20-Poly1305",
+    "AES+XChaCha20+Ascon",
+    "XChaCha20+AES+AEGIS",
+];
+
+/// The ZS ciphers this `7zz` has; says so when one is skipped.
+fn zs_ciphers() -> Vec<&'static str> {
+    ZS_CIPHERS
+        .into_iter()
+        .filter(|c| {
+            let have = septima_engine::capabilities::encryption_codec_available(c);
+            if !have {
+                eprintln!("skipping {c}: this 7zz doesn't list it");
+            }
+            have
+        })
+        .collect()
+}
+
+/// How many times the 7z coder id `06 F1 07 <last>` appears in the file.
+fn coder_id_count(archive: &std::path::Path, last: u8) -> usize {
+    let bytes = std::fs::read(archive).unwrap();
+    bytes.windows(4).filter(|w| *w == [0x06, 0xF1, 0x07, last]).count()
+}
+
+#[test]
+#[ignore = "spawns real 7zz"]
+fn zs_ciphers_are_offered_exactly_when_7zz_lists_them() {
+    let offered = septima_engine::capabilities::encryption_methods("7z");
+    assert_eq!(offered[0].id, None, "the 7z default stays first");
+    for c in ZS_CIPHERS {
+        let listed = septima_engine::capabilities::encryption_codec_available(c);
+        assert_eq!(offered.iter().any(|m| m.id == Some(c)), listed, "{c}");
+    }
+    // Plain XChaCha20 has no tamper check; it is never offered.
+    assert!(!offered.iter().any(|m| m.id == Some("XChaCha20")));
+}
+
+#[test]
+#[ignore = "spawns real 7zz"]
+fn zs_ciphers_roundtrip_and_reject_wrong_passwords() {
+    let dir = scratch("zs");
+    for (i, cipher) in zs_ciphers().into_iter().enumerate() {
+        for hdr in [false, true] {
+            let name = format!("zs{i}-{hdr}.7z");
+            let archive = build(&dir, &name, "7z", Some(cipher), hdr);
+            let dest = dir.join(format!("out-{name}"));
+            assert!(
+                matches!(try_extract(&archive, &dest, None), Err(EngineError::PasswordRequired)),
+                "{cipher} hdr={hdr}: extract with no password must be PasswordRequired"
+            );
+            assert!(
+                matches!(try_extract(&archive, &dest, Some("wrong")), Err(EngineError::PasswordRequired)),
+                "{cipher} hdr={hdr}: a wrong password must be PasswordRequired"
+            );
+            assert!(
+                !dest.join("payload.txt").exists(),
+                "{cipher} hdr={hdr}: a failed-password extract must not leave a leftover file"
+            );
+            assert_eq!(
+                matches!(try_list(&archive, None), Err(EngineError::PasswordRequired)),
+                hdr,
+                "{cipher}: only encrypted headers need a password to list"
+            );
+            try_extract(&archive, &dest, Some(PW)).unwrap_or_else(|e| panic!("{cipher} hdr={hdr}: {e:?}"));
+            let got = std::fs::read(dest.join("payload.txt")).unwrap();
+            assert_eq!(got, b"confidential contents for encryption testing", "{cipher} hdr={hdr}");
+        }
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// "It round-trips" doesn't say which cipher did the work. The listing must
+/// name the chosen method, and the file must carry its coder id and not the
+/// 7zAES one — including the one-item, encrypted-header archive, where 7-Zip
+/// takes a separate code path for the header.
+#[test]
+#[ignore = "spawns real 7zz"]
+fn zs_ciphers_are_the_ones_actually_applied() {
+    let dir = scratch("zs-applied");
+    for (i, cipher) in zs_ciphers().into_iter().enumerate() {
+        let id = 3 + ZS_CIPHERS.iter().position(|c| *c == cipher).unwrap() as u8;
+        for hdr in [false, true] {
+            let archive = build(&dir, &format!("zs{i}-{hdr}.7z"), "7z", Some(cipher), hdr);
+            let listing = list_archive(&sevenzip_path(), &archive, Some(PW)).unwrap();
+            let method = listing.entries[0].method.clone().unwrap_or_default();
+            // The listing reads like "LZMA2:12 XChaCha20-Poly1305:19".
+            assert!(
+                method.split_whitespace().any(|w| w.split(':').next() == Some(cipher)),
+                "{cipher} hdr={hdr}: listing says {method:?}"
+            );
+            assert!(coder_id_count(&archive, id) >= 1, "{cipher} hdr={hdr}: its coder id is missing");
+            assert_eq!(coder_id_count(&archive, 0x01), 0, "{cipher} hdr={hdr}: 7zAES was used somewhere");
+        }
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Change one byte of the encrypted data and the right password must no
+/// longer extract it. (7zz reports the failed tag as "Data Error : #0", next to
+/// the CRC failure that standard AES-256 also gives.)
+#[test]
+#[ignore = "spawns real 7zz"]
+fn zs_ciphers_detect_a_changed_byte() {
+    let dir = scratch("zs-tamper");
+    for (i, cipher) in zs_ciphers().into_iter().enumerate() {
+        let archive = build(&dir, &format!("zs{i}.7z"), "7z", Some(cipher), false);
+        let mut bytes = std::fs::read(&archive).unwrap();
+        // The packed stream starts right after the 32-byte signature header.
+        bytes[40] ^= 0x01;
+        std::fs::write(&archive, &bytes).unwrap();
+        let dest = dir.join(format!("out-{i}"));
+        assert!(
+            try_extract(&archive, &dest, Some(PW)).is_err(),
+            "{cipher}: a changed byte went unnoticed"
+        );
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 // --- AES-256-GCM + Argon2id (Septima engine extension) --------------------
 //
 // Skipped automatically when the `7zz` under test is stock (no GCM codec), so
