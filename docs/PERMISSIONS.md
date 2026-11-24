@@ -35,6 +35,11 @@ Batch encryption generates a password per archive and writes them to a
 
 - **The passwords file goes where you point it** — the destination is chosen
   through the ordinary save/folder portal, like any other output.
+- **Opening a passwords file grants that one file.** The file chooser hands
+  Septima the passwords file and nothing else in its folder, so the archives
+  beside it stay out of reach until you choose the folder too. Septima asks
+  for it and opens the chooser in the right place; it never gets wider access
+  than the folder you pick.
 - **Passwords are generated in-process** from the kernel CSPRNG
   (`/dev/urandom`). No network, no service, nothing to phone home to.
 - **Protecting that file uses the runtime's `gpg`**, symmetrically (`gpg -c`)

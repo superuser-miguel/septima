@@ -296,7 +296,7 @@
 </div>
 
 <header class="hero wrap" id="try">
-  <a class="pill" href="#keyboard"><span class="dot"></span>New in 0.6: keyboard shortcuts, and extracts that never replace your files without asking</a>
+  <a class="pill" href="#batch"><span class="dot"></span>New in 0.7: big batches that run a few archives at a time, and four more ways to encrypt a 7z</a>
   <h1>Modern compression, <em>minus the folklore</em>.</h1>
   <p class="lede">
     Septima is a GNOME app for 7-Zip ZS. Zstandard, Brotli and Fast-LZMA2 inside real
@@ -392,8 +392,8 @@
 </section>
 
 <section class="wrap" id="batch">
-  <span class="eyebrow">Batches · 0.5.1</span>
-  <h2>Drop forty archives. Get one answer.</h2>
+  <span class="eyebrow">Batches · reworked in 0.7</span>
+  <h2>Drop a hundred archives. Get one answer.</h2>
   <div class="two">
     <div>
       <p class="sub" style="margin-bottom:20px">Select or drop a pile of archives and each one unpacks into its own new folder. Septima stays quiet while it works, then tells you once how it went.</p>
@@ -401,6 +401,8 @@
         <span><b>Extracted 48 archives</b> · 2 failed</span><span class="tbtn">Show in Files</span>
       </div>
       <ul class="points" style="margin-top:22px">
+        <li><b>A few at a time.</b> Septima works on half as many archives as your CPU has threads, at least 2 and at most 8. The rest wait their turn, and you can cancel one, or all of them, before they start.</li>
+        <li><b>Its own way in.</b> <i>Extract Several Archives</i> is in the menu, on the start page and on <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd>.</li>
         <li><b>Problems collected, not interrupting.</b> Anything that failed is listed in one dialog at the end, instead of a pop-up per archive.</li>
         <li><b>One password question.</b> Encrypted archives wait until the rest finish, then Septima asks once. A wrong password asks again; Cancel skips them.</li>
         <li><b>Nothing replaced by surprise.</b> If an archive's folder already holds files of the same name, Septima asks first: keep both, skip, or replace. Keep both is the default.</li>
@@ -428,7 +430,7 @@
 </section>
 
 <section class="wrap" id="keyboard">
-  <span class="eyebrow">New in 0.6 · keyboard first</span>
+  <span class="eyebrow">Since 0.6 · keyboard first</span>
   <h2>Never reach for the mouse.</h2>
   <p class="sub">
     Everything you do often has a key. Press <kbd>Ctrl</kbd>+<kbd>?</kbd> in Septima for the full
@@ -438,6 +440,7 @@
   <div class="keys">
     <div><span><kbd>Ctrl</kbd>+<kbd>O</kbd> · <kbd>Ctrl</kbd>+<kbd>N</kbd></span><p>Open an archive · make a new one</p></div>
     <div><span><kbd>Ctrl</kbd>+<kbd>E</kbd></span><p>Extract</p></div>
+    <div><span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd></span><p>Extract several archives</p></div>
     <div><span><kbd>Ctrl</kbd>+<kbd>T</kbd></span><p>Test the archive</p></div>
     <div><span><kbd>Ctrl</kbd>+<kbd>H</kbd></span><p>Calculate checksums</p></div>
     <div><span><kbd>Ctrl</kbd>+<kbd>A</kbd></span><p>Select every entry</p></div>
@@ -477,7 +480,7 @@
     <div class="card"><h3>Checksums, 13 of them</h3><p>CRC, MD5, SHA-1/2/3, BLAKE3, BLAKE2sp and XXH, with copy and verify. Or write a <code>.sha256</code> next to a new archive.</p></div>
     <div class="card"><h3>Edit and test in place</h3><p>Delete or rename entries inside an archive, and check its integrity with one click.</p></div>
     <div class="card"><h3>Presets</h3><p>Save a codec, level, dictionary and thread setup once, and reuse it on the next archive.</p></div>
-    <div class="card"><h3>Strong encryption choices</h3><p>AES-256 with optional encrypted file names for <code>.7z</code>, and AES-256 for zip instead of its weak ZipCrypto default.</p></div>
+    <div class="card"><h3>Strong encryption choices</h3><p>AES-256 with optional encrypted file names for <code>.7z</code>, and AES-256 for zip instead of its weak ZipCrypto default. Since 0.7, <code>.7z</code> can also use XChaCha20-Poly1305 or one of three AES/XChaCha20 cascades, which open in 7-Zip ZS 26.05 or newer.</p></div>
     <div class="card"><h3>Sandboxed</h3><p>A Flatpak that ships its own <code>7zz</code> and reaches your files only through the desktop's file portals, never your whole home folder.</p></div>
     <div class="card"><h3>An escape hatch</h3><p>The Advanced field passes any 7-Zip switch straight through, like <code>-mfb=273</code> or <code>-snl</code>, for the cases a control doesn't cover.</p></div>
   </div>
@@ -488,6 +491,16 @@
   <h2>Where Septima is going.</h2>
   <p class="sub">Each step ships on its own. Fix releases keep the bundled 7-Zip ZS current in between.</p>
   <ol class="phases">
+    <li class="phase live">
+      <span class="node"></span>
+      <h3>Big batches, and more ciphers <span class="status live">Live · 0.7</span></h3>
+      <ul>
+        <li><b>A cap on archives at once.</b> A batch used to start every archive together. Now a few run and the rest wait, with a running and waiting count, Cancel All, and a job list that scrolls.</li>
+        <li><b>Extract Several Archives</b> in the menu, on the start page and on <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd>.</li>
+        <li><b>Four more encryption methods for <code>.7z</code></b>: XChaCha20-Poly1305 and three AES/XChaCha20 cascades. They open in 7-Zip ZS 26.05 or newer, not stock 7-Zip, and AES-256 stays the default.</li>
+        <li><b>Presets don't downgrade quietly.</b> One that asks for a method this 7-Zip lacks says so.</li>
+      </ul>
+    </li>
     <li class="phase live">
       <span class="node"></span>
       <h3>Keyboard, help, and no silent overwrites <span class="status live">Live · 0.6</span></h3>
@@ -510,7 +523,6 @@
         <li><b>Lock the passwords file to a GPG key</b>, so there's nothing to remember when you write it.</li>
         <li><b>Naming patterns in batch mode</b>: prefixes, suffixes or hidden names, with the passwords file keeping track.</li>
         <li><b>Files integration</b>: right-click "Extract Here" and "Compress…" in GNOME Files.</li>
-        <li><b>Newer ciphers</b>: XChaCha20-Poly1305 and the AES/XChaCha20 cascades, which the bundled 7-Zip ZS has had since 26.05.</li>
       </ul>
     </li>
   </ol>
@@ -580,7 +592,7 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;"
     threads: Math.min(Math.max(navigator.hardwareConcurrency || 8, 1), 256),
     filter: 0, vol: 0, solid: false, enc: false, names: true, cipher: 0,
   };
-  const CIPHERS = { "7z": [["AES-256 (standard)", null]], zip: [["AES-256", "AES256"], ["ZipCrypto (legacy)", null]] };
+  const CIPHERS = { "7z": [["AES-256 (standard)", null], ["XChaCha20-Poly1305", "XChaCha20-Poly1305"], ["AES + XChaCha20-Poly1305", "AES+XChaCha20-Poly1305"], ["AES + XChaCha20 + Ascon", "AES+XChaCha20+Ascon"], ["XChaCha20 + AES + AEGIS", "XChaCha20+AES+AEGIS"]], zip: [["AES-256", "AES256"], ["ZipCrypto (legacy)", null]] };
   const fmt = () => CAPS.formats.find(f => f.id === S.format);
   const codec = () => fmt().codecs.find(c => c.id === S.codec) || fmt().codecs[0];
   const usesDict = c => ["lzma2", "lzma", "flzma2"].includes(c.id);
@@ -666,6 +678,7 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;"
         output: vol ? `photos.${f.ext}` : out, inputs: ["photos/"],
       })));
       if (vol) notes.push(`Split output is written as <b>photos.${esc(f.ext)}.001</b>, <b>.002</b>, …`);
+      if (pw && f.id === "7z" && S.cipher > 0) notes.push("This method opens in 7-Zip ZS 26.05 or newer, not in stock 7-Zip. AES-256 (standard) opens everywhere.");
       if (pw && f.id === "zip" && S.cipher === 1) notes.push("ZipCrypto is weak. It's there for old unzip tools; AES-256 is the default for a reason.");
     }
     $("cmd").innerHTML = lines.join("\n\n");
