@@ -14,12 +14,12 @@ codec-tuning controls no other Linux archive manager exposes.
 It is an **archive tool, not a file manager**. It never links or vendors 7-Zip
 code: a UI-free engine crate supervises the `7zz` binary as a subprocess.
 
-> Status: **v0.6.0**. Browse, extract, create with full tuning, batch
+> Status: **v0.7.0**. Browse, extract, create with full tuning, batch
 > operations and in-place editing all work today in a sandboxed Flatpak, with
 > 1:1 coverage of what the bundled `7zz` can create on Linux, **batch
-> encryption with a portable passwords file**, keyboard shortcuts throughout,
-> and extracts that never replace your files without asking. See the
-> [roadmap](#roadmap).
+> encryption with a portable passwords file**, batches of any size that run a
+> few archives at a time, keyboard shortcuts throughout, and extracts that
+> never replace your files without asking. See the [roadmap](#roadmap).
 
 <p align="center">
   <img src="docs/screenshots/codec-menu.png" alt="Septima's Add-to-Archive dialog with the modern-codec method menu open — LZMA2, Zstandard, Brotli, Fast-LZMA2, LZ4, LZ5, Lizard and more" width="640">
@@ -76,10 +76,18 @@ Where Septima aims to *win*, not just match:
   - **Lizard family × level** — pick among the four method families
     (fastLZ4 / LIZv1, ± Huffman) instead of one flat 10–49 slider.
   - Encryption — AES-256 with optional encrypted file names (7z), and
-    **AES-256 instead of the weak ZipCrypto default** for zip.
+    **AES-256 instead of the weak ZipCrypto default** for zip. For 7z you can
+    also pick one of 7-Zip ZS's newer methods: XChaCha20-Poly1305,
+    AES + XChaCha20-Poly1305, AES + XChaCha20 + Ascon or
+    XChaCha20 + AES + AEGIS. Those open in 7-Zip ZS 26.05 or newer, not in
+    stock 7-Zip; AES-256 stays the default.
   - Split into volumes (`.001`, `.002`, …), free-text advanced parameters.
-- **Batch extract** — select or drop several archives and each unpacks into its
-  own folder, with one shared password for encrypted sets.
+- **Batch extract** — *Extract Several Archives* in the menu (Ctrl+Shift+E), or
+  select or drop several archives, and each unpacks into its own folder, with
+  one shared password for encrypted sets.
+- **Big batches run a few at a time** — half as many archives as your CPU has
+  threads (at least 2, at most 8) are worked on at once; the rest wait their
+  turn in a scrolling job list with a running/waiting count and *Cancel All*.
 - **Batch compress** — stage several items and create a separate archive for
   each, saved next to it.
 - **Batch encrypt with a passwords file** — flip *Unique password per archive*
@@ -105,6 +113,7 @@ Where Septima aims to *win*, not just match:
 - **Staged input list** — Add Files / Add Folder across locations, with per-item
   remove, drag-and-drop, and a live count + total size of what's staged.
 - **Keyboard shortcuts** — Ctrl+O/N/W open, new, close; Ctrl+E extract;
+  Ctrl+Shift+E extract several;
   Ctrl+T test; Ctrl+H checksums; F2 and Delete in the file list; F1 help;
   Ctrl+? for the full list.
 - **What Septima Can Do** (F1) — every format and method with its levels, and
@@ -206,7 +215,7 @@ meson compile -C builddir
 
 ## Roadmap
 
-### Shipped (through v0.6.0)
+### Shipped (through v0.7.0)
 
 - [x] **Browse & extract** — any archive `7zz` reads, with live progress, cancel
       and password support.
@@ -342,6 +351,31 @@ per item or reusing one across all of them.
       a test.
 - [x] **About window** with release notes and the bundled 7-Zip ZS build.
 
+### New in v0.7.0 — big batches, and more ciphers
+
+- [x] **A cap on how many archives run at once** — a batch used to start one
+      `7zz` per archive, all together, so a hundred archives meant a hundred
+      processes. Now half as many as the CPU has threads run (at least 2, at
+      most 8) and the rest wait. Creating archives runs fewer side by side
+      when each one already uses every thread or a large share of free memory.
+- [x] **A job list that copes** — a running/waiting count, *Cancel All*,
+      scrolling after five rows, and waiting archives that can be cancelled
+      before they start. A long list of failures scrolls inside its dialog.
+- [x] **Batch extract has its own way in** — *Extract Several Archives* in the
+      menu, on the start page and on Ctrl+Shift+E; opening several archives
+      from Files offers it too.
+- [x] **Four more encryption methods for 7z** — XChaCha20-Poly1305 and the
+      three AES/XChaCha20 cascades from
+      [mcmilk/7-Zip-zstd#505](https://github.com/mcmilk/7-Zip-zstd/pull/505),
+      each offered only when the `7zz` in use has it, and labelled with where
+      it opens (7-Zip ZS 26.05 or newer, not stock 7-Zip). None is ranked
+      above another, and AES-256 stays the default.
+- [x] **Presets don't downgrade quietly** — a preset whose encryption method
+      isn't available says so instead of switching to AES-256 without a word.
+- [x] **Passwords file: a clearer folder prompt** — the sandbox lets Septima
+      read the passwords file you open but not its neighbours, so it asks for
+      the folder; the prompt now says why and opens in the right place.
+
 ### Later
 
 - [ ] **Encrypt the passwords file to a GPG key** — a third choice next to plain
@@ -356,10 +390,6 @@ per item or reusing one across all of them.
 - [ ] **Free-space check** — show available space at the extract destination
       before starting.
 - [ ] **Custom visual styling and app icon.**
-- [ ] **More encryption methods** — XChaCha20-Poly1305 and the AES/XChaCha20
-      cascades via `-mem`. The bundled 7-Zip ZS has them since 26.05 (Septima
-      0.5.2, [mcmilk/7-Zip-zstd#505](https://github.com/mcmilk/7-Zip-zstd/pull/505));
-      what's left is offering them as choices.
 - [ ] **Nautilus (Files) integration** — right-click "Extract Here" / "Extract
       to…" / "Compress…", like File Roller's extension. *Not a pure app
       feature*: a Nautilus extension loads into Nautilus's own host process,

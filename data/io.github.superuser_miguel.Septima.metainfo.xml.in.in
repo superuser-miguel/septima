@@ -39,6 +39,20 @@
   </developer>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.7.0" date="2026-11-24">
+      <description>
+        <p>Big batches stay under control, and four more ways to encrypt a 7z.</p>
+        <ul>
+          <li>Batches run a few archives at a time instead of all at once: half as many as your CPU has threads, at least 2 and at most 8. The rest wait their turn. When creating archives, fewer run together if each one already uses every thread or a large share of free memory.</li>
+          <li>The job list shows how many are running and waiting, scrolls instead of filling the window, and has Cancel All. A waiting archive can be cancelled before it starts.</li>
+          <li>Extract Several Archives is now in the menu, on the start page and on Ctrl+Shift+E. Selecting several archives in Files and opening them with Septima offers the same.</li>
+          <li>New encryption choices for 7z: XChaCha20-Poly1305, AES + XChaCha20-Poly1305, AES + XChaCha20 + Ascon and XChaCha20 + AES + AEGIS. They open in 7-Zip ZS 26.05 or newer, not in stock 7-Zip. AES-256 stays the default and opens everywhere.</li>
+          <li>A preset that uses an encryption method this copy of 7-Zip doesn't offer now says so, instead of quietly switching to AES-256.</li>
+          <li>Opening a passwords file now explains that Septima needs access to its folder to reach the archives, and opens the folder chooser in the right place.</li>
+          <li>A long list of failed archives scrolls inside its dialog.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.6.0" date="2026-11-20">
       <description>
         <p>Extracting never replaces your files without asking, and Septima now works from the keyboard.</p>
