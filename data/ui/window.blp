@@ -4,6 +4,13 @@ using Adw 1;
 menu primary_menu {
   section {
     item {
+      label: _("_Extract Several Archives…");
+      action: "win.batch-extract";
+    }
+  }
+
+  section {
+    item {
       label: _("Close Archive");
       action: "win.close-archive";
     }
@@ -90,8 +97,46 @@ template $SeptimaWindow: Adw.ApplicationWindow {
     Gtk.Revealer jobs_revealer {
       transition-type: slide_up;
 
-      Gtk.Box jobs_box {
+      Gtk.Box {
         orientation: vertical;
+
+        Gtk.Box jobs_header {
+          visible: false;
+          spacing: 12;
+          margin-start: 12;
+          margin-end: 6;
+          margin-top: 6;
+
+          Gtk.Label jobs_label {
+            xalign: 0;
+            hexpand: true;
+
+            styles [
+              "dim-label",
+              "caption",
+            ]
+          }
+
+          Gtk.Button {
+            label: _("Cancel All");
+            clicked => $on_cancel_all_clicked() swapped;
+
+            styles [
+              "flat",
+            ]
+          }
+        }
+
+        // A big batch lists every archive; past a few rows the list scrolls
+        // rather than pushing the window's content off the screen. Its
+        // height is set in code (update_jobs_header) from the row count.
+        Gtk.ScrolledWindow jobs_scroller {
+          hscrollbar-policy: never;
+
+          Gtk.Box jobs_box {
+            orientation: vertical;
+          }
+        }
       }
     }
 
@@ -103,17 +148,31 @@ template $SeptimaWindow: Adw.ApplicationWindow {
           child: Adw.StatusPage status_page {
             icon-name: "package-x-generic-symbolic";
             title: _("Open an Archive");
-            description: _("Select a .7z, .zip, .tar or other supported archive to view its contents.");
+            description: _("Open a .7z, .zip, .tar or other archive to see what's inside, or extract several at once.");
 
-            child: Gtk.Button {
+            child: Gtk.Box {
+              orientation: vertical;
+              spacing: 12;
               halign: center;
-              label: _("Open Archive…");
-              clicked => $on_open_clicked() swapped;
 
-              styles [
-                "pill",
-                "suggested-action",
-              ]
+              Gtk.Button {
+                label: _("Open Archive…");
+                clicked => $on_open_clicked() swapped;
+
+                styles [
+                  "pill",
+                  "suggested-action",
+                ]
+              }
+
+              Gtk.Button {
+                label: _("Extract Several Archives…");
+                clicked => $on_batch_extract_clicked() swapped;
+
+                styles [
+                  "pill",
+                ]
+              }
             };
           };
         }

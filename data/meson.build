@@ -73,6 +73,8 @@ gresources = gnome.compile_resources(
 # --- Desktop entry (app id substituted, then translations merged) ---
 desktop_conf = configuration_data()
 desktop_conf.set('app-id', application_id)
+# A development build sits next to the release in the app grid; name it so.
+desktop_conf.set('name', profile == 'development' ? 'Septima (Devel)' : 'Septima')
 desktop_in = configure_file(
   input: 'io.github.superuser_miguel.Septima.desktop.in.in',
   output: application_id + '.desktop.in',
@@ -96,8 +98,10 @@ if desktop_file_validate.found()
 endif
 
 # --- App icon (installed under the app id so AppStream + the shell find it) ---
+# Development builds get the grey, striped variant.
+app_icon = profile == 'development' ? 'io.github.superuser_miguel.Septima.Devel.svg' : 'io.github.superuser_miguel.Septima.svg'
 install_data(
-  'icons/hicolor/scalable/apps/io.github.superuser_miguel.Septima.svg',
+  'icons/hicolor/scalable/apps' / app_icon,
   install_dir: datadir / 'icons' / 'hicolor' / 'scalable' / 'apps',
   rename: application_id + '.svg',
 )

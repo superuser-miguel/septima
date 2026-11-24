@@ -85,6 +85,26 @@ impl SeptimaProgressRow {
         self.imp().pulse_source.replace(Some(id));
     }
 
+    /// Held back by the cap on jobs at once: a still bar that says so.
+    pub fn set_waiting(&self) {
+        self.stop_scanning();
+        let bar = &self.imp().progress_bar;
+        bar.set_fraction(0.0);
+        bar.set_text(Some(&gettext("Waiting…")));
+    }
+
+    /// Its turn has come: back to the "Scanning…" pulse until 7zz reports.
+    pub fn set_running(&self) {
+        if self.imp().pulse_source.borrow().is_none() {
+            self.start_scanning();
+        }
+    }
+
+    /// Press this row's cancel button (for Cancel All).
+    pub fn cancel(&self) {
+        self.imp().cancel_button.emit_clicked();
+    }
+
     fn stop_scanning(&self) {
         if let Some(id) = self.imp().pulse_source.take() {
             id.remove();

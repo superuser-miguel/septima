@@ -224,7 +224,7 @@ fn good_to_know_page() -> adw::PreferencesPage {
         .icon_name("help-about-symbolic")
         .build();
     let group = adw::PreferencesGroup::new();
-    let notes: [(String, String); 5] = [
+    let notes: [(String, String); 6] = [
         (
             // window.rs: ClashChoice, count_clashes, folder_has_entries.
             gettext("Extracting never replaces a file without asking"),
@@ -234,6 +234,16 @@ fn good_to_know_page() -> adw::PreferencesPage {
                  them. Batch extract gives each archive a new folder and asks the same when one already \
                  exists. Skip can't be combined with deleting the archive afterwards, since the skipped \
                  files would go with it.",
+            ),
+        ),
+        (
+            // job_queue.rs: JobGate, default_limit, compress_slots; window.rs: submit_job.
+            gettext("Big batches run a few archives at a time"),
+            gettext(
+                "Septima works on a few archives at once: half as many as your CPU has threads, at least \
+                 2 and at most 8. The rest wait their turn in the job list. When creating archives, fewer \
+                 run together if each one already uses every thread or a large share of free memory. \
+                 Cancel stops one job, running or waiting; Cancel All stops them all.",
             ),
         ),
         (

@@ -65,7 +65,38 @@ const STEPS: &[Step] = &[
         }
     }),
     ("extract-clash-skip", |_, win| click_radio(win, "Skip")),
+    // A batch bigger than the cap: some rows running, the rest waiting.
+    ("batch-queue", |_, win| {
+        close_dialog(win);
+        if let Some(dir) = std::env::var_os("SEPTIMA_SHOTS_BATCH") {
+            win.shots_batch_extract(Path::new(&dir));
+            // Report again once the jobs have had time to spawn their 7zz.
+            let win = win.clone();
+            glib::timeout_add_local_once(Duration::from_millis(600), move || report_queue(&win, "batch-queue"));
+        }
+    }),
+    ("batch-cancel-all", |_, win| {
+        win.shots_cancel_all();
+        let win = win.clone();
+        glib::timeout_add_local_once(Duration::from_millis(600), move || report_queue(&win, "batch-cancel-all"));
+    }),
+    ("batch-report", |_, win| {
+        close_dialog(win);
+        win.shots_long_report();
+    }),
 ];
+
+/// Print the queue's own count next to how many `7zz` this process really
+/// has running, so the cap can be checked from outside the gate's bookkeeping.
+fn report_queue(win: &SeptimaWindow, step: &str) {
+    let (limit, running, waiting) = win.shots_queue_state();
+    let children = std::process::Command::new("pgrep")
+        .args(["-c", "-P", &std::process::id().to_string(), "7zz"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+        .unwrap_or_default();
+    eprintln!("[shots] {step}: limit {limit}, running {running}, waiting {waiting}, 7zz processes {children}");
+}
 
 /// Activate the radio in the open dialog whose label starts with `prefix`.
 fn click_radio(win: &SeptimaWindow, prefix: &str) {

@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::Ordering;
@@ -15,12 +15,21 @@ use septima_engine::{
 use crate::archive_view::SeptimaArchiveView;
 use crate::batch_run::{BatchKind, BatchRun, Outcome};
 use crate::create_dialog::{CreateSettings, SeptimaCreateDialog};
+use crate::job_queue::{self, JobGate};
 use crate::progress_row::SeptimaProgressRow;
 
 /// Messages from the extraction worker thread to the UI.
 enum Job {
     Progress(ExtractProgress),
     Done(Result<(), EngineError>),
+}
+
+/// A job's place in the queue (see `job_queue`): what `finish_job` needs to
+/// give its slots back, and whether it ever started.
+struct JobTicket {
+    id: u64,
+    slots: usize,
+    started: Rc<Cell<bool>>,
 }
 
 /// Shared state of a batch run's passwords file. Entries are updated on the
@@ -78,6 +87,14 @@ mod imp {
         pub jobs_revealer: TemplateChild<gtk::Revealer>,
         #[template_child]
         pub jobs_box: TemplateChild<gtk::Box>,
+        #[template_child]
+        pub jobs_header: TemplateChild<gtk::Box>,
+        #[template_child]
+        pub jobs_label: TemplateChild<gtk::Label>,
+        #[template_child]
+        pub jobs_scroller: TemplateChild<gtk::ScrolledWindow>,
+        /// Holds extract and create jobs back so only a few `7zz` run at once.
+        pub job_gate: RefCell<JobGate<Box<dyn FnOnce()>>>,
         /// The currently open archive, used as the extract source.
         pub archive_path: RefCell<Option<PathBuf>>,
         /// Password the current archive was opened with (reused for extraction).
@@ -102,6 +119,16 @@ mod imp {
         #[template_callback]
         fn on_new_clicked(&self) {
             self.obj().new_archive_dialog();
+        }
+
+        #[template_callback]
+        fn on_batch_extract_clicked(&self) {
+            self.obj().batch_extract_dialog();
+        }
+
+        #[template_callback]
+        fn on_cancel_all_clicked(&self) {
+            self.obj().cancel_all_jobs();
         }
     }
 
@@ -142,6 +169,11 @@ mod imp {
             let open = gio::ActionEntry::builder("open")
                 .activate(|window: &super::SeptimaWindow, _, _| window.open_archive_dialog())
                 .build();
+            // Batch extract's own way in (Ctrl+Shift+E); it used to be reachable
+            // only by picking several files in Open or dropping them.
+            let batch_extract = gio::ActionEntry::builder("batch-extract")
+                .activate(|window: &super::SeptimaWindow, _, _| window.batch_extract_dialog())
+                .build();
             let new_archive = gio::ActionEntry::builder("new-archive")
                 .activate(|window: &super::SeptimaWindow, _, _| window.new_archive_dialog())
                 .build();
@@ -157,7 +189,7 @@ mod imp {
                 .activate(|window: &super::SeptimaWindow, _, _| window.imp().archive_view.request_delete())
                 .build();
             let obj = self.obj();
-            obj.add_action_entries([checksums, close, test_archive, open, new_archive, extract, rename, delete]);
+            obj.add_action_entries([checksums, close, test_archive, open, batch_extract, new_archive, extract, rename, delete]);
             obj.set_archive_actions_enabled(false);
 
             // Drop an archive onto the window to open it; drop several to
@@ -244,6 +276,36 @@ impl SeptimaWindow {
                 }
             }
         });
+    }
+
+    /// Pick any number of archives and extract them all, each into its own
+    /// folder. Unlike Open, one file is extracted too, not browsed.
+    fn batch_extract_dialog(&self) {
+        let dialog = gtk::FileDialog::builder()
+            .title(gettext("Choose Archives to Extract"))
+            .accept_label(gettext("_Extract…"))
+            .modal(true)
+            .build();
+
+        let window = self.clone();
+        dialog.open_multiple(Some(self), gio::Cancellable::NONE, move |result| match result {
+            Ok(files) => {
+                let files: Vec<gio::File> = files.iter::<gio::File>().filter_map(Result::ok).collect();
+                if !files.is_empty() {
+                    window.confirm_batch_extract(files);
+                }
+            }
+            Err(err) => {
+                if !err.matches(gtk::DialogError::Dismissed) {
+                    window.show_toast(err.message());
+                }
+            }
+        });
+    }
+
+    /// Files handed over from outside (command line, Open With).
+    pub fn open_files(&self, files: Vec<gio::File>) {
+        self.open_or_batch_extract(files);
     }
 
     /// A single file opens for browsing (unchanged); two or more trigger a
@@ -358,13 +420,29 @@ impl SeptimaWindow {
             return;
         }
 
-        let dialog = adw::AlertDialog::new(
-            Some(&gettext("Locate the Archives")),
-            Some(&gettext(
-                "None of the archives in this passwords file were found next to it. \
-                 Point Septima at the folder that holds them?",
-            )),
-        );
+        // Opened through the file chooser, the passwords file is the only
+        // thing in its folder the sandbox lets Septima see — the archives can
+        // be right beside it and still look missing. Say that, not "not
+        // found", and open the folder picker where the file really lives so
+        // granting access is one click.
+        let host_folder = portal_host_path(&manifest_path).and_then(|p| p.parent().map(Path::to_path_buf));
+        let dialog = if under_doc_portal(&manifest_path) {
+            adw::AlertDialog::new(
+                Some(&gettext("Allow Access to the Folder")),
+                Some(&gettext(
+                    "Septima can read the passwords file, but not the other files in its folder \
+                     until you choose that folder. Choose it to continue.",
+                )),
+            )
+        } else {
+            adw::AlertDialog::new(
+                Some(&gettext("Locate the Archives")),
+                Some(&gettext(
+                    "None of the archives in this passwords file were found next to it. \
+                     Point Septima at the folder that holds them?",
+                )),
+            )
+        };
         dialog.add_response("cancel", &gettext("Cancel"));
         dialog.add_response("locate", &gettext("Choose Folder…"));
         dialog.set_response_appearance("locate", adw::ResponseAppearance::Suggested);
@@ -381,6 +459,9 @@ impl SeptimaWindow {
                 .title(gettext("Folder With the Archives"))
                 .modal(true)
                 .build();
+            if let Some(folder) = &host_folder {
+                picker.set_initial_folder(Some(&gio::File::for_path(folder)));
+            }
             picker.select_folder(Some(&window), gio::Cancellable::NONE, move |result| {
                 if let Ok(folder) = result {
                     if let Some(dir) = folder.path() {
@@ -847,9 +928,9 @@ impl SeptimaWindow {
 
         let cancel = septima_engine::new_cancel_token();
         let cancel_ui = cancel.clone();
-        row.connect_cancel(move || cancel_ui.store(true, Ordering::Relaxed));
 
         let (sender, receiver) = async_channel::unbounded::<Job>();
+        let waiting_sender = sender.downgrade();
         let sevenzip = septima_engine::sevenzip_path();
         let req = ExtractRequest {
             archive: archive.clone(),
@@ -859,12 +940,15 @@ impl SeptimaWindow {
             entries: Vec::new(),
         };
 
-        std::thread::spawn(move || {
-            let result = septima_engine::run_extract(&sevenzip, &req, &cancel, |p| {
-                let _ = sender.send_blocking(Job::Progress(p.clone()));
+        let ticket = self.submit_job(&row, 1, move || {
+            std::thread::spawn(move || {
+                let result = septima_engine::run_extract(&sevenzip, &req, &cancel, |p| {
+                    let _ = sender.send_blocking(Job::Progress(p.clone()));
+                });
+                let _ = sender.send_blocking(Job::Done(result));
             });
-            let _ = sender.send_blocking(Job::Done(result));
         });
+        self.connect_job_cancel(&row, cancel_ui, &ticket, waiting_sender);
 
         let window = self.clone();
         glib::spawn_future_local(async move {
@@ -873,7 +957,7 @@ impl SeptimaWindow {
                 match message {
                     Job::Progress(p) => row.set_progress(p.percent, p.current_file.as_deref()),
                     Job::Done(result) => {
-                        window.finish_job(&row);
+                        window.finish_job(&row, Some(&ticket));
                         match (result, &batch) {
                             (Ok(()), _) => {
                                 if batch.is_none() {
@@ -954,7 +1038,7 @@ impl SeptimaWindow {
                 }
             }
             if !settled {
-                window.worker_died(&row, &archive, batch.as_ref());
+                window.worker_died(&row, &ticket, &archive, batch.as_ref());
             }
         });
     }
@@ -998,19 +1082,182 @@ impl SeptimaWindow {
         }
     }
 
-    fn finish_job(&self, row: &SeptimaProgressRow) {
+    /// Dev-only (screenshots): batch-extract every file in `dir` with the
+    /// dialog's defaults, as its Extract button would.
+    #[cfg(feature = "shots")]
+    pub(crate) fn shots_batch_extract(&self, dir: &Path) {
+        let mut archives: Vec<PathBuf> = std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.is_file())
+            .collect();
+        archives.sort();
+        let dests = sibling_extract_dirs(archives.iter().map(PathBuf::as_path));
+        let run = Rc::new(RefCell::new(BatchRun::new(BatchKind::Extract, archives.len())));
+        for (archive, dest) in archives.into_iter().zip(dests) {
+            self.start_extract(archive, dest, None, OverwriteMode::default(), false, Some(run.clone()));
+        }
+    }
+
+    /// Dev-only (screenshots): (limit, running, waiting) of the job queue.
+    #[cfg(feature = "shots")]
+    pub(crate) fn shots_queue_state(&self) -> (usize, usize, usize) {
+        let gate = self.imp().job_gate.borrow();
+        (gate.limit(), gate.running(), gate.waiting())
+    }
+
+    /// Dev-only (screenshots): press Cancel All.
+    #[cfg(feature = "shots")]
+    pub(crate) fn shots_cancel_all(&self) {
+        self.cancel_all_jobs();
+    }
+
+    /// Dev-only (screenshots): a failure report long enough to scroll.
+    #[cfg(feature = "shots")]
+    pub(crate) fn shots_long_report(&self) {
+        let lines: Vec<String> = (1..=40)
+            .map(|n| format!("holiday-photos-{n:02}.7z: 7zz exited with code 2: Data Error"))
+            .collect();
+        self.show_alert(&gettext("Some Archives Failed"), &lines.join("\n"));
+    }
+
+    /// Put a job behind the cap on jobs at once. `start` runs now if there's
+    /// room, otherwise when its turn comes; until then `row` reads "Waiting…".
+    fn submit_job(&self, row: &SeptimaProgressRow, slots: usize, start: impl FnOnce() + 'static) -> JobTicket {
+        let started = Rc::new(Cell::new(false));
+        let job: Box<dyn FnOnce()> = {
+            let started = started.clone();
+            let row = row.clone();
+            Box::new(move || {
+                started.set(true);
+                row.set_running();
+                start();
+            })
+        };
+        // The gate hands the job back rather than running it, so the borrow
+        // is over before any job code runs.
+        let (id, now) = self.imp().job_gate.borrow_mut().submit(slots, job);
+        match now {
+            Some(job) => job(),
+            None => row.set_waiting(),
+        }
+        self.update_jobs_header();
+        JobTicket { id, slots, started }
+    }
+
+    /// Wire a row's cancel button. A running job is stopped through its
+    /// cancel token. One still waiting is taken out of the queue and reported
+    /// as cancelled through its own channel, so it ends the same way a
+    /// running one does (row removed, batch told).
+    fn connect_job_cancel(
+        &self,
+        row: &SeptimaProgressRow,
+        cancel: septima_engine::CancelToken,
+        ticket: &JobTicket,
+        waiting_sender: async_channel::WeakSender<Job>,
+    ) {
+        let id = ticket.id;
+        let window = self.downgrade();
+        row.connect_cancel(move || {
+            cancel.store(true, Ordering::Relaxed);
+            let Some(window) = window.upgrade() else {
+                return;
+            };
+            let removed = window.imp().job_gate.borrow_mut().cancel_waiting(id);
+            if let Some(job) = removed {
+                // Hold a sender before dropping the job: the job owns the
+                // only other one, and the channel must stay open for this.
+                let sender = waiting_sender.upgrade();
+                drop(job);
+                if let Some(sender) = sender {
+                    let _ = sender.try_send(Job::Done(Err(EngineError::Cancelled)));
+                }
+                window.start_waiting_jobs();
+            }
+        });
+    }
+
+    /// Start whatever the gate now has room for.
+    fn start_waiting_jobs(&self) {
+        let next = self.imp().job_gate.borrow_mut().startable();
+        for job in next {
+            job();
+        }
+        self.update_jobs_header();
+    }
+
+    /// Remove a finished job's row. A queued job (`ticket`) that had started
+    /// gives its slots back, which lets the next ones in.
+    fn finish_job(&self, row: &SeptimaProgressRow, ticket: Option<&JobTicket>) {
         let imp = self.imp();
         imp.jobs_box.remove(row);
         if imp.jobs_box.first_child().is_none() {
             imp.jobs_revealer.set_reveal_child(false);
+        }
+        if let Some(ticket) = ticket.filter(|t| t.started.get()) {
+            imp.job_gate.borrow_mut().release(ticket.slots);
+        }
+        self.start_waiting_jobs();
+    }
+
+    /// The line above the job list: how many are running and waiting, with
+    /// Cancel All. Shown once there is more than one job.
+    fn update_jobs_header(&self) {
+        let imp = self.imp();
+        let mut rows = 0usize;
+        let mut row_height = 0;
+        let mut child = imp.jobs_box.first_child();
+        while let Some(widget) = child {
+            rows += 1;
+            row_height = row_height.max(widget.measure(gtk::Orientation::Vertical, -1).1);
+            child = widget.next_sibling();
+        }
+        // Tall enough for up to JOB_ROWS_SHOWN rows; more than that scroll.
+        let shown = rows.min(JOB_ROWS_SHOWN) as i32;
+        // GTK insists min <= max at every step, so clear min before moving max.
+        let height = shown * row_height;
+        imp.jobs_scroller.set_min_content_height(-1);
+        imp.jobs_scroller.set_max_content_height(height.max(1));
+        imp.jobs_scroller.set_min_content_height(height);
+        let waiting = imp.job_gate.borrow().waiting();
+        imp.jobs_header.set_visible(rows >= 2);
+        let text = if waiting > 0 {
+            gettext("{running} running, {waiting} waiting")
+                .replace("{running}", &rows.saturating_sub(waiting).to_string())
+                .replace("{waiting}", &waiting.to_string())
+        } else {
+            gettext("{running} running").replace("{running}", &rows.to_string())
+        };
+        imp.jobs_label.set_label(&text);
+    }
+
+    /// Cancel every job in the list, running or waiting.
+    fn cancel_all_jobs(&self) {
+        let mut rows = Vec::new();
+        let mut child = self.imp().jobs_box.first_child();
+        while let Some(widget) = child {
+            child = widget.next_sibling();
+            if let Ok(row) = widget.downcast::<SeptimaProgressRow>() {
+                rows.push(row);
+            }
+        }
+        for row in rows {
+            row.cancel();
         }
     }
 
     /// A job's worker thread ended without reporting (a panic in the
     /// engine). Clear its row, and in a batch count it as failed — otherwise
     /// the round never ends and the rest of the batch never reports.
-    fn worker_died(&self, row: &SeptimaProgressRow, archive: &Path, batch: Option<&Rc<RefCell<BatchRun>>>) {
-        self.finish_job(row);
+    fn worker_died(
+        &self,
+        row: &SeptimaProgressRow,
+        ticket: &JobTicket,
+        archive: &Path,
+        batch: Option<&Rc<RefCell<BatchRun>>>,
+    ) {
+        self.finish_job(row, Some(ticket));
         let message = gettext("the job stopped unexpectedly");
         match batch {
             Some(run) => self.record_batch(run, archive, Outcome::Failed { message }),
@@ -1396,24 +1643,28 @@ impl SeptimaWindow {
 
         let cancel = septima_engine::new_cancel_token();
         let cancel_ui = cancel.clone();
-        row.connect_cancel(move || cancel_ui.store(true, Ordering::Relaxed));
 
         let (sender, receiver) = async_channel::unbounded::<Job>();
+        let waiting_sender = sender.downgrade();
         let sevenzip = septima_engine::sevenzip_path();
         let sevenzip_for_checksum = sevenzip.clone();
 
-        std::thread::spawn(move || {
-            let progress = |p: &ExtractProgress| {
-                let _ = sender.send_blocking(Job::Progress(p.clone()));
-            };
-            // tar + a real compressor produces a .tar.<ext> in two steps.
-            let result = if req.format == "tar" && req.codec.as_deref().is_some_and(|c| c != "copy") {
-                septima_engine::run_tar_and_compress(&sevenzip, &req, &cancel, progress)
-            } else {
-                septima_engine::run_add(&sevenzip, &req, &cancel, progress)
-            };
-            let _ = sender.send_blocking(Job::Done(result));
+        let slots = compress_job_slots(imp.job_gate.borrow().limit(), &req);
+        let ticket = self.submit_job(&row, slots, move || {
+            std::thread::spawn(move || {
+                let progress = |p: &ExtractProgress| {
+                    let _ = sender.send_blocking(Job::Progress(p.clone()));
+                };
+                // tar + a real compressor produces a .tar.<ext> in two steps.
+                let result = if req.format == "tar" && req.codec.as_deref().is_some_and(|c| c != "copy") {
+                    septima_engine::run_tar_and_compress(&sevenzip, &req, &cancel, progress)
+                } else {
+                    septima_engine::run_add(&sevenzip, &req, &cancel, progress)
+                };
+                let _ = sender.send_blocking(Job::Done(result));
+            });
         });
+        self.connect_job_cancel(&row, cancel_ui, &ticket, waiting_sender);
 
         let window = self.clone();
         glib::spawn_future_local(async move {
@@ -1422,7 +1673,7 @@ impl SeptimaWindow {
                 match message {
                     Job::Progress(p) => row.set_progress(p.percent, p.current_file.as_deref()),
                     Job::Done(result) => {
-                        window.finish_job(&row);
+                        window.finish_job(&row, Some(&ticket));
                         match result {
                             Ok(()) => {
                                 if batch.is_none() {
@@ -1532,7 +1783,7 @@ impl SeptimaWindow {
                 }
             }
             if !settled {
-                window.worker_died(&row, &output, batch.as_ref());
+                window.worker_died(&row, &ticket, &output, batch.as_ref());
             }
         });
     }
@@ -1577,7 +1828,7 @@ impl SeptimaWindow {
                 match message {
                     Job::Progress(p) => row.set_progress(p.percent, p.current_file.as_deref()),
                     Job::Done(result) => {
-                        window.finish_job(&row);
+                        window.finish_job(&row, None);
                         match result {
                             Ok(()) => window.show_toast(&gettext(
                                 "No errors found — the archive is intact.",
@@ -1794,12 +2045,55 @@ impl SeptimaWindow {
     }
 
     /// A one-button dialog with `heading` and a (possibly long) `message`.
+    /// A long one — a big batch's list of failures — scrolls inside the
+    /// dialog instead of growing it past the screen.
     fn show_alert(&self, heading: &str, message: &str) {
-        let dialog = adw::AlertDialog::new(Some(heading), Some(message.trim()));
+        let message = message.trim();
+        let dialog = if message.lines().count() > REPORT_LINES_BEFORE_SCROLL {
+            let label = gtk::Label::builder()
+                .label(message)
+                .xalign(0.0)
+                .yalign(0.0)
+                .wrap(true)
+                .wrap_mode(gtk::pango::WrapMode::WordChar)
+                .build();
+            let scroller = gtk::ScrolledWindow::builder()
+                .hscrollbar_policy(gtk::PolicyType::Never)
+                .propagate_natural_height(true)
+                .max_content_height(320)
+                .child(&label)
+                .build();
+            let dialog = adw::AlertDialog::new(Some(heading), None);
+            dialog.set_extra_child(Some(&scroller));
+            dialog
+        } else {
+            adw::AlertDialog::new(Some(heading), Some(message))
+        };
         dialog.add_response("close", &gettext("Close"));
         dialog.set_default_response(Some("close"));
         dialog.present(Some(self));
     }
+}
+
+/// The job list shows this many rows before it scrolls.
+const JOB_ROWS_SHOWN: usize = 5;
+
+/// Longer reports than this scroll inside their dialog.
+const REPORT_LINES_BEFORE_SCROLL: usize = 8;
+
+/// How many of the gate's slots a create job takes: more when one `7zz`
+/// already fills the CPU or a large share of free memory.
+fn compress_job_slots(limit: usize, req: &CompressionRequest) -> usize {
+    let cpus = std::thread::available_parallelism().map_or(1, usize::from);
+    let estimate = req.codec.as_deref().and_then(|codec| {
+        septima_engine::estimate_add_memory(
+            codec,
+            req.level,
+            req.dictionary.as_deref().and_then(job_queue::size_arg_bytes),
+            req.threads.unwrap_or(cpus as u32),
+        )
+    });
+    job_queue::compress_slots(limit, cpus, req.threads, estimate, job_queue::memory_available())
 }
 
 /// Full file extension for the chosen settings, e.g. `7z`, `zip`, `tar.zst`.
@@ -1829,12 +2123,14 @@ fn archive_filename(name: &str, ext: &str) -> String {
 /// The human-readable cipher note stored per manifest entry — the context
 /// nobody remembers six months later ("7z, AES-256, encrypted headers").
 fn encryption_description(settings: &CreateSettings) -> String {
+    // The passwords file is read by people, possibly years on: it keeps the
+    // plain cipher name, without the menu's "(standard)" aside.
     let cipher = match (settings.format.id, settings.encryption_method.as_deref()) {
-        ("7z", Some("AES256GCM")) => "AES-256-GCM + Argon2id",
-        ("7z", _) => "AES-256",
-        ("zip", Some("AES256")) => "AES-256",
-        ("zip", _) => "ZipCrypto (legacy)",
-        _ => return String::new(),
+        ("7z", None) => "AES-256",
+        (format, method) => match septima_engine::capabilities::encryption_label(format, method) {
+            Some(label) => label,
+            None => return String::new(),
+        },
     };
     let mut out = format!("{}, {cipher}", settings.format.id);
     if settings.encrypt_headers {
@@ -1972,6 +2268,20 @@ fn drag_staging_base() -> PathBuf {
 /// to it" must not be attempted for such paths.
 fn under_doc_portal(path: &Path) -> bool {
     path.starts_with(glib::user_runtime_dir().join("doc"))
+}
+
+/// Where a file opened through the document portal really lives. The portal
+/// shows it under `/run/user/<uid>/doc/<id>/` and records the real path in an
+/// extended attribute. `None` for ordinary paths or older portals.
+fn portal_host_path(path: &Path) -> Option<PathBuf> {
+    const ATTR: &str = "xattr::document-portal.host-path";
+    if !under_doc_portal(path) {
+        return None;
+    }
+    let info = gio::File::for_path(path)
+        .query_info(ATTR, gio::FileQueryInfoFlags::NONE, gio::Cancellable::NONE)
+        .ok()?;
+    info.attribute_string(ATTR).map(|s| PathBuf::from(s.as_str()))
 }
 
 /// A non-colliding output path in `dir`: `photos.7z`, then `photos_2.7z`, …

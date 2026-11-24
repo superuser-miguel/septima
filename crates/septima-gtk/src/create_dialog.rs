@@ -827,14 +827,16 @@ impl SeptimaCreateDialog {
         imp.volume_row.set_selected(vol_index(p.volume_size.as_deref()));
         imp.filter_row.set_selected(filter_index(p.filter.as_deref()));
         imp.encrypt_headers_row.set_active(p.encrypt_headers);
-        // The cipher list was rebuilt by the format change above; a method the
-        // running 7zz doesn't offer (a GCM preset against a stock build) falls
-        // back to the format's default entry.
-        let cipher = encryption_choices(imp.current_format().id)
-            .iter()
-            .position(|m| m.id == p.encryption_method.as_deref())
-            .unwrap_or(0);
-        imp.encryption_row.set_selected(cipher as u32);
+        // The cipher list was rebuilt by the format change above. A method the
+        // running 7zz doesn't offer can't be selected, and falling back to the
+        // default without a word would make a weaker-than-asked-for archive
+        // look like what the preset promised — so say it.
+        let choices = encryption_choices(imp.current_format().id);
+        let cipher = choices.iter().position(|m| m.id == p.encryption_method.as_deref());
+        imp.encryption_row.set_selected(cipher.unwrap_or(0) as u32);
+        if cipher.is_none() && !choices.is_empty() {
+            self.warn_cipher_unavailable(p, choices[0].label);
+        }
         imp.checksum_row.set_active(p.write_checksum);
         imp.generate_row.set_active(p.generate_passwords);
         // Index 1 (protected) exists only when gpg is available.
@@ -844,6 +846,28 @@ impl SeptimaCreateDialog {
         imp.params_row.set_text(&p.extra_params.join(" "));
         imp.update_batch_password_rows();
         imp.update_memory();
+    }
+
+    /// Tell the user a preset's encryption method isn't in this `7zz`, and
+    /// what the dialog is set to instead.
+    fn warn_cipher_unavailable(&self, p: &Preset, fallback: &str) {
+        let format_id = self.imp().current_format().id;
+        let wanted = septima_engine::capabilities::encryption_label(format_id, p.encryption_method.as_deref())
+            .map(str::to_owned)
+            .or_else(|| p.encryption_method.clone())
+            .unwrap_or_default();
+        let body = gettext(
+            "The preset “{preset}” uses {wanted}, which this copy of 7-Zip doesn’t offer. \
+             Encryption is now set to {fallback}. Everything else in the preset was applied.",
+        )
+        .replace("{preset}", &p.name)
+        .replace("{wanted}", &wanted)
+        .replace("{fallback}", fallback);
+        let alert = adw::AlertDialog::new(Some(&gettext("Encryption Method Not Available")), Some(&body));
+        alert.add_response("ok", &gettext("_OK"));
+        alert.set_default_response(Some("ok"));
+        alert.set_close_response("ok");
+        alert.present(Some(self));
     }
 
     fn rebuild_presets_popover(&self) {

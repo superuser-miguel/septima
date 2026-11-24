@@ -50,6 +50,17 @@ export SEPTIMA_SHOTS_ARCHIVE="$WORK/sample.7z"
 mkdir -p "$WORK/Downloads"
 7zz x -bso0 -bsp0 -y -o"$WORK/Downloads" "$WORK/sample.7z"
 export SEPTIMA_SHOTS_DEST="$WORK/Downloads"
+# Sixteen archives that each take a second or two to extract, for the batch
+# shots. One real archive under sixteen names (hard links), so it costs the
+# disk space of one.
+mkdir -p "$WORK/batch" "$WORK/batch-src"
+head -c 110000000 /dev/urandom | base64 >"$WORK/batch-src/payload.txt"
+7zz a -bso0 -bsp0 -t7z -m0=lzma2 -mx=1 "$WORK/batch/holiday-photos-01.7z" "$WORK/batch-src/payload.txt"
+rm -rf "$WORK/batch-src"
+for n in 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16; do
+    ln "$WORK/batch/holiday-photos-01.7z" "$WORK/batch/holiday-photos-$n.7z"
+done
+export SEPTIMA_SHOTS_BATCH="$WORK/batch"
 export SEPTIMA_SHOTS_DIR="$OUT" SEPTIMA_BIN="$BIN" GTK_A11Y=none
 unset DISPLAY WAYLAND_DISPLAY
 

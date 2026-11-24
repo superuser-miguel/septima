@@ -7,6 +7,7 @@ mod create_dialog;
 mod entry_object;
 mod hash_dialog;
 mod help;
+mod job_queue;
 mod preset;
 mod progress_row;
 #[cfg(feature = "shots")]
@@ -64,9 +65,9 @@ fn main() -> glib::ExitCode {
     });
     app.connect_open(|app, files, _hint| {
         let window = window_for(app);
-        if let Some(file) = files.first() {
-            window.open_file(file.clone());
-        }
+        // One file opens for browsing; several (a multi-selection sent from
+        // the file manager's Open With) are offered as a batch extract.
+        window.open_files(files.to_vec());
         present(&window);
     });
 

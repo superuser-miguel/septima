@@ -84,6 +84,7 @@ pub enum Scope {
 /// without being listed, or listed without being bound.
 pub const SHORTCUTS: &[(&str, &str, Scope)] = &[
     ("win.open", "<Ctrl>o", Scope::App),
+    ("win.batch-extract", "<Ctrl><Shift>e", Scope::App),
     ("win.new-archive", "<Ctrl>n", Scope::App),
     ("win.checksums", "<Ctrl>h", Scope::App),
     ("app.capabilities", "F1", Scope::App),
@@ -110,6 +111,7 @@ fn in_archive_section(action: &str) -> bool {
 fn shortcut_title(action: &str) -> String {
     match action {
         "win.open" => gettext("Open Archive"),
+        "win.batch-extract" => gettext("Extract Several Archives"),
         "win.new-archive" => gettext("New Archive"),
         "win.checksums" => gettext("Calculate Checksums"),
         "app.capabilities" => gettext("What Septima Can Do"),
