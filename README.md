@@ -4,194 +4,129 @@
 
 <h1 align="center">Septima</h1>
 
-<p align="center"><strong>The archive tool that actually speaks modern-codec 7z — with a real compression-tuning UI.</strong></p>
+<p align="center"><strong>A GNOME app for 7-Zip ZS: modern compression inside real <code>.7z</code> files, with every setting as a control.</strong></p>
 
-Septima is a GTK4 / libadwaita front-end for [7-Zip ZS](https://github.com/mcmilk/7-Zip-zstd)
-(`7zz`) on Linux. It is a GNOME-native app built specifically around modern
-compression codecs — **Zstandard, Brotli, Fast-LZMA2** — with the kind of
-codec-tuning controls no other Linux archive manager exposes.
+Septima is a GTK4 / libadwaita front-end for
+[7-Zip ZS](https://github.com/mcmilk/7-Zip-zstd) on Linux. It creates, opens
+and extracts archives using **Zstandard, Brotli, Fast-LZMA2** and the rest of
+what 7-Zip ZS offers, and puts the tuning that normally lives in command-line
+switches into an ordinary dialog.
 
-It is an **archive tool, not a file manager**. It never links or vendors 7-Zip
-code: a UI-free engine crate supervises the `7zz` binary as a subprocess.
-
-> Status: **v0.7.0**. Browse, extract, create with full tuning, batch
-> operations and in-place editing all work today in a sandboxed Flatpak, with
-> 1:1 coverage of what the bundled `7zz` can create on Linux, **batch
-> encryption with a portable passwords file**, batches of any size that run a
-> few archives at a time, keyboard shortcuts throughout, and extracts that
-> never replace your files without asking. See the [roadmap](#roadmap).
+It is an archive tool, not a file manager. It runs as a sandboxed Flatpak with
+its own copy of `7zz`, and reaches your files only through the desktop's file
+choosers.
 
 <p align="center">
-  <img src="docs/screenshots/codec-menu.png" alt="Septima's Add-to-Archive dialog with the modern-codec method menu open — LZMA2, Zstandard, Brotli, Fast-LZMA2, LZ4, LZ5, Lizard and more" width="640">
+  <img src="docs/screenshots/create-dialog.png" alt="The New Archive dialog in three parts: four folders staged; format 7z with Zstandard at level 3 on 12 threads; and the filter, volumes, checksum and encryption options" width="900">
 </p>
 
----
-
-## Why Septima?
-
-Modern-codec 7z with a tuning UI, in a GNOME-native app, is a gap nothing else fills:
-
-| | Modern codecs (zstd/brotli/flzma2) | Real compression tuning | GNOME-native GUI | One-gesture `.tar.zst` |
-|---|:---:|:---:|:---:|:---:|
-| **File Roller / Ark** | ✗ | ✗ | ✓ / KDE | ✗ |
-| **PeaZip** | partial | ✓ | ✗ (Qt) | partial |
-| **7-Zip CLI / `7zz`** | ✓ | ✓ (flags) | ✗ | ✗ (two-step) |
-| **Septima** | ✓ | ✓ | ✓ | ✓ |
-
-Where Septima aims to *win*, not just match:
-
-- **A real Add-to-Archive dialog** — format × codec × level, with the level range
-  reacting to the codec (zstd 1–22, brotli 0–11, …), dictionary size, solid mode,
-  threads, and a **live memory estimate** so you can see the cost before you commit.
-- **"Optimize for executables"** — one switch for the BCJ filter, instead of the
-  `-m0=bcj` folklore the Windows tool makes you learn.
-- **Transparent modern tarballs** — create, browse, and extract a real
-  `.tar.zst` / `.tar.xz` in one gesture, both ways.
-- **Batch encryption you can actually manage** — a pile of folders, each in its
-  own archive under its own generated password, with a portable passwords file
-  that hands the whole set back to you later. No vault API, no lock-in: it's
-  just a file.
-
-## Features
-
-- Browse any archive `7zz` can read (7z, zip, tar, xz, gzip, bzip2, zstd, rar…)
-  in a details view: Name / Size / Packed / Method / Modified / CRC.
-- Open an archive from the file chooser, your file manager ("Open With"), or by
-  **dropping it onto the window**.
-- Extract with **live progress, cancel, and password** support — and **never
-  replace a file without asking**: when files of the same name are already in
-  the folder, choose *Keep both* (the default; new copies get a number),
-  *Skip* or *Replace*.
-- **Transparent nested browse + extract** — open a `.tar.zst` / `.tgz` /
-  `.tar.br` and see the files inside, not the intermediate `.tar`.
-- **Create / Add to Archive** with full tuning:
-  - Formats: **7z, zip, tar** (+ tar → zstd / xz / gzip / bzip2 / **brotli /
-    LZ4 / LZ5 / Lizard**), and **raw single-file streams** — write a bare
-    `.zst`, `.br`, `.lz4`, `.lz5`, `.xz`, `.gz` or `.bz2`.
-  - Codecs: LZMA2, LZMA, PPMd, **Zstandard, Brotli, Fast-LZMA2, LZ4, LZ5,
-    Lizard**, BZip2, Deflate, Deflate64, XZ, Store.
-  - Level, dictionary size, solid mode, CPU threads, live memory estimate.
-  - **Architecture / filter picker** — Delta, ARM64, ARM/ARMT, PPC, SPARC,
-    RISC-V and BCJ2, alongside x86 BCJ.
-  - **Lizard family × level** — pick among the four method families
-    (fastLZ4 / LIZv1, ± Huffman) instead of one flat 10–49 slider.
-  - Encryption — AES-256 with optional encrypted file names (7z), and
-    **AES-256 instead of the weak ZipCrypto default** for zip. For 7z you can
-    also pick one of 7-Zip ZS's newer methods: XChaCha20-Poly1305,
-    AES + XChaCha20-Poly1305, AES + XChaCha20 + Ascon or
-    XChaCha20 + AES + AEGIS. Those open in 7-Zip ZS 26.05 or newer, not in
-    stock 7-Zip; AES-256 stays the default.
-  - Split into volumes (`.001`, `.002`, …), free-text advanced parameters.
-- **Batch extract** — *Extract Several Archives* in the menu (Ctrl+Shift+E), or
-  select or drop several archives, and each unpacks into its own folder, with
-  one shared password for encrypted sets.
-- **Big batches run a few at a time** — half as many archives as your CPU has
-  threads (at least 2, at most 8) are worked on at once; the rest wait their
-  turn in a scrolling job list with a running/waiting count and *Cancel All*.
-- **Batch compress** — stage several items and create a separate archive for
-  each, saved next to it.
-- **Batch encrypt with a passwords file** — flip *Unique password per archive*
-  in batch mode and every archive gets its own random 64-character password,
-  recorded in a **passwords file** (JSON) you save wherever you keep secrets.
-  Protect it with a password of its own (`gpg -c`, standard OpenPGP) or leave it
-  plain — chosen *before* the run, so a protected run never writes plaintext to
-  disk. Open that file in Septima later and it offers to **extract the whole
-  set**, each archive with its recorded password, with a per-entry picker.
-- **Drag entries out to extract** — select rows in an open archive and drag them
-  into Files (or anywhere that takes files); they arrive extracted, folders
-  included with their subtree.
-- **Edit an archive in place** — delete or rename entries, plus a one-click
-  **Test Archive** with the same live progress as extract.
-- **Post-extract actions** — "Show in Files", and an optional
-  delete-the-archive-afterwards toggle that understands split volumes.
-- **Checksum calculator** — 13 digests: CRC-32/64, MD5, SHA-1, SHA-256/384/512,
-  SHA3-256/512, BLAKE3, BLAKE2sp, XXH32/64 — with copy and
-  verify-against-a-checksum-file.
-- **Generate a checksum file** — optionally write a `.sha256` next to a new
-  archive, one line per volume part.
-- **Named compression presets** — save your tuning as a reusable preset.
-- **Staged input list** — Add Files / Add Folder across locations, with per-item
-  remove, drag-and-drop, and a live count + total size of what's staged.
-- **Keyboard shortcuts** — Ctrl+O/N/W open, new, close; Ctrl+E extract;
-  Ctrl+Shift+E extract several;
-  Ctrl+T test; Ctrl+H checksums; F2 and Delete in the file list; F1 help;
-  Ctrl+? for the full list.
-- **What Septima Can Do** (F1) — every format and method with its levels, and
-  every `7zz` command and switch Septima sends with the control that sets it.
-  A test keeps it in step with the code, so it can't describe a switch the app
-  doesn't send.
-- Ships as a **Flatpak** with `7zz` bundled — **portals only, no host filesystem
-  access** by design.
-
-<table>
-<tr>
-<td width="50%"><img src="docs/screenshots/create-dialog.png" alt="Create dialog with reactive level range and a live memory estimate"><br><em>Reactive tuning — level ranges follow the codec, with a live memory estimate.</em></td>
-<td width="50%"><img src="docs/screenshots/create-options.png" alt="Executable optimization, split volumes, advanced switches, and encryption"><br><em>Executable optimization, split volumes, advanced switches, and encryption.</em></td>
-</tr>
-</table>
-
-## Power-user switches
-
-The create dialog's **Advanced → parameters** field is a free-text escape hatch:
-whatever you type is passed straight to `7zz a`. It's for the long tail of
-7-Zip's `-m` (method) and `-s` (store) switches that don't each earn a control.
-A few of the useful ones:
-
-**Codec fine-tuning**
-
-| Switch | What it does |
-|---|---|
-| `-mfb=273` | Fast bytes / word size (LZMA/LZMA2, 5–273) — the biggest ratio knob after level |
-| `-mmf=bt4` | Match finder (`hc4` / `bt2` / `bt3` / `bt4`) — speed vs ratio |
-| `-mo=32 -mmem=256m` | PPMd model order / memory |
-| `-mlc= -mlp= -mpb=` | LZMA literal-context / position bits (rarely needed) |
-
-**Filters / architecture** (beyond the "Optimize for executables" switch)
-
-- `-m0=ARM64 -m1=lzma2` — arch-specific executable filter (also `ARM` / `ARMT` / `PPC` / `SPARC` / `IA64`).
-- `-m0=Delta:4 -m1=lzma2` — fixed-stride data (audio, tables, bitmaps).
-
-**Metadata / storage**
-
-- `-snl` — store symlinks *as links* (otherwise 7-Zip follows them). Handy on Linux.
-- `-mtc=on -mta=on` / `-mtm=off` — store creation/access times, or drop mtime.
-- `-ms=e` / `-ms=100m` — solid *by extension* / solid *block size*.
-- `-mem=xchacha20poly1305` — new encryption methods, where the bundled `7zz` supports them.
-
-**Behavior:** `-w<dir>` (working dir) · `-slp` (large pages) · `-u…` (update rules).
-
-> Switches here are appended after the dialog's own options, so they override
-> them. Params are split on spaces, so avoid switches containing spaces for now.
-> Full list: [7-Zip command-line switches](https://documentation.help/7-Zip/).
+**Current version: 0.7.0** · [What's new](CHANGELOG.md) ·
+[Website](https://superuser-miguel.github.io/septima/), with a command builder
+you can try in the browser
 
 ## Install
 
-### Recommended — signed repo, automatic updates
-
-Install from the project's own signed Flatpak repo, and new releases arrive
-with `flatpak update`:
+From the project's signed Flatpak repo. New releases arrive with
+`flatpak update`:
 
 ```sh
 flatpak install --user https://superuser-miguel.github.io/septima-repo/septima.flatpakref
 flatpak run io.github.superuser_miguel.Septima
 ```
 
-> This subscribes you to the repo (like Flathub does), so `flatpak update` — or
-> GNOME Software — pulls new versions automatically. Every release is signed
-> with the project's GPG key.
+Or download `Septima.flatpak` from the
+[latest release](https://github.com/superuser-miguel/septima/releases/latest)
+and run `flatpak install --user ./Septima.flatpak`. The single file has no
+update path; you reinstall to move to a newer version.
 
-### Alternative — one-off bundle
+## What it does
 
-Prefer a single file with no remote? Download **`Septima.flatpak`** from the
-[latest release](https://github.com/superuser-miguel/septima/releases/latest):
+### Create
 
-```sh
-flatpak install --user ./Septima.flatpak
-flatpak run io.github.superuser_miguel.Septima
-```
+- **7z, zip and tar**, plus compressed tarballs (`.tar.zst`, `.tar.xz`,
+  `.tar.br` and more) in one step, and single-file streams such as a bare
+  `.zst` or `.br`.
+- **Every method 7-Zip ZS has**: LZMA2, LZMA, PPMd, Zstandard, Brotli,
+  Fast-LZMA2, LZ4, LZ5, Lizard, BZip2, Deflate, Deflate64, XZ and Store.
+- **Tuning as controls**: level (the range follows the method), dictionary
+  size, solid mode, CPU threads, and a memory estimate before you start.
+- **Filters from a menu**: x86, ARM64, ARM, PowerPC, SPARC, RISC-V and Delta.
+- **Split into volumes**, write a `.sha256` next to the archive, and save any
+  setup as a named preset.
+- **An Advanced field** that passes any other 7-Zip switch straight through.
 
-> The bundle has **no update path** — to move to a newer version, download it
-> and reinstall (or switch to the signed repo above, which updates itself).
+### Open and extract
+
+- **Browse anything `7zz` reads**: 7z, zip, tar, xz, gzip, bzip2, zstd, rar and
+  more. A `.tar.zst` shows its files, not the tar inside it.
+- **Extract with live progress and cancel.** Drag entries out of the window to
+  extract just those.
+- **Nothing is replaced without asking.** When names clash, choose Keep both
+  (the default), Skip or Replace.
+- **Edit in place**: delete or rename entries, and test an archive's integrity.
+
+### Batches
+
+<p align="center">
+  <img src="docs/screenshots/batch-queue.png" alt="A batch of sixteen archives extracting: six running, ten waiting, with a Cancel All button above a scrolling list of progress bars" width="760">
+</p>
+
+- **Extract many archives at once**, each into its own folder: *Extract Several
+  Archives* in the menu, Ctrl+Shift+E, or drop them on the window.
+- **Create one archive per item** from a list of files and folders.
+- **A few run at a time.** Septima works on half as many archives as your CPU
+  has threads (at least 2, at most 8). The rest wait their turn, and you can
+  cancel one or all of them.
+- **One summary at the end**, one list of anything that failed, and one
+  password question for the encrypted ones.
+
+### Encryption
+
+<p align="center">
+  <img src="docs/screenshots/batch-encrypt.png" alt="Batch mode with a separate archive for each item, and the encryption options with Unique password per archive switched on" width="620">
+</p>
+
+- **AES-256 for 7z and zip**, with encrypted file names for 7z. Zip uses AES-256
+  instead of its weak ZipCrypto default.
+- **Four newer methods for 7z** from 7-Zip ZS 26.05: XChaCha20-Poly1305 and
+  three AES/XChaCha20 cascades. They open in 7-Zip ZS 26.05 or newer, not in
+  stock 7-Zip, and the dialog says so. AES-256 stays the default.
+- **A password per archive.** In batch mode, every archive can get its own
+  random 64-character password, written to a **passwords file** you keep
+  wherever you keep secrets. Open that file in Septima later and it extracts
+  the whole set. The file can be protected with a password of its own
+  (standard OpenPGP, so any `gpg` opens it).
+  [How it works](https://superuser-miguel.github.io/septima/blog/2026-08-16-batch-encrypt-passwords-file.html).
+
+### Tools
+
+- **Checksums**: 13 kinds, including SHA-256, SHA3, BLAKE3 and XXH64, with
+  copy and verify against a checksum file.
+- **Keyboard shortcuts** for everything common. Ctrl+? lists them.
+- **What Septima Can Do** (F1) lists every format, method and `7zz` switch the
+  app uses. A test keeps that list in step with the code.
+
+## Switches without a control
+
+Anything typed into the create dialog's **Advanced** field is passed to
+`7zz a` after the dialog's own options. A few that people reach for:
+
+| Switch | What it does |
+|---|---|
+| `-snl` | Store symbolic links as links. Without it, 7-Zip stores a copy of what each link points to |
+| `-xr!.git` | Leave out everything named `.git` (works for any name or pattern) |
+| `-mfb=273` | Word size for LZMA and LZMA2: a little smaller, a little slower |
+| `-ms=100m` | Solid blocks of 100 MB, instead of one block for everything |
+| `-mtc=on` | Store creation times |
+
+The field splits on spaces, so a switch that contains a space won't work.
+
+## What's next
+
+- **0.7.1**: a testing and code-review release, with no new features.
+- **Later**: see the roadmap on the [website](https://superuser-miguel.github.io/septima/#roadmap).
+
+Past releases are in the [changelog](CHANGELOG.md).
 
 ## Build from source
 
@@ -212,190 +147,6 @@ Meson, and `7zz` on `PATH`):
 meson setup builddir -Dprofile=development
 meson compile -C builddir
 ```
-
-## Roadmap
-
-### Shipped (through v0.7.0)
-
-- [x] **Browse & extract** — any archive `7zz` reads, with live progress, cancel
-      and password support.
-- [x] **Create with full tuning** — format × codec × level, dictionary, solid,
-      threads, live memory estimate, BCJ, volumes, encryption, advanced switches.
-- [x] **Transparent nested browse + extract** — open, browse and extract a
-      `.tar.zst` / `.tgz` / `.tar.xz` in one gesture, both ways.
-- [x] **Named compression presets** — save and reuse tuning profiles.
-- [x] **Staged input list** — Add Files / Add Folder across locations, per-item
-      remove, and drag-and-drop from the file manager.
-- [x] **Drop-to-open** — drag an archive onto the window to open it.
-- [x] **Hash calculator** — CRC-32, SHA-256/512, SHA3-256, BLAKE3, xxHash, with
-      copy and verify-against-a-checksum.
-- [x] **Honest progress on big jobs** — an indeterminate "Scanning…" state while
-      `7zz` enumerates the input, so a large selection no longer sits at 0%
-      looking frozen.
-- [x] **Selection totals** — the staged file count and total size are measured in
-      the background and shown under Files, with a nudge when a selection is big
-      enough to take a while.
-- [x] **Responsive cancel** — Cancel takes effect in well under a second even
-      while `7zz` is silent, and the half-written archive is deleted rather than
-      left behind looking complete.
-- [x] **Self-hosted Flatpak repo** — a signed OSTree repo + `.flatpakref` so
-      `flatpak update` pulls new releases directly, no re-download needed.
-- [x] **Post-extract actions** — a "Show in Files" action and an optional
-      "delete the archive afterwards" toggle, including split-volume archives.
-- [x] **Generate a checksum file** — optionally write a `.sha256` file next to
-      a newly created archive (one line per volume part, for split archives).
-- [x] **In-archive edit** — delete / rename entries (multi-select for delete),
-      plus a "Test Archive" action with the same live progress as extract.
-- [x] **Batch extract** — select or drop several archives at once and each
-      extracts into its own new folder next to itself, no per-archive prompts.
-- [x] **Batch compress** — stage several files/folders, flip "Create a separate
-      archive for each item," and each one is compressed into its own archive
-      saved next to it, instead of combining them into one.
-
-Full `7zz` CLI parity, completed in **v0.4.0** — genuine 1:1 coverage of what
-the bundled `7zz` can create on Linux:
-
-- [x] **Complete hash calculator** — CRC-64, MD5, SHA-1, SHA-384, SHA3-512 and
-      BLAKE2sp added, and xxHash split into XXH32 / XXH64 (13 digests in all).
-      _(v0.3.0)_
-- [x] **Zip encryption method** — choose AES-256 for zip instead of the weak
-      ZipCrypto default. _(v0.3.0)_
-- [x] **More format × codec combinations** — **XZ** and **Deflate64** inside
-      zip, and **Brotli / LZ4 / LZ5 / Lizard** as `tar` post-compressors.
-      _(v0.3.0)_
-- [x] **Architecture / filter picker** — a real control for the filter family:
-      Delta, ARM64, ARM/ARMT, PPC, SPARC, RISC-V and BCJ2, alongside x86 BCJ.
-- [x] **Lizard family × level picker** — surface the four method families
-      (fastLZ4 / LIZv1, ± Huffman) instead of one flat 10–49 slider.
-- [x] **Standalone single-stream creation** — write a raw `.zst` / `.br` /
-      `.lz4` / `.lz5` / `.xz` / `.gz` / `.bz2` stream, not only `tar` + a
-      compressor.
-
-**v0.4.0 also repairs Brotli creation.** Every `.br` and `.tar.br` written by
-v0.3.0 was corrupt — it failed its own integrity test — because Septima always
-passed `-mmt`, and that flag silently switches `7zz` between two incompatible
-brotli stream formats. Fixed on the write *and* read side; existing broken files
-can't be repaired, so recreate them. Also reported upstream
-([#352](https://github.com/mcmilk/7-Zip-zstd/pull/352#issuecomment-5144178288),
-and the detection design in
-[#538](https://github.com/mcmilk/7-Zip-zstd/issues/538)) — see
-[the write-up](https://superuser-miguel.github.io/septima/blog/2026-07-27-brotli-mmt-corruption.html).
-`.tar.br` / `.tar.lz5` / `.tar.liz` are transparently browsable again too.
-
-### New in v0.5.0 — batch encryption with a portable passwords file
-
-The headline feature: encrypt *a pile of things* without inventing a password
-per item or reusing one across all of them.
-
-- [x] **Unique password per archive** — in batch mode ("create a separate
-      archive for each item"), every archive gets its own 64-character password
-      drawn from the kernel CSPRNG, and the set is recorded in a **passwords
-      file** you save where you like.
-- [x] **The passwords file is just a file** — readable JSON with one entry per
-      archive: name, what it was made from, the password, its SHA-256, when it
-      was written, and the cipher in plain words ("7z, AES-256, encrypted
-      headers") — the thing nobody remembers six months later. Keep it in
-      KeePassXC, Bitwarden, `pass`, a vault, or a drawer. Septima never talks to
-      a password manager's API, so every one of them works by default.
-- [x] **Optional password protection for the file itself** — standard symmetric
-      OpenPGP via the runtime's `gpg -c`: no keys, no keyring, no host access,
-      and any `gpg` anywhere opens it. Chosen **before** the run, so a protected
-      run never leaves a plaintext moment on disk; declining shows a plain-words
-      warning instead of silently writing secrets next to the archives.
-- [x] **Crash-safe ordering** — all passwords are written atomically *before*
-      the first archive is created, and the file is rewritten (temp + rename)
-      after each archive completes. No archive can exist whose password doesn't.
-- [x] **The other half: batch decrypt** — open a passwords file with the Open
-      button, by dropping it in, or from the command line, and Septima offers to
-      extract every archive it lists with its recorded password. A per-entry
-      picker with select-all/clear (and a filter past ten rows) means you can
-      take just the two you need; missing archives and empty passwords are
-      skipped loudly, and only basenames are trusted, so a hand-edited
-      `../evil` can't walk out of the folder.
-- [x] **Drag-out to extract** — the missing half of drag and drop: select
-      entries in an open archive, drag them into Files, and they arrive
-      extracted. Directories bring their subtree.
-- [x] Presets now capture the encryption method, the checksum-file switch and
-      the batch password choices, instead of dropping them.
-
-### Fixed in v0.5.1 — batches that finish quietly
-
-- [x] **One notice per batch, not one per archive** — a batch of 50 used to
-      queue 50 notices (100 with checksum files on), still scrolling past long
-      after the work was done. Now a batch ends with one summary — *"Extracted
-      48 archives · 2 failed"* — with a Show in Files button.
-- [x] **Failures collected, not interrupting** — one dialog at the end lists
-      what failed and why, instead of an error pop-up per archive mid-run.
-- [x] **One password question for a batch extract** — encrypted archives in a
-      batch are held until the rest finish, then Septima asks once for all of
-      them (a wrong password asks again; Cancel skips them).
-- [x] **No password box by default** — the batch-extract dialog hides the
-      password field behind a "These archives are password-protected" switch,
-      so a batch of ordinary archives no longer looks like it wants one.
-- [x] **Same-name items no longer collide** — `photos.zip` + `photos.7z` in one
-      batch extract to `photos/` and `photos_2/` instead of overwriting each
-      other; `report.txt` + `report.pdf` compress to `report.7z` and
-      `report_2.7z` instead of two jobs writing one file.
-
-### New in v0.6.0 — keyboard, help, and no silent overwrites
-
-- [x] **Extracting never replaces a file without asking** — before 0.6, an
-      extract into a folder that already held a file of the same name replaced
-      it silently. Septima now checks first and, only on a clash, asks: *Keep
-      both* (default), *Skip* or *Replace*. Batch extract asks when an
-      archive's folder already exists. *Skip* can't be combined with deleting
-      the archive afterwards, since the skipped files would go with it.
-- [x] **Keyboard shortcuts** throughout, listed on Ctrl+?. Delete and F2 act on
-      the file list only, so they still work inside text fields.
-- [x] **What Septima Can Do** (F1), generated from the code and kept honest by
-      a test.
-- [x] **About window** with release notes and the bundled 7-Zip ZS build.
-
-### New in v0.7.0 — big batches, and more ciphers
-
-- [x] **A cap on how many archives run at once** — a batch used to start one
-      `7zz` per archive, all together, so a hundred archives meant a hundred
-      processes. Now half as many as the CPU has threads run (at least 2, at
-      most 8) and the rest wait. Creating archives runs fewer side by side
-      when each one already uses every thread or a large share of free memory.
-- [x] **A job list that copes** — a running/waiting count, *Cancel All*,
-      scrolling after five rows, and waiting archives that can be cancelled
-      before they start. A long list of failures scrolls inside its dialog.
-- [x] **Batch extract has its own way in** — *Extract Several Archives* in the
-      menu, on the start page and on Ctrl+Shift+E; opening several archives
-      from Files offers it too.
-- [x] **Four more encryption methods for 7z** — XChaCha20-Poly1305 and the
-      three AES/XChaCha20 cascades from
-      [mcmilk/7-Zip-zstd#505](https://github.com/mcmilk/7-Zip-zstd/pull/505),
-      each offered only when the `7zz` in use has it, and labelled with where
-      it opens (7-Zip ZS 26.05 or newer, not stock 7-Zip). None is ranked
-      above another, and AES-256 stays the default.
-- [x] **Presets don't downgrade quietly** — a preset whose encryption method
-      isn't available says so instead of switching to AES-256 without a word.
-- [x] **Passwords file: a clearer folder prompt** — the sandbox lets Septima
-      read the passwords file you open but not its neighbours, so it asks for
-      the folder; the prompt now says why and opens in the right place.
-
-### Later
-
-- [ ] **Encrypt the passwords file to a GPG key** — a third choice next to plain
-      and password-protected: `gpg -e -r <key>`, so there's nothing to remember
-      at write time. Only ever touches the *public* key, so the sandbox stays
-      clean; the design work is the key picker.
-- [ ] **Archive naming patterns in batch mode** — a prefix/suffix (or obfuscated)
-      naming row, with the passwords file keeping the association back to the
-      original item.
-- [ ] **Promote key Advanced switches to real controls** — symlink handling
-      (`-snl`), word size / fast bytes (`-mfb`), update modes (`-u`).
-- [ ] **Free-space check** — show available space at the extract destination
-      before starting.
-- [ ] **Custom visual styling and app icon.**
-- [ ] **Nautilus (Files) integration** — right-click "Extract Here" / "Extract
-      to…" / "Compress…", like File Roller's extension. *Not a pure app
-      feature*: a Nautilus extension loads into Nautilus's own host process,
-      which the Flatpak sandbox can't do from inside Septima — this would need
-      a small separate host-side package (e.g. distro-packaged, talking to
-      Septima over D-Bus or the CLI), not something the Flatpak alone can ship.
 
 ## Acknowledgements
 
